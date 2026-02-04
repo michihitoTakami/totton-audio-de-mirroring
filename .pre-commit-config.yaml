@@ -11,6 +11,14 @@ default_language_version:
   python: python3
 
 repos:
+  # clang-format for C/C++ formatting
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.8
+    hooks:
+      - id: clang-format
+        types_or: [c, c++]
+        files: ^cpp/.*\.(c|cpp|h|hpp)$
+
   # Basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -57,19 +65,39 @@ repos:
         pass_filenames: false
         always_run: true
 
-  # Future: C/C++/CUDA support (currently disabled)
-  # Uncomment when C/CUDA code is added
-  # - repo: https://github.com/pre-commit/mirrors-clang-format
-  #   rev: v18.1.8
-  #   hooks:
-  #     - id: clang-format
-  #       types_or: [c, c++]
-  #       files: \.(c|cpp|h|hpp|cu|cuh)$
-  #
-  # - repo: https://github.com/pocc/pre-commit-hooks
-  #   rev: v1.3.5
-  #   hooks:
-  #     - id: clang-tidy
-  #       args: [-p=build]
-  #       files: \.(c|cpp)$
-  #       stages: [pre-push]
+  # C++ build preparation for clang-tidy (pre-push)
+  - repo: local
+    hooks:
+      - id: prepare-cpp-build
+        name: Prepare C++ build (compile_commands.json)
+        entry: bash -c '"${CMAKE_BIN:-/usr/bin/cmake}" -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON'
+        language: system
+        files: ^cpp/.*\.(c|cpp|h|hpp)$
+        pass_filenames: false
+        stages: [pre-push]
+
+  # clang-tidy for C++ static analysis (pre-push)
+  - repo: https://github.com/pocc/pre-commit-hooks
+    rev: v1.3.5
+    hooks:
+      - id: clang-tidy
+        args: [-p=cpp/build]
+        files: ^cpp/.*\.(c|cpp)$
+        stages: [pre-push]
+
+  # C++ build + tests (pre-push)
+  - repo: local
+    hooks:
+      - id: cpp-tests
+        name: Build and run C++ tests
+        entry: |
+          bash -c '
+            set -euo pipefail
+            "${CMAKE_BIN:-/usr/bin/cmake}" -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            "${CMAKE_BIN:-/usr/bin/cmake}" --build cpp/build --parallel
+            /usr/bin/ctest --test-dir cpp/build --output-on-failure
+          '
+        language: system
+        files: ^cpp/.*\.(c|cpp|h|hpp)$
+        pass_filenames: false
+        stages: [pre-push]
