@@ -118,3 +118,8 @@ def test_signal_sampling_config_validation() -> None:
     rng = np.random.default_rng(0)
     request = config.signal_types[rng.integers(0, len(config.signal_types))]
     assert request == "white_noise"
+
+
+def test_config_bool_coercion() -> None:
+    config = DataPipelineConfig.from_dict({"random_chunk": "false"})
+    assert config.random_chunk is False
