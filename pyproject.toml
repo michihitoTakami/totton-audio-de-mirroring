@@ -17,6 +17,7 @@ dependencies = [
     "soundfile>=0.12",
     "matplotlib>=3.7",
     "tensorboard>=2.15",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
