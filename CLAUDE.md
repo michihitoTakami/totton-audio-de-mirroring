@@ -398,6 +398,16 @@ git checkout -b fix/mirror-detection-bug
 git checkout -b refactor/data-loader-optimization
 ```
 
+**Worktreeを使う場合も必ず`origin/main`から作成すること（ローカル`main`からは作らない）**:
+
+```bash
+# 最新のorigin/mainを取得
+git fetch origin
+
+# origin/mainからworktreeを作成
+git worktree add -b feat/your-feature-name /path/to/worktrees/your-feature origin/main
+```
+
 **❌ NEVER DO THIS**:
 ```bash
 # BAD: Working directly on main
