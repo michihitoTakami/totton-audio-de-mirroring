@@ -1,0 +1,75 @@
+# Pre-commit hooks for totton-audio-de-mirroring
+#
+# Install hooks:
+#   uv run pre-commit install
+#   uv run pre-commit install --hook-type pre-push
+#
+# Run all (manually):
+#   uv run pre-commit run --all-files
+
+default_language_version:
+  python: python3
+
+repos:
+  # Basic file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=10240']  # 10MB limit
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Ruff: Fast Python linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.14
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Type checking with mypy (pre-push only)
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        stages: [pre-push]
+        additional_dependencies:
+          - numpy>=1.24
+          - scipy>=1.11
+          - torch>=2.5.0
+        args: [--config-file=pyproject.toml, src/]
+        pass_filenames: false
+
+  # Unit tests (pre-push only)
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        stages: [pre-push]
+        entry: uv run --extra dev pytest
+        language: system
+        args: [-m, "not slow and not gpu", --tb=short]
+        pass_filenames: false
+        always_run: true
+
+  # Future: C/C++/CUDA support (currently disabled)
+  # Uncomment when C/CUDA code is added
+  # - repo: https://github.com/pre-commit/mirrors-clang-format
+  #   rev: v18.1.8
+  #   hooks:
+  #     - id: clang-format
+  #       types_or: [c, c++]
+  #       files: \.(c|cpp|h|hpp|cu|cuh)$
+  #
+  # - repo: https://github.com/pocc/pre-commit-hooks
+  #   rev: v1.3.5
+  #   hooks:
+  #     - id: clang-tidy
+  #       args: [-p=build]
+  #       files: \.(c|cpp)$
+  #       stages: [pre-push]
