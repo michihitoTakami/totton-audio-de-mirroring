@@ -385,6 +385,7 @@ def generate_percussive_transient(
     _validate_duration(duration_sec)
     _validate_amplitude(amplitude)
     _validate_positive_float(decay_rate, "decay_rate")
+    _validate_rng(rng)
 
     generator = rng or np.random.default_rng()
     num_samples = _num_samples(sample_rate, duration_sec)
@@ -517,6 +518,7 @@ def generate_white_noise(
     _validate_sample_rate(sample_rate)
     _validate_duration(duration_sec)
     _validate_amplitude(amplitude)
+    _validate_rng(rng)
 
     generator = rng or np.random.default_rng()
     num_samples = _num_samples(sample_rate, duration_sec)
@@ -552,6 +554,7 @@ def generate_pink_noise(
     _validate_sample_rate(sample_rate)
     _validate_duration(duration_sec)
     _validate_amplitude(amplitude)
+    _validate_rng(rng)
 
     generator = rng or np.random.default_rng()
     num_samples = _num_samples(sample_rate, duration_sec)
@@ -601,6 +604,7 @@ def generate_band_limited_noise(
     _validate_sample_rate(sample_rate)
     _validate_duration(duration_sec)
     _validate_amplitude(amplitude)
+    _validate_rng(rng)
     _validate_positive_int(num_taps, "num_taps")
     if num_taps % 2 == 0:
         raise ValueError("num_taps must be odd for symmetric FIR design.")
