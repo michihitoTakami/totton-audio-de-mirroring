@@ -361,7 +361,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
         self._base_seed = (
             config.seed
             if config.seed is not None
-            else int(np.random.SeedSequence().entropy)
+            else int(np.random.SeedSequence().generate_state(1)[0])
         )
 
     def __len__(self) -> int:
