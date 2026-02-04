@@ -38,6 +38,7 @@ class BandSplitConfig:
     def __post_init__(self) -> None:
         """Validate configuration values at construction."""
         _validate_config(self)
+
     def delay_samples(self) -> int:
         """Return the constant group delay in samples.
 
