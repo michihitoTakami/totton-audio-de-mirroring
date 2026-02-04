@@ -33,6 +33,13 @@ from totton_audio_de_mirroring.data.generator import (
     generate_white_noise,
     list_signal_types,
 )
+from totton_audio_de_mirroring.data.mirror_detection import (
+    HBTargetResult,
+    MirrorDetectionConfig,
+    MirrorDetectionResult,
+    detect_mirror_artifacts,
+    generate_hb_target,
+)
 
 __all__ = [
     "DegradationConfig",
@@ -62,4 +69,9 @@ __all__ = [
     "generate_soft_clipped_tone",
     "generate_white_noise",
     "list_signal_types",
+    "HBTargetResult",
+    "MirrorDetectionConfig",
+    "MirrorDetectionResult",
+    "detect_mirror_artifacts",
+    "generate_hb_target",
 ]
