@@ -303,7 +303,7 @@ def apply_quantization(
         noisy = noisy + noise
 
     quantized = np.round(noisy / step) * step
-    return np.clip(quantized, -1.0, 1.0 - step)
+    return np.asarray(np.clip(quantized, -1.0, 1.0 - step), dtype=np.float64)
 
 
 def _upsample_zoh(signal: np.ndarray, ratio: int) -> np.ndarray:
@@ -315,10 +315,10 @@ def _upsample_linear(signal: np.ndarray, ratio: int) -> np.ndarray:
         num_samples = channel.shape[-1]
         original_x = np.arange(num_samples)
         target_x = np.linspace(0, num_samples - 1, num_samples * ratio)
-        return np.interp(target_x, original_x, channel)
+        return np.asarray(np.interp(target_x, original_x, channel), dtype=np.float64)
 
     if signal.ndim == 1:
-        return interpolate(signal).astype(np.float64)
+        return interpolate(signal)
 
     channels = [interpolate(channel) for channel in signal]
     return np.stack(channels, axis=0).astype(np.float64)
