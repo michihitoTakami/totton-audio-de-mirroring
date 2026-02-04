@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.filters import (
@@ -113,3 +114,12 @@ def test_low_band_preservation_after_split() -> None:
         denom = max(np.abs(reference), 1e-12)
         error = np.abs(candidate - reference) / denom
         assert error < 0.02
+
+
+def test_band_split_rejects_mismatched_taps() -> None:
+    signal = np.random.randn(1024)
+    lowpass = np.ones(65)
+    highpass = np.ones(63)
+
+    with pytest.raises(ValueError, match="same length"):
+        band_split(signal, lowpass, highpass)

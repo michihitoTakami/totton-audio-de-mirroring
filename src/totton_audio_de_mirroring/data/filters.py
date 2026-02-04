@@ -164,6 +164,8 @@ def band_split(
     _validate_signal(signal)
     _validate_taps(lowpass_taps)
     _validate_taps(highpass_taps)
+    if lowpass_taps.size != highpass_taps.size:
+        raise ValueError("lowpass_taps and highpass_taps must be the same length.")
 
     low_band = apply_fir_filter(signal, lowpass_taps)
     high_band = apply_fir_filter(signal, highpass_taps)
