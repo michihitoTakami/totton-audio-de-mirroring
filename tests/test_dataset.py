@@ -8,7 +8,7 @@ from totton_audio_de_mirroring.data.dataloader import (
     DataLoaderConfig,
     create_dataloader,
 )
-from totton_audio_de_mirroring.data.dataset import (
+from totton_audio_de_mirroring.data.pipeline_config import (
     AugmentationConfig,
     DataPipelineConfig,
     SignalSamplingConfig,
