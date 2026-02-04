@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import torch
@@ -72,6 +73,11 @@ class NMSE(nn.Module):
         self.cutoff_hz = float(cutoff_hz)
         self.stft_config = stft_config or STFTConfig()
         self.energy_cap = energy_cap
+        self.lowpass_taps: torch.Tensor | None
+        self.highpass_taps: torch.Tensor | None
+        self.envelope_target: torch.Tensor
+        self.highband_mask: torch.Tensor
+        self.window: torch.Tensor
 
         self.unet = unet or UNet2D()
         self.register_buffer(
@@ -180,8 +186,10 @@ class NMSE(nn.Module):
         mask = _crop_to_shape(mask, pad_f, pad_t)
 
         masked_mag = magnitude * mask.squeeze(1)
-        masked_mag = masked_mag * self.envelope_target[:, None]
-        masked_mag = masked_mag * self.highband_mask[:, None]
+        envelope = cast(torch.Tensor, self.envelope_target)
+        highband = cast(torch.Tensor, self.highband_mask)
+        masked_mag = masked_mag * envelope[:, None]
+        masked_mag = masked_mag * highband[:, None]
         if self.energy_cap is not None:
             masked_mag = apply_energy_cap(masked_mag, self.energy_cap)
 
@@ -212,7 +220,10 @@ class NMSE(nn.Module):
             detect structured mirror patterns while preserving phase.
         """
         signal_2d = _ensure_2d(signal)
-        window = self.window.to(device=signal_2d.device, dtype=signal_2d.dtype)
+        window = cast(torch.Tensor, self.window).to(
+            device=signal_2d.device,
+            dtype=signal_2d.dtype,
+        )
         return torch.stft(
             signal_2d,
             n_fft=self.stft_config.n_fft,
@@ -237,7 +248,10 @@ class NMSE(nn.Module):
             iSTFT reconstructs time-domain waveform while retaining the
             original phase structure needed for transient preservation.
         """
-        window = self.window.to(device=stft.device, dtype=stft.real.dtype)
+        window = cast(torch.Tensor, self.window).to(
+            device=stft.device,
+            dtype=stft.real.dtype,
+        )
         time_signal = torch.istft(
             stft,
             n_fft=self.stft_config.n_fft,

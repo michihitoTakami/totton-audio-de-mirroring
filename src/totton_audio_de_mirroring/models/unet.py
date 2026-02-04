@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 import torch
 from torch import nn
@@ -62,7 +62,7 @@ class ConvBlock(nn.Module):
             Convolutions preserve time-frequency alignment while allowing
             the network to learn mask-relevant patterns.
         """
-        return self.net(features)
+        return cast(torch.Tensor, self.net(features))
 
     @staticmethod
     def _validate_positive(value: int, name: str) -> None:
@@ -209,7 +209,7 @@ class UpBlock(nn.Module):
                 "Upsampled feature map does not match skip connection size."
             )
         merged = torch.cat([up, skip], dim=1)
-        return self.conv(merged)
+        return cast(torch.Tensor, self.conv(merged))
 
 
 class UNet2D(nn.Module):
@@ -314,11 +314,11 @@ class UNet2D(nn.Module):
         x = self.bottleneck(x)
         for up, skip in zip(self.up_blocks, reversed(skips), strict=True):
             x = up(x, skip)
-        x = self.output_conv(x)
+        x = cast(torch.Tensor, self.output_conv(x))
         if self.output_activation == "sigmoid":
-            return torch.sigmoid(x)
+            return cast(torch.Tensor, torch.sigmoid(x))
         if self.output_activation == "none":
-            return x
+            return cast(torch.Tensor, x)
         raise ValueError(f"Unsupported output activation: {self.output_activation}.")
 
     @staticmethod
