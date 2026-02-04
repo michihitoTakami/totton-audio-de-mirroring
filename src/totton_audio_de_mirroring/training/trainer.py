@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import nn
@@ -339,7 +339,7 @@ def _forward_highband(model: nn.Module, hb_in: torch.Tensor) -> torch.Tensor:
         High-band-only forward keeps low-band bypass intact and focuses
         learning on mirror suppression.
     """
-    forward_fn = model.forward_highband
+    forward_fn = cast(Callable[[torch.Tensor], torch.Tensor], model.forward_highband)
     return forward_fn(hb_in)
 
 
@@ -405,7 +405,7 @@ def _parse_loss_weights(raw: Mapping[str, Any]) -> LossWeights:
 def _parse_mask_mode(value: Any) -> LossMode:
     if value not in {"l1", "l2"}:
         raise ValueError("mask_mode must be 'l1' or 'l2'.")
-    return value
+    return cast(LossMode, value)
 
 
 def _optional_float(value: Any) -> float | None:
