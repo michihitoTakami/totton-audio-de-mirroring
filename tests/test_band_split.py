@@ -33,6 +33,15 @@ def test_band_split_delay_samples_matches_config() -> None:
     assert processor.delay_samples == (NUM_TAPS - 1) // 2
 
 
+def test_band_split_config_rejects_even_taps() -> None:
+    with pytest.raises(ValueError, match="odd"):
+        BandSplitConfig(
+            cutoff_hz=CUTOFF_HZ,
+            sample_rate=SAMPLE_RATE,
+            num_taps=1024,
+        )
+
+
 def test_band_split_recombines_after_delay_compensation() -> None:
     rng = np.random.default_rng(0)
     signal = rng.normal(0.0, 1.0, 4096)
@@ -45,6 +54,18 @@ def test_band_split_recombines_after_delay_compensation() -> None:
 
     error = float(np.mean(np.abs(aligned_recombined - aligned_original)))
     assert error < 1e-2
+
+
+def test_low_band_bypass_is_unchanged() -> None:
+    rng = np.random.default_rng(3)
+    signal = rng.normal(0.0, 1.0, 4096)
+
+    processor = _make_processor()
+    expected_low, _ = processor.split(signal)
+
+    result = processor.process(signal, high_band_processor=np.zeros_like)
+
+    np.testing.assert_allclose(result.low_band, expected_low, rtol=0.0, atol=1e-12)
 
 
 def test_band_split_supports_2d_signal() -> None:
