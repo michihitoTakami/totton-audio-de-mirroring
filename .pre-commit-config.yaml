@@ -42,7 +42,7 @@ repos:
           - numpy>=1.24
           - scipy>=1.11
           - torch>=2.5.0
-        args: [--config-file=pyproject.toml]
+        args: [--config-file=pyproject.toml, src/]
         pass_filenames: false
 
   # Unit tests (pre-push only)
