@@ -264,6 +264,26 @@ def _compute_stft(
     hop_length: int,
     window: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute STFT for mirror detection.
+
+    Args:
+        signal: Time-domain input signal.
+        sample_rate: Sample rate in Hz.
+        n_fft: FFT size.
+        hop_length: Hop length between frames.
+        window: Window name.
+
+    Returns:
+        Tuple of (freqs, times, stft).
+
+    Raises:
+        ValueError: If STFT parameters are invalid.
+
+    Physical Basis:
+        Time-frequency analysis exposes symmetric mirror patterns that
+        are difficult to isolate in the time domain alone.
+    """
+
     _validate_positive_int(n_fft, "n_fft")
     _validate_positive_int(hop_length, "hop_length")
     if hop_length > n_fft:
@@ -289,6 +309,24 @@ def _compute_istft(
     window: str,
     target_length: int,
 ) -> np.ndarray:
+    """Compute inverse STFT and match target length.
+
+    Args:
+        stft: Complex STFT array.
+        sample_rate: Sample rate in Hz.
+        n_fft: FFT size.
+        hop_length: Hop length between frames.
+        window: Window name.
+        target_length: Output length in samples.
+
+    Returns:
+        Time-domain signal aligned to target_length.
+
+    Physical Basis:
+        iSTFT reconstructs time-domain HB_target after spectral suppression
+        while preserving phase relationships from the original STFT.
+    """
+
     _, signal = sp_signal.istft(
         stft,
         fs=sample_rate,
@@ -301,6 +339,19 @@ def _compute_istft(
 
 
 def _match_length(signal: np.ndarray, target_length: int) -> np.ndarray:
+    """Match signal length by trimming or zero-padding.
+
+    Args:
+        signal: Input signal.
+        target_length: Desired length.
+
+    Returns:
+        Signal resized to target_length.
+
+    Physical Basis:
+        Length alignment keeps HB_target compatible with HB_in sample count.
+    """
+
     if signal.shape[0] == target_length:
         return signal
     if signal.shape[0] > target_length:
@@ -314,6 +365,21 @@ def _build_envelope(
     cutoff_hz: float,
     envelope_min: float,
 ) -> np.ndarray:
+    """Build a gentle high-frequency decay envelope.
+
+    Args:
+        freqs: STFT frequency bins in Hz.
+        cutoff_hz: Cutoff frequency in Hz.
+        envelope_min: Minimum gain at Nyquist.
+
+    Returns:
+        Frequency-domain envelope.
+
+    Physical Basis:
+        A smooth decay beyond 20 kHz discourages excessive HF energy
+        without introducing sharp spectral discontinuities.
+    """
+
     nyquist = float(freqs[-1])
     envelope = np.ones_like(freqs, dtype=np.float64)
     highband = freqs >= cutoff_hz
@@ -330,36 +396,114 @@ def _scale_highband(
     highband_mask: np.ndarray,
     scale: float,
 ) -> np.ndarray:
+    """Scale high-band STFT bins by a factor.
+
+    Args:
+        stft: Complex STFT array.
+        highband_mask: Boolean mask for high-band bins.
+        scale: Scaling factor.
+
+    Returns:
+        STFT array with scaled high-band bins.
+
+    Physical Basis:
+        Uniform scaling enforces energy caps while preserving spectral
+        relationships within the high band.
+    """
+
     scaled = np.array(stft, copy=True)
     scaled[highband_mask] = scaled[highband_mask] * scale
     return scaled
 
 
 def _resolve_mirror_center(mirror_center_hz: float | None, sample_rate: int) -> float:
+    """Resolve mirror center frequency.
+
+    Args:
+        mirror_center_hz: Optional explicit center frequency.
+        sample_rate: Sample rate in Hz.
+
+    Returns:
+        Mirror center frequency in Hz.
+
+    Physical Basis:
+        For 2× upsampling, the original Nyquist equals sample_rate / 4,
+        which is the symmetry center for mirror artifacts.
+    """
+
     if mirror_center_hz is not None:
         return float(mirror_center_hz)
     return float(sample_rate) * DEFAULT_MIRROR_CENTER_RATIO
 
 
 def _resolve_cutoff(config: MirrorDetectionConfig | None, default: float) -> float:
+    """Resolve cutoff frequency from configuration.
+
+    Args:
+        config: Optional detection config.
+        default: Default cutoff in Hz.
+
+    Returns:
+        Cutoff frequency in Hz.
+
+    Physical Basis:
+        Consistent cutoff values preserve the low-band identity policy.
+    """
+
     if config is None:
         return default
     return float(config.cutoff_hz)
 
 
 def _resolve_n_fft(config: MirrorDetectionConfig | None) -> int:
+    """Resolve FFT size from configuration.
+
+    Args:
+        config: Optional detection config.
+
+    Returns:
+        FFT size.
+
+    Physical Basis:
+        FFT size controls frequency resolution for mirror symmetry checks.
+    """
+
     if config is None:
         return DEFAULT_N_FFT
     return int(config.n_fft)
 
 
 def _resolve_hop_length(config: MirrorDetectionConfig | None) -> int:
+    """Resolve hop length from configuration.
+
+    Args:
+        config: Optional detection config.
+
+    Returns:
+        Hop length in samples.
+
+    Physical Basis:
+        Hop length defines time resolution in the STFT representation.
+    """
+
     if config is None:
         return DEFAULT_HOP_LENGTH
     return int(config.hop_length)
 
 
 def _resolve_window(config: MirrorDetectionConfig | None) -> str:
+    """Resolve STFT window name from configuration.
+
+    Args:
+        config: Optional detection config.
+
+    Returns:
+        Window name.
+
+    Physical Basis:
+        Consistent windowing controls leakage in STFT magnitude features.
+    """
+
     if config is None:
         return DEFAULT_WINDOW
     return str(config.window)
@@ -370,6 +514,21 @@ def _validate_detection_config(
     sample_rate: int,
     mirror_center_hz: float,
 ) -> None:
+    """Validate mirror detection configuration.
+
+    Args:
+        config: Mirror detection configuration.
+        sample_rate: Sample rate in Hz.
+        mirror_center_hz: Resolved mirror center frequency in Hz.
+
+    Raises:
+        ValueError: If configuration values are invalid.
+
+    Physical Basis:
+        Ensuring valid bounds keeps detection within the physically
+        meaningful high-band region and avoids aliasing artifacts.
+    """
+
     _validate_positive_float(config.cutoff_hz, "cutoff_hz")
     _validate_positive_float(config.magnitude_threshold, "magnitude_threshold")
     _validate_unit_interval(config.symmetry_threshold, "symmetry_threshold")
@@ -397,6 +556,18 @@ def _validate_detection_config(
 
 
 def _validate_signal(signal: np.ndarray) -> None:
+    """Validate input signal shape.
+
+    Args:
+        signal: Input signal array.
+
+    Raises:
+        ValueError: If signal shape is invalid.
+
+    Physical Basis:
+        Mirror detection assumes a single-channel time series.
+    """
+
     if signal.ndim != 1:
         raise ValueError(f"signal must be 1D, got {signal.ndim}D.")
     if signal.size == 0:
@@ -404,21 +575,72 @@ def _validate_signal(signal: np.ndarray) -> None:
 
 
 def _validate_sample_rate(sample_rate: int) -> None:
+    """Validate sample rate.
+
+    Args:
+        sample_rate: Sample rate in Hz.
+
+    Raises:
+        ValueError: If sample_rate is invalid.
+
+    Physical Basis:
+        Positive sample rates ensure meaningful discrete-time analysis.
+    """
+
     if sample_rate <= 0:
         raise ValueError(f"sample_rate must be positive, got {sample_rate}.")
 
 
 def _validate_positive_int(value: int, name: str) -> None:
+    """Validate a positive integer parameter.
+
+    Args:
+        value: Integer value.
+        name: Parameter name.
+
+    Raises:
+        ValueError: If value is invalid.
+
+    Physical Basis:
+        Positive integers are required for discrete-time configuration.
+    """
+
     if value <= 0:
         raise ValueError(f"{name} must be positive, got {value}.")
 
 
 def _validate_positive_float(value: float, name: str) -> None:
+    """Validate a positive float parameter.
+
+    Args:
+        value: Floating-point value.
+        name: Parameter name.
+
+    Raises:
+        ValueError: If value is invalid.
+
+    Physical Basis:
+        Positive magnitudes ensure physically meaningful thresholds.
+    """
+
     if value <= 0.0:
         raise ValueError(f"{name} must be positive, got {value}.")
 
 
 def _validate_unit_interval(value: float, name: str) -> None:
+    """Validate a parameter in [0, 1].
+
+    Args:
+        value: Floating-point value.
+        name: Parameter name.
+
+    Raises:
+        ValueError: If value is invalid.
+
+    Physical Basis:
+        Gains and ratios are constrained to physically valid ranges.
+    """
+
     if not (0.0 <= value <= 1.0):
         raise ValueError(f"{name} must be between 0 and 1, got {value}.")
 
