@@ -1,5 +1,6 @@
 """Tests for NMSE high-band processing."""
 
+import pytest
 import torch
 
 from totton_audio_de_mirroring.data.filters import design_band_split_filters
@@ -9,6 +10,7 @@ from totton_audio_de_mirroring.models.nmse import (
     _apply_fir_filter,
     apply_energy_cap,
 )
+from totton_audio_de_mirroring.models.unet import UNet2D
 
 
 def test_nmse_preserves_low_band() -> None:
@@ -61,3 +63,63 @@ def test_apply_energy_cap_limits_energy() -> None:
     energy = torch.sum(capped**2, dim=(-2, -1))
 
     assert torch.all(energy <= energy_cap + 1.0e-3)
+
+
+def test_nmse_invalid_energy_cap_raises() -> None:
+    """Test that invalid energy cap raises ValueError."""
+    lowpass, highpass = design_band_split_filters(
+        cutoff_hz=20_000.0,
+        sample_rate=88_200,
+        num_taps=129,
+    )
+
+    with pytest.raises(ValueError, match="energy_cap must be positive"):
+        _ = NMSE(
+            sample_rate=88_200,
+            cutoff_hz=20_000.0,
+            stft_config=STFTConfig(n_fft=256, hop_length=64, win_length=256),
+            energy_cap=0.0,
+            lowpass_taps=lowpass,
+            highpass_taps=highpass,
+        )
+
+
+def test_nmse_invalid_stft_config_raises() -> None:
+    """Test that invalid STFT config raises ValueError."""
+    lowpass, highpass = design_band_split_filters(
+        cutoff_hz=20_000.0,
+        sample_rate=88_200,
+        num_taps=129,
+    )
+
+    with pytest.raises(ValueError, match="n_fft must be positive"):
+        _ = NMSE(
+            sample_rate=88_200,
+            cutoff_hz=20_000.0,
+            stft_config=STFTConfig(n_fft=0, hop_length=64, win_length=256),
+            energy_cap=1.0,
+            lowpass_taps=lowpass,
+            highpass_taps=highpass,
+        )
+
+
+def test_nmse_rejects_multi_channel_mask() -> None:
+    """Test that NMSE rejects masks with multiple channels."""
+    lowpass, highpass = design_band_split_filters(
+        cutoff_hz=20_000.0,
+        sample_rate=88_200,
+        num_taps=129,
+    )
+    nmse = NMSE(
+        sample_rate=88_200,
+        cutoff_hz=20_000.0,
+        stft_config=STFTConfig(n_fft=256, hop_length=64, win_length=256),
+        energy_cap=1.0,
+        lowpass_taps=lowpass,
+        highpass_taps=highpass,
+        unet=UNet2D(out_channels=2, base_channels=8, num_downsamples=1),
+    )
+
+    high_band = torch.randn(1, 2048)
+    with pytest.raises(ValueError, match="Mask output must have a single channel"):
+        _ = nmse.forward_highband(high_band)
