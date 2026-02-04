@@ -228,40 +228,7 @@ def apply_degradation_profile(
     _validate_sample_rate(target_sr)
     ratio = _validate_upsample_ratio(source_sr, target_sr)
 
-    if profile.method == "zoh":
-        upsampled = _upsample_zoh(signal, ratio)
-    elif profile.method == "linear":
-        upsampled = _upsample_linear(signal, ratio)
-    elif profile.method in {"sinc_short", "sinc_long"}:
-        upsampled = _upsample_sinc(
-            signal,
-            ratio,
-            target_sr,
-            profile.cutoff_hz,
-            profile.num_taps or SHORT_SINC_TAPS,
-            profile.phase,
-        )
-    elif profile.method == "iir_bessel":
-        upsampled = _upsample_iir(
-            signal,
-            ratio,
-            target_sr,
-            profile.cutoff_hz,
-            profile.iir_order or DEFAULT_IIR_ORDER,
-            "bessel",
-        )
-    elif profile.method == "iir_butter":
-        upsampled = _upsample_iir(
-            signal,
-            ratio,
-            target_sr,
-            profile.cutoff_hz,
-            profile.iir_order or DEFAULT_IIR_ORDER,
-            "butter",
-        )
-    else:
-        raise ValueError(f"Unknown degradation method: {profile.method}.")
-
+    upsampled = _apply_upsampling_method(signal, ratio, target_sr, profile)
     return apply_quantization(upsampled, profile.quantization_bits, profile.dither, rng)
 
 
@@ -322,6 +289,52 @@ def _upsample_linear(signal: np.ndarray, ratio: int) -> np.ndarray:
 
     channels = [interpolate(channel) for channel in signal]
     return np.stack(channels, axis=0).astype(np.float64)
+
+
+def _apply_upsampling_method(
+    signal: np.ndarray,
+    ratio: int,
+    target_sr: int,
+    profile: DegradationProfile,
+) -> np.ndarray:
+    if profile.method == "zoh":
+        return _upsample_zoh(signal, ratio)
+    if profile.method == "linear":
+        return _upsample_linear(signal, ratio)
+    if profile.method in {"sinc_short", "sinc_long"}:
+        if profile.num_taps is None:
+            raise ValueError("num_taps must be provided for sinc degradation.")
+        return _upsample_sinc(
+            signal,
+            ratio,
+            target_sr,
+            profile.cutoff_hz,
+            profile.num_taps,
+            profile.phase,
+        )
+    if profile.method == "iir_bessel":
+        if profile.iir_order is None:
+            raise ValueError("iir_order must be provided for IIR degradation.")
+        return _upsample_iir(
+            signal,
+            ratio,
+            target_sr,
+            profile.cutoff_hz,
+            profile.iir_order,
+            "bessel",
+        )
+    if profile.method == "iir_butter":
+        if profile.iir_order is None:
+            raise ValueError("iir_order must be provided for IIR degradation.")
+        return _upsample_iir(
+            signal,
+            ratio,
+            target_sr,
+            profile.cutoff_hz,
+            profile.iir_order,
+            "butter",
+        )
+    raise ValueError(f"Unknown degradation method: {profile.method}.")
 
 
 def _upsample_sinc(

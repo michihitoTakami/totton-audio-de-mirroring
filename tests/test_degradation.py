@@ -124,3 +124,37 @@ def test_invalid_ratio_raises() -> None:
             profile,
             np.random.default_rng(0),
         )
+
+
+def test_frequency_response_for_sinc_profile() -> None:
+    num_samples = 4096
+    time = np.arange(num_samples) / SOURCE_SR
+    signal = np.sin(2 * np.pi * 1_000.0 * time)
+    profile = DegradationProfile(
+        method="sinc_long",
+        cutoff_hz=CUTOFF_HZ,
+        phase="linear",
+        quantization_bits=24,
+        dither="none",
+        num_taps=256,
+        iir_order=None,
+    )
+
+    degraded = apply_degradation_profile(
+        signal,
+        SOURCE_SR,
+        TARGET_SR,
+        profile,
+        np.random.default_rng(1),
+    )
+    spectrum = np.fft.rfft(degraded)
+    freqs = np.fft.rfftfreq(degraded.size, 1.0 / TARGET_SR)
+
+    peak_idx = int(np.argmax(np.abs(spectrum)))
+    peak_freq = freqs[peak_idx]
+    assert abs(peak_freq - 1_000.0) < 20.0
+
+    high_band = freqs >= 30_000.0
+    max_high = float(np.max(np.abs(spectrum[high_band])))
+    max_low = float(np.max(np.abs(spectrum)))
+    assert max_high < max_low * 0.1
