@@ -42,10 +42,10 @@ class NMSE(nn.Module):
         cutoff_hz: Crossover frequency between LB and HB in Hz.
         stft_config: STFT configuration.
         unet: Optional UNet2D instance. If None, a default UNet2D is created.
-        energy_cap: Optional maximum energy allowed in 20–44kHz band.
+        energy_cap: Maximum energy allowed in 20–44kHz band.
         envelope_floor: Minimum envelope value at Nyquist (0.0 to 1.0).
-        lowpass_taps: FIR taps for low-band extraction (optional).
-        highpass_taps: FIR taps for high-band extraction (optional).
+        lowpass_taps: FIR taps for low-band extraction.
+        highpass_taps: FIR taps for high-band extraction.
 
     Physical Basis:
         NMSE suppresses mirror/aliasing artifacts in the 20–44kHz band by
@@ -59,22 +59,25 @@ class NMSE(nn.Module):
         cutoff_hz: float = 20_000.0,
         stft_config: STFTConfig | None = None,
         unet: UNet2D | None = None,
-        energy_cap: float | None = None,
         envelope_floor: float = 0.0,
-        lowpass_taps: np.ndarray | None = None,
-        highpass_taps: np.ndarray | None = None,
+        *,
+        energy_cap: float,
+        lowpass_taps: np.ndarray,
+        highpass_taps: np.ndarray,
     ) -> None:
         super().__init__()
         self._validate_sample_rate(sample_rate)
         self._validate_cutoff(cutoff_hz, sample_rate)
         self._validate_envelope_floor(envelope_floor)
+        self._validate_energy_cap(energy_cap)
 
         self.sample_rate = sample_rate
         self.cutoff_hz = float(cutoff_hz)
         self.stft_config = stft_config or STFTConfig()
+        self._validate_stft_config(self.stft_config)
         self.energy_cap = energy_cap
-        self.lowpass_taps: torch.Tensor | None
-        self.highpass_taps: torch.Tensor | None
+        self.lowpass_taps: torch.Tensor
+        self.highpass_taps: torch.Tensor
         self.envelope_target: torch.Tensor
         self.highband_mask: torch.Tensor
         self.window: torch.Tensor
@@ -100,22 +103,16 @@ class NMSE(nn.Module):
         self.register_buffer("envelope_target", envelope)
         self.register_buffer("highband_mask", hb_mask)
 
-        if lowpass_taps is not None or highpass_taps is not None:
-            if lowpass_taps is None or highpass_taps is None:
-                raise ValueError("Both lowpass_taps and highpass_taps are required.")
-            self._validate_fir_taps(lowpass_taps, "lowpass_taps")
-            self._validate_fir_taps(highpass_taps, "highpass_taps")
-            self.register_buffer(
-                "lowpass_taps",
-                torch.tensor(lowpass_taps, dtype=torch.float32),
-            )
-            self.register_buffer(
-                "highpass_taps",
-                torch.tensor(highpass_taps, dtype=torch.float32),
-            )
-        else:
-            self.lowpass_taps = None
-            self.highpass_taps = None
+        self._validate_fir_taps(lowpass_taps, "lowpass_taps")
+        self._validate_fir_taps(highpass_taps, "highpass_taps")
+        self.register_buffer(
+            "lowpass_taps",
+            torch.tensor(lowpass_taps, dtype=torch.float32),
+        )
+        self.register_buffer(
+            "highpass_taps",
+            torch.tensor(highpass_taps, dtype=torch.float32),
+        )
 
     def forward(self, signal: torch.Tensor) -> torch.Tensor:
         """Process input signal with NMSE.
@@ -134,9 +131,6 @@ class NMSE(nn.Module):
             through STFT mask estimation and safety constraints.
         """
         self._validate_signal(signal)
-        if self.lowpass_taps is None or self.highpass_taps is None:
-            raise ValueError("Band-split taps must be provided for full-band input.")
-
         lb = _apply_fir_filter(signal, self.lowpass_taps)
         hb = _apply_fir_filter(signal, self.highpass_taps)
         hb_out = self._process_highband(hb)
@@ -182,6 +176,8 @@ class NMSE(nn.Module):
             multiple=2**self._num_downsamples,
         )
         mask = self.unet(padded)
+        if mask.shape[1] != 1:
+            raise ValueError("Mask output must have a single channel.")
         mask = torch.clamp(mask, 0.0, 1.0)
         mask = _crop_to_shape(mask, pad_f, pad_t)
 
@@ -195,8 +191,7 @@ class NMSE(nn.Module):
 
         complex_spec = masked_mag * torch.exp(1j * phase)
         time_signal = self._istft(complex_spec, length=high_band.shape[-1])
-        if self.highpass_taps is not None:
-            time_signal = _apply_fir_filter(time_signal, self.highpass_taps)
+        time_signal = _apply_fir_filter(time_signal, self.highpass_taps)
         if restore_shape is None:
             return time_signal
         batch, channels, time = restore_shape
@@ -310,6 +305,51 @@ class NMSE(nn.Module):
         if not 0.0 <= envelope_floor <= 1.0:
             raise ValueError(
                 f"envelope_floor must be within [0, 1], got {envelope_floor}."
+            )
+
+    @staticmethod
+    def _validate_energy_cap(energy_cap: float) -> None:
+        """Validate energy cap value.
+
+        Args:
+            energy_cap: Maximum allowed energy.
+
+        Physical Basis:
+            Energy cap must be positive to enforce high-band safety.
+        """
+        if energy_cap <= 0:
+            raise ValueError(f"energy_cap must be positive, got {energy_cap}.")
+
+    @staticmethod
+    def _validate_stft_config(stft_config: STFTConfig) -> None:
+        """Validate STFT configuration.
+
+        Args:
+            stft_config: STFT configuration.
+
+        Physical Basis:
+            STFT parameters must be positive and internally consistent
+            to preserve time-frequency alignment.
+        """
+        if stft_config.n_fft <= 0:
+            raise ValueError(f"n_fft must be positive, got {stft_config.n_fft}.")
+        if stft_config.hop_length <= 0:
+            raise ValueError(
+                f"hop_length must be positive, got {stft_config.hop_length}."
+            )
+        if stft_config.win_length <= 0:
+            raise ValueError(
+                f"win_length must be positive, got {stft_config.win_length}."
+            )
+        if stft_config.win_length > stft_config.n_fft:
+            raise ValueError(
+                "win_length must be less than or equal to n_fft, got "
+                f"{stft_config.win_length} > {stft_config.n_fft}."
+            )
+        if stft_config.hop_length > stft_config.win_length:
+            raise ValueError(
+                "hop_length must be less than or equal to win_length, got "
+                f"{stft_config.hop_length} > {stft_config.win_length}."
             )
 
     @staticmethod
