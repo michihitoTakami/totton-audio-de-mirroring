@@ -137,6 +137,9 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             energy_cap=self._config.hb_target.energy_cap,
             envelope_min=self._config.hb_target.envelope_min,
         )
+        mirror_mask = _to_tensor_2d(
+            hb_target_result.detection.detection_mask.astype(np.float32)
+        )
 
         sample = {
             "source": _to_tensor(source_chunk),
@@ -144,6 +147,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             "low_band": _to_tensor(low_band),
             "high_band": _to_tensor(high_band),
             "hb_target": _to_tensor(hb_target_result.target),
+            "mirror_mask": mirror_mask,
             "profile": profile,
             "signal_type": request.signal_type,
             "chunk_start": int(chunk_start),
@@ -345,6 +349,23 @@ def _to_tensor(array: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(np.asarray(array, dtype=np.float32))
 
 
+def _to_tensor_2d(array: np.ndarray) -> torch.Tensor:
+    """Convert a 2D NumPy array to a float32 torch tensor.
+
+    Args:
+        array: 2D input array.
+
+    Returns:
+        Torch tensor copy of the input.
+
+    Physical Basis:
+        Preserving the STFT time-frequency mask as a 2D tensor keeps
+        mirror-region annotations aligned with frequency and time bins.
+    """
+    _validate_2d_array(array)
+    return torch.from_numpy(np.asarray(array, dtype=np.float32))
+
+
 def _validate_pipeline_config(config: DataPipelineConfig) -> None:
     if not isinstance(config, DataPipelineConfig):
         raise ValueError("config must be a DataPipelineConfig")
@@ -355,6 +376,22 @@ def _validate_signal(signal: np.ndarray) -> None:
         raise ValueError(f"signal must be 1D, got {signal.ndim}D")
     if signal.size == 0:
         raise ValueError("signal must be non-empty")
+
+
+def _validate_2d_array(array: np.ndarray) -> None:
+    """Validate that an array is 2D and non-empty.
+
+    Args:
+        array: Array to validate.
+
+    Physical Basis:
+        Mirror masks are defined over (frequency, time) grids and must
+        be strictly 2D to align with STFT magnitudes.
+    """
+    if array.ndim != 2:
+        raise ValueError(f"array must be 2D, got {array.ndim}D")
+    if array.size == 0:
+        raise ValueError("array must be non-empty")
 
 
 def _validate_positive_int(value: int, name: str) -> None:

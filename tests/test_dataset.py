@@ -47,6 +47,7 @@ def test_dataset_item_shapes() -> None:
     assert sample["low_band"].shape == (length,)
     assert sample["high_band"].shape == (length,)
     assert sample["hb_target"].shape == (length,)
+    assert sample["mirror_mask"].ndim == 2
     assert sample["source"].shape == (
         int(round(config.chunk_duration_sec * config.source_sample_rate)),
     )
@@ -91,6 +92,7 @@ def test_dataloader_batches() -> None:
     batch = next(iter(loader))
     assert batch["x_full"].shape[0] == 2
     assert batch["hb_target"].shape[0] == 2
+    assert batch["mirror_mask"].shape[0] == 2
     assert batch["chunk_start"].shape == (2,)
 
 

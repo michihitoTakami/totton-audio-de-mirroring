@@ -1,0 +1,30 @@
+epochs: 100
+learning_rate: 0.0001
+weight_decay: 0.0
+grad_clip: 1.0
+use_amp: true
+log_interval: 20
+energy_cap: 1.0
+mask_mode: l1
+
+loss_weights:
+  mask: 1.0
+  stft: 1.0
+  preserve: 1.0
+  energy: 1.0
+
+mask_config:
+  n_fft: 2048
+  hop_length: 512
+  win_length: 2048
+  center: true
+
+stft_configs:
+  - n_fft: 1024
+    hop_length: 256
+    win_length: 1024
+    center: true
+  - n_fft: 2048
+    hop_length: 512
+    win_length: 2048
+    center: true
