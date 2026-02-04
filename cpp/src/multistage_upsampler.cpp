@@ -6,8 +6,7 @@
 
 namespace totton_audio_de_mirroring::dsp {
 
-FirUpsampler2x::FirUpsampler2x(std::vector<double> taps)
-    : history_pos_(0) {
+FirUpsampler2x::FirUpsampler2x(std::vector<double> taps) : history_pos_(0) {
     validate_taps(taps);
 
     even_taps_.reserve((taps.size() + 1) / 2);
@@ -30,10 +29,7 @@ std::vector<double> FirUpsampler2x::process_block(const std::vector<double>& inp
     return process_block(input.data(), input.size());
 }
 
-std::vector<double> FirUpsampler2x::process_block(
-    const double* input,
-    std::size_t length
-) {
+std::vector<double> FirUpsampler2x::process_block(const double* input, std::size_t length) {
     if (length == 0) {
         return {};
     }
@@ -97,9 +93,7 @@ void FirUpsampler2x::validate_taps(const std::vector<double>& taps) const {
     }
 }
 
-MultiStageUpsampler::MultiStageUpsampler(
-    std::vector<std::vector<double>> stage_taps
-) {
+MultiStageUpsampler::MultiStageUpsampler(std::vector<std::vector<double>> stage_taps) {
     validate_stage_taps(stage_taps);
     stages_.reserve(stage_taps.size());
     for (auto& taps : stage_taps) {
@@ -107,16 +101,11 @@ MultiStageUpsampler::MultiStageUpsampler(
     }
 }
 
-std::vector<double> MultiStageUpsampler::process_block(
-    const std::vector<double>& input
-) {
+std::vector<double> MultiStageUpsampler::process_block(const std::vector<double>& input) {
     return process_block(input.data(), input.size());
 }
 
-std::vector<double> MultiStageUpsampler::process_block(
-    const double* input,
-    std::size_t length
-) {
+std::vector<double> MultiStageUpsampler::process_block(const double* input, std::size_t length) {
     if (length == 0) {
         return {};
     }
@@ -142,8 +131,7 @@ std::size_t MultiStageUpsampler::stage_count() const {
 }
 
 void MultiStageUpsampler::validate_stage_taps(
-    const std::vector<std::vector<double>>& stage_taps
-) const {
+    const std::vector<std::vector<double>>& stage_taps) const {
     if (stage_taps.empty()) {
         throw std::invalid_argument("stage_taps must not be empty");
     }

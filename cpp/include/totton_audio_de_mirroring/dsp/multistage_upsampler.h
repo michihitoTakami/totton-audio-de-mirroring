@@ -7,7 +7,7 @@
 namespace totton_audio_de_mirroring::dsp {
 
 class FirUpsampler2x {
-public:
+   public:
     explicit FirUpsampler2x(std::vector<double> taps);
 
     std::vector<double> process_block(const std::vector<double>& input);
@@ -17,7 +17,7 @@ public:
     std::size_t taps_size() const;
     std::size_t history_size() const;
 
-private:
+   private:
     std::vector<double> even_taps_;
     std::vector<double> odd_taps_;
     std::vector<double> history_;
@@ -28,7 +28,7 @@ private:
 };
 
 class MultiStageUpsampler {
-public:
+   public:
     explicit MultiStageUpsampler(std::vector<std::vector<double>> stage_taps);
 
     std::vector<double> process_block(const std::vector<double>& input);
@@ -37,7 +37,7 @@ public:
     void reset();
     std::size_t stage_count() const;
 
-private:
+   private:
     std::vector<FirUpsampler2x> stages_;
 
     void validate_stage_taps(const std::vector<std::vector<double>>& stage_taps) const;
