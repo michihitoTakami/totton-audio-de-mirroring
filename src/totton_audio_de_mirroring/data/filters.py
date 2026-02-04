@@ -63,7 +63,7 @@ def design_bessel_fir(
         raise ValueError("Bessel FIR taps sum to zero; check parameters.")
     taps = taps / tap_sum
 
-    return taps
+    return np.asarray(taps, dtype=np.float64)
 
 
 def design_band_split_filters(
@@ -135,7 +135,8 @@ def apply_fir_filter(signal: np.ndarray, taps: np.ndarray) -> np.ndarray:
     _validate_signal(signal)
     _validate_taps(taps)
 
-    return sp_signal.lfilter(taps, [1.0], signal, axis=-1)
+    filtered = sp_signal.lfilter(taps, [1.0], signal, axis=-1)
+    return np.asarray(filtered)
 
 
 def band_split(
