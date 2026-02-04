@@ -303,15 +303,27 @@ class DataPipelineConfig:
         cache = _build_dataclass(CacheConfig, raw.get("cache"))
 
         return DataPipelineConfig(
-            num_samples=int(raw.get("num_samples", DEFAULT_NUM_SAMPLES)),
-            source_sample_rate=int(raw.get("source_sample_rate", DEFAULT_SOURCE_SR)),
-            target_sample_rate=int(raw.get("target_sample_rate", DEFAULT_TARGET_SR)),
-            source_duration_sec=float(
-                raw.get("source_duration_sec", DEFAULT_DURATION_SEC)
+            num_samples=_coerce_int(
+                raw.get("num_samples", DEFAULT_NUM_SAMPLES), "num_samples"
             ),
-            chunk_duration_sec=float(raw.get("chunk_duration_sec", DEFAULT_CHUNK_SEC)),
+            source_sample_rate=_coerce_int(
+                raw.get("source_sample_rate", DEFAULT_SOURCE_SR),
+                "source_sample_rate",
+            ),
+            target_sample_rate=_coerce_int(
+                raw.get("target_sample_rate", DEFAULT_TARGET_SR),
+                "target_sample_rate",
+            ),
+            source_duration_sec=_coerce_float(
+                raw.get("source_duration_sec", DEFAULT_DURATION_SEC),
+                "source_duration_sec",
+            ),
+            chunk_duration_sec=_coerce_float(
+                raw.get("chunk_duration_sec", DEFAULT_CHUNK_SEC),
+                "chunk_duration_sec",
+            ),
             random_chunk=bool(raw.get("random_chunk", True)),
-            seed=raw.get("seed", DEFAULT_SEED),
+            seed=_coerce_optional_int(raw.get("seed", DEFAULT_SEED), "seed"),
             signal_sampling=signal_sampling,
             augmentation=augmentation,
             degradation=degradation,
@@ -721,6 +733,32 @@ def _build_dataclass(cls: type[Any], raw: Any) -> Any:
                 value = tuple(value)
             kwargs[dataclass_field.name] = value
     return cls(**kwargs)
+
+
+def _coerce_int(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an int.")
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating, str)):
+        return int(value)
+    raise ValueError(f"{name} must be an int.")
+
+
+def _coerce_optional_int(value: Any, name: str) -> int | None:
+    if value is None:
+        return None
+    return _coerce_int(value, name)
+
+
+def _coerce_float(value: Any, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a float.")
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return float(value)
+    if isinstance(value, str):
+        return float(value)
+    raise ValueError(f"{name} must be a float.")
 
 
 def _to_tensor(array: np.ndarray) -> torch.Tensor:
