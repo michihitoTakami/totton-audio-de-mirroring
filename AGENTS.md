@@ -161,6 +161,13 @@ git pull origin main
 git checkout -b feat/your-feature-name
 ```
 
+**Worktreeを使う場合は必ず`origin/main`から作成すること（ローカル`main`起点は禁止）**:
+
+```bash
+git fetch origin
+git worktree add -b feat/your-feature-name /path/to/worktrees/your-feature origin/main
+```
+
 ### Branch Naming
 
 - `feat/`: New features
