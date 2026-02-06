@@ -116,9 +116,8 @@ def upsample_2x_fir(signal: np.ndarray, taps: np.ndarray) -> np.ndarray:
 
     zero_stuffed = np.zeros(signal_64.shape[0] * 2, dtype=np.float64)
     zero_stuffed[::2] = signal_64
-    return sp_signal.lfilter(taps_64, [1.0], zero_stuffed).astype(
-        np.float64, copy=False
-    )
+    filtered = sp_signal.lfilter(taps_64, [1.0], zero_stuffed)
+    return np.asarray(filtered, dtype=np.float64)
 
 
 def cascade_upsample(
@@ -245,9 +244,8 @@ def _generate_square_wave(
         )
 
     time_axis = np.arange(num_samples, dtype=np.float64) / float(sample_rate)
-    return sp_signal.square(2.0 * np.pi * frequency_hz * time_axis).astype(
-        np.float64, copy=False
-    )
+    square = sp_signal.square(2.0 * np.pi * frequency_hz * time_axis)
+    return np.asarray(square, dtype=np.float64)
 
 
 def _measure_overshoot(
