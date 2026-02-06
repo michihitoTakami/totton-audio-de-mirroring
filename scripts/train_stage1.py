@@ -195,6 +195,9 @@ def _apply_overrides(
         Override hooks allow rapid tuning of energy caps and learning rates
         without editing configuration files.
     """
+    if args.require_cuda and args.allow_cpu:
+        raise ValueError("Specify only one of --require-cuda or --allow-cpu.")
+
     updated = config
     if args.epochs is not None:
         updated = replace(updated, epochs=args.epochs)
