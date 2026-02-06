@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from scripts.run_stage1_stage2_pipeline import main
+from scripts.run_stage1_stage2_pipeline import _build_stage1_processor, main
 
 
 def test_cli_json_e2e_with_reference_stage1(
@@ -70,3 +70,9 @@ def test_cli_json_e2e_with_reference_stage1(
     assert payload["performance"]["throughput_x_realtime"] > 0.0
     assert payload["num_output_samples"] > input_signal.shape[0] * 10
     assert "stage1_metrics" in payload
+
+
+def test_build_stage1_processor_nmse_requires_checkpoint_path() -> None:
+    """NMSE mode should reject missing checkpoint path explicitly."""
+    with pytest.raises(ValueError, match="requires checkpoint_path"):
+        _ = _build_stage1_processor({"mode": "nmse"})

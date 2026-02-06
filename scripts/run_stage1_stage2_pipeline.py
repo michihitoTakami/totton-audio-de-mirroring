@@ -128,11 +128,14 @@ def _build_stage1_processor(raw: dict[str, Any]) -> Any:
     if mode == "reference":
         return ReferenceStage1Processor()
     if mode == "nmse":
-        checkpoint_path = Path(raw.get("checkpoint_path", ""))
+        checkpoint_raw = raw.get("checkpoint_path")
+        if checkpoint_raw is None:
+            raise ValueError("stage1.mode=nmse requires checkpoint_path.")
+        checkpoint_path = Path(str(checkpoint_raw))
         data_config_path = Path(
             raw.get("data_config_path", "configs/data_generation.yaml")
         )
-        if not checkpoint_path.as_posix():
+        if checkpoint_path.as_posix().strip() in {"", "."}:
             raise ValueError("stage1.mode=nmse requires checkpoint_path.")
         device = str(raw.get("device", "cpu"))
         return load_nmse_stage1_processor(
