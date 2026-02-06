@@ -99,6 +99,7 @@ def collate_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "low_band",
         "high_band",
         "hb_target",
+        "mirror_mask",
     }
 
     batch: dict[str, Any] = {}
