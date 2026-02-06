@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -94,6 +95,29 @@ std::size_t test_streaming_consistency() {
     return failures;
 }
 
+std::size_t test_pointer_api_null_validation() {
+    const std::vector<double> taps = {1.0};
+    totton_audio_de_mirroring::dsp::FirUpsampler2x upsampler(taps);
+
+    std::size_t failures = 0;
+    try {
+        (void)upsampler.process_block(nullptr, 1);
+        failures += check(false, "nullptr input with positive length must throw");
+    } catch (const std::invalid_argument&) {
+        failures += 0;
+    } catch (const std::exception&) {
+        failures += check(false, "unexpected exception type for nullptr validation");
+    }
+
+    try {
+        const auto output = upsampler.process_block(nullptr, 0);
+        failures += check(output.empty(), "zero-length nullptr input should return empty output");
+    } catch (const std::exception&) {
+        failures += check(false, "zero-length nullptr input should not throw");
+    }
+    return failures;
+}
+
 std::size_t test_dc_gain() {
     const std::vector<double> taps = {1.0, 1.0};
     totton_audio_de_mirroring::dsp::FirUpsampler2x upsampler(taps);
@@ -146,6 +170,15 @@ std::size_t test_reproducibility_after_reset() {
             check(nearly_equal(first[i], second[i], 1e-12), "reproducibility sample mismatch");
     }
     return failures;
+}
+
+std::size_t test_config_struct_injection() {
+    const totton_audio_de_mirroring::dsp::FirUpsampler2xConfig config{{1.0}};
+    totton_audio_de_mirroring::dsp::FirUpsampler2x upsampler(config);
+    const std::vector<double> input = {1.0, 2.0, 3.0};
+    const auto output = upsampler.process_block(input);
+    const std::vector<double> expected = {1.0, 0.0, 2.0, 0.0, 3.0, 0.0};
+    return check(output == expected, "config-struct injected taps mismatch");
 }
 
 std::size_t test_config_file_injection() {
@@ -215,9 +248,11 @@ int main() {
     failures += test_upsampler_zero_stuffing();
     failures += test_input_is_not_modified();
     failures += test_streaming_consistency();
+    failures += test_pointer_api_null_validation();
     failures += test_dc_gain();
     failures += test_impulse_response();
     failures += test_reproducibility_after_reset();
+    failures += test_config_struct_injection();
     failures += test_config_file_injection();
     failures += test_multistage_length();
     failures += test_multistage_positions();
