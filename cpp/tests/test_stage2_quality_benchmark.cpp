@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,40 @@ std::size_t test_benchmark_config_loads() {
     failures += check(loaded.transition_index == 128, "transition_index mismatch");
     failures += check(std::fabs(loaded.settle_fraction - 0.8) < 1e-9, "settle_fraction mismatch");
     return failures;
+}
+
+std::size_t test_benchmark_config_requires_benchmark_section() {
+    const auto dir = make_temp_dir("benchmark_config_missing_section");
+    const auto config_path = dir / "benchmark_missing_section.ini";
+    write_text_file(config_path, "source_sample_rate_hz=96000\n");
+
+    bool threw = false;
+    try {
+        const auto ignored =
+            totton_audio_de_mirroring::dsp::load_stage2_benchmark_config(config_path);
+        (void)ignored;
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+
+    return check(threw, "missing [benchmark] section must raise runtime_error");
+}
+
+std::size_t test_benchmark_config_requires_keys() {
+    const auto dir = make_temp_dir("benchmark_config_missing_keys");
+    const auto config_path = dir / "benchmark_missing_keys.ini";
+    write_text_file(config_path, "[benchmark]\n");
+
+    bool threw = false;
+    try {
+        const auto ignored =
+            totton_audio_de_mirroring::dsp::load_stage2_benchmark_config(config_path);
+        (void)ignored;
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+
+    return check(threw, "empty [benchmark] section must raise runtime_error");
 }
 
 std::filesystem::path write_fir_config(const std::filesystem::path& dir,
@@ -147,6 +182,8 @@ std::size_t test_overshoot_violation_is_detected() {
 int main() {
     std::size_t failures = 0;
     failures += test_benchmark_config_loads();
+    failures += test_benchmark_config_requires_benchmark_section();
+    failures += test_benchmark_config_requires_keys();
     failures += test_identity_taps_meet_limits();
     failures += test_overshoot_violation_is_detected();
     return failures == 0 ? 0 : 1;

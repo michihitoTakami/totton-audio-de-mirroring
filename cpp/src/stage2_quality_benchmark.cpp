@@ -251,6 +251,8 @@ Stage2BenchmarkConfig load_stage2_benchmark_config(const std::filesystem::path& 
 
     Stage2BenchmarkConfig config;
     bool in_benchmark_section = false;
+    bool benchmark_section_seen = false;
+    bool benchmark_key_seen = false;
 
     std::string line;
     std::size_t line_no = 0;
@@ -268,6 +270,9 @@ Stage2BenchmarkConfig load_stage2_benchmark_config(const std::filesystem::path& 
         if (starts_with(line, "[") && line.back() == ']') {
             const std::string section_name = trim(line.substr(1, line.size() - 2));
             in_benchmark_section = (section_name == "benchmark");
+            if (in_benchmark_section) {
+                benchmark_section_seen = true;
+            }
             continue;
         }
 
@@ -286,6 +291,14 @@ Stage2BenchmarkConfig load_stage2_benchmark_config(const std::filesystem::path& 
             throw std::runtime_error("invalid benchmark key/value line " + std::to_string(line_no));
         }
         apply_benchmark_kv(config, key, value);
+        benchmark_key_seen = true;
+    }
+
+    if (!benchmark_section_seen) {
+        throw std::runtime_error("benchmark section [benchmark] is required");
+    }
+    if (!benchmark_key_seen) {
+        throw std::runtime_error("benchmark section [benchmark] must define at least one key");
     }
 
     validate_benchmark_config(config);
