@@ -49,6 +49,7 @@ def test_run_pipeline_reference_mode_outputs_16x_rate(tmp_path: Path) -> None:
 
     config = PipelineConfig(
         stage2_config_dir=config_dir,
+        stage2_backend="python",
         chunk_duration_sec=0.02,
         crossfade_duration_sec=0.005,
     )
@@ -77,6 +78,7 @@ def test_pipeline_stage1_energy_cap_violation_detectable(tmp_path: Path) -> None
 
     config = PipelineConfig(
         stage2_config_dir=config_dir,
+        stage2_backend="python",
         chunk_duration_sec=0.02,
         crossfade_duration_sec=0.005,
         stage1_energy_cap=1.0e-10,

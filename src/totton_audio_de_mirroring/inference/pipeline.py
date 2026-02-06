@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -19,6 +20,10 @@ from totton_audio_de_mirroring.evaluation.metrics import (
     evaluate_stage1_hard_metrics,
 )
 from totton_audio_de_mirroring.models.nmse import NMSE
+from totton_audio_de_mirroring.stage2.cpp_backend import (
+    CppStage2RuntimeConfig,
+    CppStage2Upsampler,
+)
 from totton_audio_de_mirroring.stage2.overshoot import cascade_upsample, load_stage_taps
 
 
@@ -32,6 +37,9 @@ class PipelineConfig:
         output_sample_rate: Final sample rate after Stage 2 (705.6kHz expected).
         stage2_config_dir: Directory containing stage{i}_taps.txt files.
         stage2_num_stages: Number of 2x stages in Stage 2.
+        stage2_backend: Stage 2 backend implementation ("cpp" or "python").
+        stage2_cpp_project_dir: C++ project directory used for C API build.
+        stage2_cpp_build_dir: C++ build output directory.
         chunk_duration_sec: Input chunk duration for long audio processing.
         crossfade_duration_sec: Input-domain crossfade duration between chunks.
         stage1_energy_cap: Energy cap used for Stage 1 hard-metric checks.
@@ -47,6 +55,9 @@ class PipelineConfig:
     output_sample_rate: int = 705_600
     stage2_config_dir: Path = Path("cpp/configs")
     stage2_num_stages: int = 3
+    stage2_backend: str = "cpp"
+    stage2_cpp_project_dir: Path = Path("cpp")
+    stage2_cpp_build_dir: Path = Path("cpp/build")
     chunk_duration_sec: float = 0.25
     crossfade_duration_sec: float = 0.05
     stage1_energy_cap: float = 1.0e-3
@@ -61,6 +72,9 @@ class PipelineConfig:
             raise ValueError("output_sample_rate must be positive.")
         if self.stage2_num_stages <= 0:
             raise ValueError("stage2_num_stages must be positive.")
+        backend = self.stage2_backend.strip().lower()
+        if backend not in {"cpp", "python"}:
+            raise ValueError("stage2_backend must be either 'cpp' or 'python'.")
         if self.chunk_duration_sec <= 0.0:
             raise ValueError("chunk_duration_sec must be positive.")
         if self.crossfade_duration_sec < 0.0:
@@ -78,6 +92,7 @@ class PipelineConfig:
                 "output_sample_rate must match "
                 "stage1_sample_rate * (2**stage2_num_stages)."
             )
+        object.__setattr__(self, "stage2_backend", backend)
 
 
 @dataclass(frozen=True)
@@ -134,6 +149,47 @@ class Stage1Processor(Protocol):
         target_sample_rate: int,
     ) -> np.ndarray:
         """Process one input chunk and return Stage 1 output."""
+
+
+class Stage2Processor(Protocol):
+    """Interface for Stage 2 inference implementations."""
+
+    def process(self, signal: np.ndarray) -> np.ndarray:
+        """Process one Stage 1 chunk and return Stage 2 output chunk."""
+
+    def close(self) -> None:
+        """Release backend resources if needed."""
+
+
+@dataclass
+class PythonStage2Processor:
+    """Pure Python Stage 2 processor using local FIR taps.
+
+    Physical Basis:
+        This path mirrors zero-stuff + FIR cascade logic and is kept for
+        regression/testing parity with C++ integration.
+    """
+
+    stage_taps: Sequence[np.ndarray]
+
+    def process(self, signal: np.ndarray) -> np.ndarray:
+        return cascade_upsample(signal, self.stage_taps)
+
+    def close(self) -> None:
+        return None
+
+
+@dataclass
+class CppStage2Processor:
+    """C++ core API-backed Stage 2 processor."""
+
+    upsampler: CppStage2Upsampler
+
+    def process(self, signal: np.ndarray) -> np.ndarray:
+        return self.upsampler.process(signal)
+
+    def close(self) -> None:
+        self.upsampler.close()
 
 
 @dataclass(frozen=True)
@@ -297,7 +353,7 @@ def run_stage1_stage2_pipeline(
         while using crossfaded chunk stitching to control boundary artifacts.
     """
     _validate_input_signal(signal)
-    stage_taps = load_stage_taps(config.stage2_config_dir, config.stage2_num_stages)
+    stage2_processor = _build_stage2_processor(config)
 
     input_signal = np.asarray(signal, dtype=np.float64)
     chunk_samples = int(round(config.chunk_duration_sec * config.source_sample_rate))
@@ -314,36 +370,38 @@ def run_stage1_stage2_pipeline(
     output_assembled = np.zeros(0, dtype=np.float64)
     stage1_assembled = np.zeros(0, dtype=np.float64)
     stage1_ref_assembled = np.zeros(0, dtype=np.float64)
-
-    for chunk in _iterate_chunks(input_signal, chunk_samples, crossfade_in):
-        stage1_chunk = stage1_processor.process(
-            chunk,
-            source_sample_rate=config.source_sample_rate,
-            target_sample_rate=config.stage1_sample_rate,
-        )
-        stage2_chunk = cascade_upsample(stage1_chunk, stage_taps)
-        output_assembled = _crossfade_append(
-            output_assembled,
-            np.asarray(stage2_chunk, dtype=np.float64),
-            crossfade_output,
-        )
-        if config.evaluate_stage1_metrics:
-            reference_chunk = sp_signal.resample_poly(
-                np.asarray(chunk, dtype=np.float64),
-                up=2,
-                down=1,
-                window=("kaiser", 8.0),
+    try:
+        for chunk in _iterate_chunks(input_signal, chunk_samples, crossfade_in):
+            stage1_chunk = stage1_processor.process(
+                chunk,
+                source_sample_rate=config.source_sample_rate,
+                target_sample_rate=config.stage1_sample_rate,
             )
-            stage1_assembled = _crossfade_append(
-                stage1_assembled,
-                np.asarray(stage1_chunk, dtype=np.float64),
-                crossfade_stage1,
+            stage2_chunk = stage2_processor.process(stage1_chunk)
+            output_assembled = _crossfade_append(
+                output_assembled,
+                np.asarray(stage2_chunk, dtype=np.float64),
+                crossfade_output,
             )
-            stage1_ref_assembled = _crossfade_append(
-                stage1_ref_assembled,
-                np.asarray(reference_chunk, dtype=np.float64),
-                crossfade_stage1,
-            )
+            if config.evaluate_stage1_metrics:
+                reference_chunk = sp_signal.resample_poly(
+                    np.asarray(chunk, dtype=np.float64),
+                    up=2,
+                    down=1,
+                    window=("kaiser", 8.0),
+                )
+                stage1_assembled = _crossfade_append(
+                    stage1_assembled,
+                    np.asarray(stage1_chunk, dtype=np.float64),
+                    crossfade_stage1,
+                )
+                stage1_ref_assembled = _crossfade_append(
+                    stage1_ref_assembled,
+                    np.asarray(reference_chunk, dtype=np.float64),
+                    crossfade_stage1,
+                )
+    finally:
+        stage2_processor.close()
 
     latency = time.perf_counter() - start_time
     duration_sec = input_signal.shape[0] / float(config.source_sample_rate)
@@ -378,6 +436,21 @@ def run_stage1_stage2_pipeline(
         stage1_metrics=None,
         performance=performance,
     )
+
+
+def _build_stage2_processor(config: PipelineConfig) -> Stage2Processor:
+    """Build Stage 2 processor from runtime configuration."""
+    if config.stage2_backend == "python":
+        stage_taps = load_stage_taps(config.stage2_config_dir, config.stage2_num_stages)
+        return PythonStage2Processor(stage_taps=stage_taps)
+
+    cpp_config = CppStage2RuntimeConfig(
+        config_dir=config.stage2_config_dir,
+        num_stages=config.stage2_num_stages,
+        cpp_project_dir=config.stage2_cpp_project_dir,
+        cpp_build_dir=config.stage2_cpp_build_dir,
+    )
+    return CppStage2Processor(upsampler=CppStage2Upsampler(cpp_config))
 
 
 def _iterate_chunks(

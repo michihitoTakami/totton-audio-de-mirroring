@@ -32,6 +32,7 @@ def test_cli_json_e2e_with_reference_stage1(
                 "  output_sample_rate: 705600",
                 f"  stage2_config_dir: {config_dir.as_posix()}",
                 "  stage2_num_stages: 3",
+                "  stage2_backend: python",
                 "  chunk_duration_sec: 0.02",
                 "  crossfade_duration_sec: 0.005",
                 "  stage1_energy_cap: 0.001",
@@ -67,6 +68,7 @@ def test_cli_json_e2e_with_reference_stage1(
     payload = json.loads(capsys.readouterr().out)
     assert payload["output_sample_rate"] == 705_600
     assert payload["stage2_num_stages"] == 3
+    assert payload["stage2_backend"] == "python"
     assert payload["performance"]["throughput_x_realtime"] > 0.0
     assert payload["num_output_samples"] > input_signal.shape[0] * 10
     assert "stage1_metrics" in payload

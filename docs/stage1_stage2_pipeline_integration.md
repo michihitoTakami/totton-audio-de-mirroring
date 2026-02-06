@@ -1,49 +1,65 @@
-# Stage1 (NMSE) -> Stage2 (HIE) Pipeline Integration (Issue #25)
+# Stage1 (NMSE) -> Stage2 (HIE) Pipeline Integration (Issue #25 / #55)
 
 ## Purpose
 
-Implement and validate an end-to-end integration path:
+Provide an end-to-end integration path:
 
 - `44.1kHz -> 88.2kHz` (Stage1)
 - `88.2kHz -> 705.6kHz` (Stage2, `2x x 2x x 2x`)
 
-with configuration-driven execution, long-audio boundary handling, and reproducible performance reporting.
+while routing Stage2 through the **C++ core API** defined in EPIC #22 / Issue #43.
 
 ## Implemented Components
 
 - `src/totton_audio_de_mirroring/inference/pipeline.py`
   - `Stage1Processor` interface
-  - `ReferenceStage1Processor` (baseline 2x SRC)
-  - `NMSEStage1Processor` + `load_nmse_stage1_processor()` (checkpoint inference path)
-  - `run_stage1_stage2_pipeline()` (chunked execution, crossfade stitching, performance/memory report)
+  - `ReferenceStage1Processor` / `NMSEStage1Processor`
+  - `Stage2Processor` interface
+  - `CppStage2Processor` (default runtime path)
+  - `PythonStage2Processor` (regression/testing fallback)
+  - `run_stage1_stage2_pipeline()` with chunked E2E processing
+- `src/totton_audio_de_mirroring/stage2/cpp_backend.py`
+  - `ctypes` bridge for C++ Stage2 core API
+  - automatic CMake configure/build for `tadm_dsp_capi`
+  - stateful handle lifecycle (`create/process_block/destroy`)
+- `cpp/src/multistage_upsampler_c_api.cpp`
+  - C API wrapper over `MultiStageUpsampler`
+  - stage taps loaded from `stage{i}_taps.txt`
+  - streaming-safe `process_block` API
 - `scripts/run_stage1_stage2_pipeline.py`
-  - YAML configuration-driven CLI
-  - `.npy` / `.wav` input support
+  - YAML-driven CLI
+  - `.npy` / `.wav` input
   - benchmark mode (`--benchmark-duration-sec`)
-  - JSON output including Stage1 hard metrics and throughput
+  - JSON output including Stage2 backend and performance
 - `configs/stage1_stage2_pipeline.yaml`
-  - default integration runtime config
+  - default runtime config (`stage2_backend: cpp`)
+
+## Stage1 -> Stage2 Interface Contract
+
+- Signal type: `numpy.ndarray` (`float64`, mono, 1D)
+- Stage1 output sample rate: `88,200 Hz`
+- Stage2 input sample rate: `88,200 Hz` (exact handoff, no resampling between stages)
+- Stage2 output length: `input_length * (2 ** stage2_num_stages)`
+- Stage2 processing: stateful block processing via C++ `MultiStageUpsampler`
 
 ## Boundary Handling
 
-Long audio is processed with input-domain chunks (`chunk_duration_sec`) and overlap (`crossfade_duration_sec`).
-Each chunk is individually processed through Stage1 and Stage2, then merged with linear crossfade at both:
+Long audio is processed in input-domain chunks (`chunk_duration_sec`) with overlap (`crossfade_duration_sec`).
+Each chunk passes through Stage1 and Stage2, then stitched with linear crossfade in:
 
 - Stage1 domain (for metric assembly)
 - Final 705.6kHz output domain
 
-This avoids hard boundary discontinuities while keeping the implementation deterministic and configuration-driven.
-
 ## Hard Requirement Checks
 
-When `evaluate_stage1_metrics=true`, the pipeline computes Stage1 hard metrics (`evaluate_stage1_hard_metrics`) against a reference 2x SRC baseline:
+When `evaluate_stage1_metrics=true`, Stage1 hard metrics are computed against reference 2x SRC baseline:
 
-- low-band preservation metrics (amplitude / phase / group delay)
+- low-band preservation (amplitude / phase / group delay)
 - mirror reduction ratio
 - high-band energy cap violation flag
 - touch minimization metric
 
-## Benchmark / Memory Measurement
+## Benchmark / Memory Measurement (C++ Stage2 Path)
 
 Command:
 
@@ -58,10 +74,11 @@ Measured on this implementation (2026-02-06):
 
 - Input duration: `60.0 sec`
 - Output samples: `42,336,000` (`705,600 Hz`)
-- Latency: `14.048973835015204 sec`
-- Throughput: `4.270774556534368 x realtime`
-- Peak memory: `1369.77734375 MB` (process peak RSS)
+- Latency: `42.354259116982576 sec`
+- Throughput: `1.4166225841486175 x realtime`
+- Peak memory: `1372.87890625 MB` (process peak RSS)
 - Stage1 energy cap violated: `false` (`cap=0.001`)
+- Stage2 backend: `cpp`
 
 ## End-to-End Test Coverage
 
@@ -71,4 +88,7 @@ Measured on this implementation (2026-02-06):
   - end-to-end output generation
   - energy cap violation detectability
 - `tests/test_run_stage1_stage2_pipeline_script.py`
-  - configuration-driven CLI execution and JSON payload validation
+  - YAML-driven CLI and JSON payload validation
+- `tests/test_stage2_cpp_backend.py`
+  - C++ backend bridge parity with Python cascade
+  - missing Stage2 config directory error path

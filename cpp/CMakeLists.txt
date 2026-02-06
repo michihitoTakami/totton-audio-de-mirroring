@@ -16,6 +16,18 @@ target_include_directories(tadm_dsp PUBLIC
 target_compile_features(tadm_dsp PUBLIC cxx_std_17)
 
 target_compile_options(tadm_dsp PRIVATE -Wall -Wextra -Wpedantic)
+set_target_properties(tadm_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_library(tadm_dsp_capi SHARED
+    src/multistage_upsampler_c_api.cpp
+)
+
+target_link_libraries(tadm_dsp_capi PRIVATE tadm_dsp)
+target_include_directories(tadm_dsp_capi PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_features(tadm_dsp_capi PUBLIC cxx_std_17)
+target_compile_options(tadm_dsp_capi PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(tadm_dsp_tests
     tests/test_multistage_upsampler.cpp
