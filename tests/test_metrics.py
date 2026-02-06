@@ -118,3 +118,12 @@ def test_evaluate_stage1_hard_metrics_rejects_invalid_shape() -> None:
             output_signal=signal,
             sample_rate=SAMPLE_RATE,
         )
+
+
+def test_evaluate_dataset_rejects_empty_samples() -> None:
+    """Empty dataset input should raise ValueError."""
+    with pytest.raises(ValueError, match="samples cannot be empty"):
+        _ = evaluate_dataset(
+            samples=[],
+            sample_rate=SAMPLE_RATE,
+        )

@@ -19,6 +19,8 @@ DEFAULT_ENERGY_CAP = 1.0e-3
 DEFAULT_NUM_TAPS = 1025
 DEFAULT_N_FFT = 2048
 DEFAULT_HOP_LENGTH = 512
+DEFAULT_MIRROR_MAG_THRESHOLD = 1.5
+DEFAULT_MIRROR_SYMMETRY_THRESHOLD = 0.3
 
 
 @dataclass(frozen=True)
@@ -376,13 +378,15 @@ def _compute_mirror_score(
             mirror_band_hz=mirror_band_hz,
             n_fft=n_fft,
             hop_length=hop_length,
+            magnitude_threshold=DEFAULT_MIRROR_MAG_THRESHOLD,
+            symmetry_threshold=DEFAULT_MIRROR_SYMMETRY_THRESHOLD,
         ),
     )
     freq_mask = (detection.freqs >= mirror_band_hz[0]) & (
         detection.freqs <= mirror_band_hz[1]
     )
-    band_magnitude = detection.magnitude[freq_mask, :]
-    score = float(np.sum(np.abs(band_magnitude)))
+    detected_mask = detection.detection_mask & freq_mask[:, None]
+    score = float(np.sum(np.abs(detection.magnitude[detected_mask])))
     return score, detection.detection_mask
 
 

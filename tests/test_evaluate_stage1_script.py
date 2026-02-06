@@ -103,3 +103,26 @@ def test_cli_strict_energy_cap_returns_exit_code_2(
         main()
 
     assert excinfo.value.code == 2
+
+
+def test_cli_raises_when_output_pair_is_missing(
+    paired_npy_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should raise FileNotFoundError for missing output pair."""
+    input_dir, output_dir = paired_npy_dirs
+    (output_dir / "a.npy").unlink()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    with pytest.raises(FileNotFoundError, match="Missing output pair"):
+        main()
