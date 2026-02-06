@@ -6,6 +6,7 @@ add_library(tadm_dsp
     src/multistage_upsampler.cpp
     src/fir_design.cpp
     src/fir_config.cpp
+    src/stage2_quality_benchmark.cpp
 )
 
 target_include_directories(tadm_dsp PUBLIC
@@ -28,12 +29,25 @@ add_executable(tadm_fir_tests
 
 target_link_libraries(tadm_fir_tests PRIVATE tadm_dsp)
 
+add_executable(tadm_stage2_quality_tests
+    tests/test_stage2_quality_benchmark.cpp
+)
+
+target_link_libraries(tadm_stage2_quality_tests PRIVATE tadm_dsp)
+
 add_executable(tadm_fir_design
     src/fir_design_cli.cpp
 )
 
 target_link_libraries(tadm_fir_design PRIVATE tadm_dsp)
 
+add_executable(tadm_stage2_quality_bench
+    src/stage2_quality_bench_cli.cpp
+)
+
+target_link_libraries(tadm_stage2_quality_bench PRIVATE tadm_dsp)
+
 enable_testing()
 add_test(NAME multistage_upsampler COMMAND tadm_dsp_tests)
 add_test(NAME fir_design COMMAND tadm_fir_tests)
+add_test(NAME stage2_quality_benchmark COMMAND tadm_stage2_quality_tests)
