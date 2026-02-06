@@ -8,8 +8,8 @@ from totton_audio_de_mirroring.models.nmse import (
     NMSE,
     STFTConfig,
     _apply_fir_filter,
-    apply_energy_cap,
 )
+from totton_audio_de_mirroring.models.safety_constraints import apply_energy_cap
 from totton_audio_de_mirroring.models.unet import UNet2D
 
 
@@ -73,12 +73,22 @@ def test_nmse_invalid_energy_cap_raises() -> None:
         num_taps=129,
     )
 
-    with pytest.raises(ValueError, match="energy_cap must be positive"):
+    with pytest.raises(ValueError, match="finite positive value"):
         _ = NMSE(
             sample_rate=88_200,
             cutoff_hz=20_000.0,
             stft_config=STFTConfig(n_fft=256, hop_length=64, win_length=256),
             energy_cap=0.0,
+            lowpass_taps=lowpass,
+            highpass_taps=highpass,
+        )
+
+    with pytest.raises(ValueError, match="finite positive value"):
+        _ = NMSE(
+            sample_rate=88_200,
+            cutoff_hz=20_000.0,
+            stft_config=STFTConfig(n_fft=256, hop_length=64, win_length=256),
+            energy_cap=float("nan"),
             lowpass_taps=lowpass,
             highpass_taps=highpass,
         )
