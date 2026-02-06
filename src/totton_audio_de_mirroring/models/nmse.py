@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import cast
 
@@ -326,8 +327,10 @@ class NMSE(nn.Module):
         Physical Basis:
             Energy cap must be positive to enforce high-band safety.
         """
-        if energy_cap <= 0:
-            raise ValueError(f"energy_cap must be positive, got {energy_cap}.")
+        if not math.isfinite(energy_cap) or energy_cap <= 0:
+            raise ValueError(
+                f"energy_cap must be a finite positive value, got {energy_cap}."
+            )
 
     @staticmethod
     def _validate_stft_config(stft_config: STFTConfig) -> None:

@@ -110,3 +110,10 @@ def test_apply_energy_cap_rejects_invalid_rank() -> None:
     magnitude = torch.ones(8, 4)
     with pytest.raises(ValueError, match="magnitude must be 3D"):
         _ = apply_energy_cap(magnitude, energy_cap=1.0)
+
+
+def test_apply_energy_cap_rejects_nan_energy_cap() -> None:
+    """Ensure NaN energy cap is rejected explicitly."""
+    magnitude = torch.ones(1, 8, 4)
+    with pytest.raises(ValueError, match="finite positive value"):
+        _ = apply_energy_cap(magnitude, energy_cap=float("nan"))

@@ -73,12 +73,22 @@ def test_nmse_invalid_energy_cap_raises() -> None:
         num_taps=129,
     )
 
-    with pytest.raises(ValueError, match="energy_cap must be positive"):
+    with pytest.raises(ValueError, match="finite positive value"):
         _ = NMSE(
             sample_rate=88_200,
             cutoff_hz=20_000.0,
             stft_config=STFTConfig(n_fft=256, hop_length=64, win_length=256),
             energy_cap=0.0,
+            lowpass_taps=lowpass,
+            highpass_taps=highpass,
+        )
+
+    with pytest.raises(ValueError, match="finite positive value"):
+        _ = NMSE(
+            sample_rate=88_200,
+            cutoff_hz=20_000.0,
+            stft_config=STFTConfig(n_fft=256, hop_length=64, win_length=256),
+            energy_cap=float("nan"),
             lowpass_taps=lowpass,
             highpass_taps=highpass,
         )

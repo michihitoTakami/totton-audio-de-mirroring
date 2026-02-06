@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as torch_f
 
@@ -23,8 +25,10 @@ def apply_energy_cap(magnitude: torch.Tensor, energy_cap: float) -> torch.Tensor
         Limiting high-band total energy reduces intermodulation risk in
         nonlinear analog stages while preserving relative spectral shape.
     """
-    if energy_cap <= 0:
-        raise ValueError(f"energy_cap must be positive, got {energy_cap}.")
+    if not math.isfinite(energy_cap) or energy_cap <= 0:
+        raise ValueError(
+            f"energy_cap must be a finite positive value, got {energy_cap}."
+        )
     if magnitude.ndim != 3:
         raise ValueError("magnitude must be 3D (batch, freq, time).")
 
