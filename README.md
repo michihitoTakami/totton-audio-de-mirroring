@@ -244,6 +244,17 @@ uv run python scripts/evaluate_stage1.py \
 * **Optimization**：TensorRT（FP16推奨）
 * Stage 2は軽量のためCPU/GPUいずれでも可（全体最適で選択）
 
+### 8.3 Stage1->Stage2 統合CLI
+
+```bash
+uv run python scripts/run_stage1_stage2_pipeline.py \
+  --config configs/stage1_stage2_pipeline.yaml \
+  --input-wav path/to/input_44k1.wav \
+  --output-wav path/to/output_705k6.wav
+```
+
+ベンチマーク/仕様詳細は `docs/stage1_stage2_pipeline_integration.md` を参照。
+
 ---
 
 ## 9. Implementation Roadmap

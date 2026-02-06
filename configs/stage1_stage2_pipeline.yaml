@@ -1,0 +1,17 @@
+pipeline:
+  source_sample_rate: 44100
+  stage1_sample_rate: 88200
+  output_sample_rate: 705600
+  stage2_config_dir: cpp/configs
+  stage2_num_stages: 3
+  chunk_duration_sec: 0.25
+  crossfade_duration_sec: 0.05
+  stage1_energy_cap: 0.001
+  evaluate_stage1_metrics: true
+
+stage1:
+  mode: reference
+  # mode=nmse example:
+  # checkpoint_path: data/checkpoints/stage1_best.pt
+  # data_config_path: configs/data_generation.yaml
+  # device: cpu
