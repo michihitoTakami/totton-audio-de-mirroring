@@ -400,7 +400,7 @@ def _run_epoch(
     model: nn.Module,
     dataloader: DataLoader[dict[str, Any]],
     optimizer: torch.optim.Optimizer,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     device: torch.device,
     config: TrainingConfig,
     epoch: int,

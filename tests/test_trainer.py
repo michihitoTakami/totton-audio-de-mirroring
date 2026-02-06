@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from totton_audio_de_mirroring.training.losses import STFTLossConfig
 from totton_audio_de_mirroring.training.trainer import (
@@ -32,6 +32,17 @@ class _DummyNMSE(nn.Module):
 
     def forward(self, signal: torch.Tensor) -> torch.Tensor:
         return signal
+
+
+class _StaticBatchDataset(Dataset[dict[str, torch.Tensor]]):
+    def __init__(self, batches: list[dict[str, torch.Tensor]]) -> None:
+        self._batches = batches
+
+    def __len__(self) -> int:
+        return len(self._batches)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        return self._batches[index]
 
 
 def test_select_device_override_cpu() -> None:
@@ -133,8 +144,8 @@ def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
 
 def _make_loader(num_steps: int) -> DataLoader[dict[str, Any]]:
     batch = _make_batch(batch_size=2, length=256)
-    data = [batch for _ in range(num_steps)]
-    return DataLoader(data, batch_size=None)
+    dataset = _StaticBatchDataset([batch for _ in range(num_steps)])
+    return DataLoader(dataset, batch_size=None)
 
 
 def _make_batch(batch_size: int, length: int) -> dict[str, torch.Tensor]:

@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 
 from totton_audio_de_mirroring.data.dataloader import (
     DataLoaderConfig,
@@ -129,9 +130,11 @@ def _resolve_train_config_path(args: argparse.Namespace) -> Path | None:
     """
     if args.config is not None and args.train_config is not None:
         raise ValueError("Specify only one of --config or --train-config.")
-    if args.train_config is not None:
-        return args.train_config
-    return args.config
+    train_config = cast(Path | None, args.train_config)
+    config_alias = cast(Path | None, args.config)
+    if train_config is not None:
+        return train_config
+    return config_alias
 
 
 def _load_data_config(path: Path) -> DataPipelineConfig:
@@ -251,10 +254,18 @@ def _create_train_val_loaders(
     if seed is not None:
         generator.manual_seed(seed)
 
+    train_set: Dataset[dict[str, Any]]
+    val_set: Dataset[dict[str, Any]] | None
     if val_size > 0:
-        train_set, val_set = random_split(dataset, [train_size, val_size], generator)
+        split_train, split_val = random_split(
+            dataset,
+            [train_size, val_size],
+            generator,
+        )
+        train_set = cast(Dataset[dict[str, Any]], split_train)
+        val_set = cast(Dataset[dict[str, Any]], split_val)
     else:
-        train_set = dataset
+        train_set = cast(Dataset[dict[str, Any]], dataset)
         val_set = None
 
     loader_config = DataLoaderConfig(
