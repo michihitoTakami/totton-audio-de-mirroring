@@ -204,6 +204,29 @@ GANで質感生成を狙うのではなく、**抑制の正確さと“不用意
 
 * ABXで“ジャリつき/刺さり/金属感”が減り、アタックが維持されること
 
+### 7.4 Automated Stage 1 Hard Metrics
+
+`scripts/evaluate_stage1.py` で、README 7.1 のHard Metricsを自動評価する。
+
+```bash
+uv run python scripts/evaluate_stage1.py \
+  --input-dir data/eval/stage1/input \
+  --output-dir data/eval/stage1/output \
+  --sample-rate 88200 \
+  --energy-cap 1e-3 \
+  --json reports/stage1_metrics.json \
+  --csv reports/stage1_metrics.csv
+```
+
+主な出力指標:
+
+1. LB振幅差分（0–20kHz）
+2. LB位相差分（0–20kHz）
+3. LB群遅延差（0–20kHz）
+4. Mirror低減率（STFT対称性ベース）
+5. HB energy cap違反率
+6. Touch指標（非ミラーHB変形量）
+
 ---
 
 ## 8. Jetson Orin Nano Implementation Notes
