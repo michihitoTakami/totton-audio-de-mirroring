@@ -1,10 +1,16 @@
 #include "totton_audio_de_mirroring/dsp/multistage_upsampler.h"
 
+#include "totton_audio_de_mirroring/dsp/fir_config.h"
+
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <stdexcept>
 
 namespace totton_audio_de_mirroring::dsp {
+
+FirUpsampler2x::FirUpsampler2x(FirUpsampler2xConfig config)
+    : FirUpsampler2x(std::move(config.taps)) {}
 
 FirUpsampler2x::FirUpsampler2x(std::vector<double> taps) : history_pos_(0) {
     validate_taps(taps);
@@ -55,6 +61,10 @@ std::vector<double> FirUpsampler2x::process_block(const double* input, std::size
     return output;
 }
 
+FirUpsampler2x FirUpsampler2x::from_taps_file(const std::filesystem::path& taps_path) {
+    return FirUpsampler2x(read_taps_file(taps_path));
+}
+
 void FirUpsampler2x::reset() {
     std::fill(history_.begin(), history_.end(), 0.0);
     history_pos_ = history_.empty() ? 0 : history_.size() - 1;
@@ -66,6 +76,18 @@ std::size_t FirUpsampler2x::taps_size() const {
 
 std::size_t FirUpsampler2x::history_size() const {
     return history_.size();
+}
+
+std::size_t FirUpsampler2x::output_length_for_input(std::size_t input_length) const {
+    return input_length * 2;
+}
+
+double FirUpsampler2x::steady_state_dc_gain_even() const {
+    return std::accumulate(even_taps_.begin(), even_taps_.end(), 0.0);
+}
+
+double FirUpsampler2x::steady_state_dc_gain_odd() const {
+    return std::accumulate(odd_taps_.begin(), odd_taps_.end(), 0.0);
 }
 
 double FirUpsampler2x::dot(const std::vector<double>& taps) const {
