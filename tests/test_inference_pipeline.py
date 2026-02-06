@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from totton_audio_de_mirroring.inference.pipeline import (
     PipelineConfig,
@@ -92,3 +94,32 @@ def test_pipeline_stage1_energy_cap_violation_detectable(tmp_path: Path) -> None
 
     assert result.stage1_metrics is not None
     assert result.stage1_metrics.hb_energy_cap_violated
+
+
+def test_run_pipeline_cpp_backend_outputs_16x_rate(tmp_path: Path) -> None:
+    """Default C++ Stage 2 backend should run end-to-end when cmake is available."""
+    if shutil.which("cmake") is None:
+        pytest.skip("cmake not available")
+
+    config = PipelineConfig(
+        stage2_config_dir=Path("cpp/configs"),
+        stage2_num_stages=3,
+        stage2_backend="cpp",
+        stage2_cpp_project_dir=Path("cpp"),
+        stage2_cpp_build_dir=tmp_path / "cpp_build",
+        chunk_duration_sec=0.02,
+        crossfade_duration_sec=0.005,
+        evaluate_stage1_metrics=False,
+    )
+    processor = ReferenceStage1Processor()
+    signal = np.sin(2.0 * np.pi * 440.0 * np.arange(2205, dtype=np.float64) / 44_100.0)
+
+    result = run_stage1_stage2_pipeline(
+        signal, stage1_processor=processor, config=config
+    )
+
+    assert result.output_signal.ndim == 1
+    assert result.output_signal.shape[0] > signal.shape[0] * 12
+    assert result.stage1_signal is None
+    assert result.stage1_reference is None
+    assert result.stage1_metrics is None

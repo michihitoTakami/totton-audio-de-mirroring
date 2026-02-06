@@ -74,9 +74,9 @@ Measured on this implementation (2026-02-06):
 
 - Input duration: `60.0 sec`
 - Output samples: `42,336,000` (`705,600 Hz`)
-- Latency: `42.354259116982576 sec`
-- Throughput: `1.4166225841486175 x realtime`
-- Peak memory: `1372.87890625 MB` (process peak RSS)
+- Latency: `13.963446070963982 sec`
+- Throughput: `4.296933557452257 x realtime`
+- Peak memory: `1370.30859375 MB` (process peak RSS)
 - Stage1 energy cap violated: `false` (`cap=0.001`)
 - Stage2 backend: `cpp`
 
