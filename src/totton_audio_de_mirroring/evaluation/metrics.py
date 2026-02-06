@@ -424,7 +424,7 @@ def _stft(
     hop_length: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     noverlap = n_fft - hop_length
-    return sp_signal.stft(
+    freqs, times, stft = sp_signal.stft(
         signal,
         fs=sample_rate,
         nperseg=n_fft,
@@ -432,6 +432,11 @@ def _stft(
         window="hann",
         boundary="zeros",
         padded=True,
+    )
+    return (
+        np.asarray(freqs, dtype=np.float64),
+        np.asarray(times, dtype=np.float64),
+        np.asarray(stft, dtype=np.complex128),
     )
 
 
