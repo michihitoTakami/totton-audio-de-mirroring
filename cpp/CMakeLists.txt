@@ -4,6 +4,8 @@ project(totton_audio_de_mirroring_dsp LANGUAGES CXX)
 
 add_library(tadm_dsp
     src/multistage_upsampler.cpp
+    src/fir_design.cpp
+    src/fir_config.cpp
 )
 
 target_include_directories(tadm_dsp PUBLIC
@@ -20,5 +22,18 @@ add_executable(tadm_dsp_tests
 
 target_link_libraries(tadm_dsp_tests PRIVATE tadm_dsp)
 
+add_executable(tadm_fir_tests
+    tests/test_min_phase_fir.cpp
+)
+
+target_link_libraries(tadm_fir_tests PRIVATE tadm_dsp)
+
+add_executable(tadm_fir_design
+    src/fir_design_cli.cpp
+)
+
+target_link_libraries(tadm_fir_design PRIVATE tadm_dsp)
+
 enable_testing()
 add_test(NAME multistage_upsampler COMMAND tadm_dsp_tests)
+add_test(NAME fir_design COMMAND tadm_fir_tests)
