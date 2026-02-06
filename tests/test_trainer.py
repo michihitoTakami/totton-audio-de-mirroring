@@ -12,6 +12,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 from totton_audio_de_mirroring.training.losses import STFTLossConfig
+from totton_audio_de_mirroring.training.runtime import compute_lowband_metrics
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
     load_training_config,
@@ -140,6 +141,55 @@ def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
     assert "scheduler_state" in state
     assert "training_config" in state
     assert "device" in state
+
+
+def test_compute_lowband_metrics_normalizes_by_lowband_bins_only() -> None:
+    stft_config = STFTLossConfig(n_fft=64, hop_length=16, win_length=64)
+    sample_rate = 88_200.0
+    cutoff_hz = 5_000.0
+    length = 512
+    time = torch.arange(length, dtype=torch.float32) / sample_rate
+    x_full = torch.sin(2.0 * torch.pi * 1_000.0 * time).unsqueeze(0)
+    y_full = (1.5 * x_full).clone()
+
+    mag_mae, phase_mae = compute_lowband_metrics(
+        x_full=x_full,
+        y_full=y_full,
+        sample_rate=sample_rate,
+        cutoff_hz=cutoff_hz,
+        stft_config=stft_config,
+    )
+
+    window = torch.hann_window(64, periodic=True, dtype=x_full.dtype)
+    x_spec = torch.stft(
+        x_full,
+        n_fft=64,
+        hop_length=16,
+        win_length=64,
+        center=True,
+        window=window,
+        return_complex=True,
+    )
+    y_spec = torch.stft(
+        y_full,
+        n_fft=64,
+        hop_length=16,
+        win_length=64,
+        center=True,
+        window=window,
+        return_complex=True,
+    )
+    freqs = torch.linspace(0.0, sample_rate / 2.0, x_spec.shape[-2])
+    low_mask = (freqs <= cutoff_hz).view(1, -1, 1).expand_as(x_spec.real)
+    expected_mag_mae = torch.mean(
+        torch.abs(y_spec.abs() - x_spec.abs())[low_mask]
+    ).item()
+    expected_phase_mae = torch.mean(
+        torch.abs(torch.angle(y_spec) - torch.angle(x_spec))[low_mask]
+    ).item()
+
+    assert mag_mae == pytest.approx(expected_mag_mae, rel=1.0e-5, abs=1.0e-7)
+    assert phase_mae == pytest.approx(expected_phase_mae, rel=1.0e-5, abs=1.0e-7)
 
 
 def _make_loader(num_steps: int) -> DataLoader[dict[str, Any]]:

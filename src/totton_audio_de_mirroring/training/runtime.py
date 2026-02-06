@@ -185,15 +185,17 @@ def compute_lowband_metrics(
         dtype=x_spec.real.dtype,
     )
     low_mask = freqs <= cutoff_hz
-    low_mask_3d = low_mask.view(1, -1, 1)
+    low_mask_3d = low_mask.view(1, -1, 1).to(dtype=x_spec.real.dtype)
 
     x_mag = torch.abs(x_spec)
     y_mag = torch.abs(y_spec)
-    mag_mae = torch.mean(torch.abs(y_mag - x_mag) * low_mask_3d).item()
+    expanded_mask = low_mask_3d.expand_as(x_mag)
+    mask_norm = torch.sum(expanded_mask)
+    mag_mae = (torch.sum(torch.abs(y_mag - x_mag) * expanded_mask) / mask_norm).item()
 
     phase_diff = torch.angle(y_spec) - torch.angle(x_spec)
     phase_diff = torch.atan2(torch.sin(phase_diff), torch.cos(phase_diff))
-    phase_mae = torch.mean(torch.abs(phase_diff) * low_mask_3d).item()
+    phase_mae = (torch.sum(torch.abs(phase_diff) * expanded_mask) / mask_norm).item()
     return float(mag_mae), float(phase_mae)
 
 
