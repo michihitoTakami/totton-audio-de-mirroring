@@ -35,25 +35,26 @@ std::size_t test_config_loads() {
 
 std::size_t test_minimum_phase_design_metrics() {
     const auto config = totton_audio_de_mirroring::dsp::load_fir_config(config_path());
-    const auto& stage = config.stages[0];
-
-    totton_audio_de_mirroring::dsp::FirDesignMetrics metrics;
-    const auto taps =
-        totton_audio_de_mirroring::dsp::design_minimum_phase_lowpass(stage.design, &metrics);
-
     std::size_t failures = 0;
-    failures += check(!taps.empty(), "taps must not be empty");
-    failures += check(taps.size() % 2 == 1, "taps must be odd length");
-    failures += check(metrics.stopband_atten_db >= stage.design.attenuation_db - 1e-6,
-                      "stopband attenuation too low");
-    failures += check(metrics.passband_ripple_db <= stage.design.passband_ripple_db + 1e-6,
-                      "passband ripple too high");
-    failures +=
-        check(metrics.overshoot_ratio <= stage.design.overshoot_max + 1e-6, "overshoot too high");
-    failures +=
-        check(metrics.pre_echo_ms <= stage.design.pre_echo_ms_max + 1e-6, "pre-echo too high");
-    failures += check(metrics.post_ringing_ms <= stage.design.post_ringing_ms_max + 1e-6,
-                      "post-ringing too high");
+    for (const auto& stage : config.stages) {
+        totton_audio_de_mirroring::dsp::FirDesignMetrics metrics;
+        const auto taps =
+            totton_audio_de_mirroring::dsp::design_minimum_phase_lowpass(stage.design, &metrics);
+        failures += check(!taps.empty(), "taps must not be empty");
+        failures += check(taps.size() % 2 == 1, "taps must be odd length");
+        failures += check(metrics.stopband_atten_db >= stage.design.attenuation_db - 1e-6,
+                          "stopband attenuation too low");
+        failures += check(metrics.passband_ripple_db <= stage.design.passband_ripple_db + 1e-6,
+                          "passband ripple too high");
+        failures += check(metrics.step_overshoot_ratio <= stage.design.overshoot_max + 1e-6,
+                          "step overshoot too high");
+        failures +=
+            check(metrics.pre_echo_ms <= stage.design.pre_echo_ms_max + 1e-6, "pre-echo too high");
+        failures += check(metrics.post_ringing_ms <= stage.design.post_ringing_ms_max + 1e-6,
+                          "post-ringing too high");
+        failures +=
+            check(metrics.square_overshoot_ratio >= 0.0, "square overshoot should be valid");
+    }
     return failures;
 }
 

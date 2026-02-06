@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace totton_audio_de_mirroring::dsp {
@@ -212,7 +213,7 @@ FirDesignMetrics analyze_fir_internal(const std::vector<double>& taps, double sa
         acc += tap;
         max_step = std::max(max_step, acc);
     }
-    metrics.overshoot_ratio = std::max(0.0, max_step - 1.0);
+    metrics.step_overshoot_ratio = std::max(0.0, max_step - 1.0);
 
     std::size_t peak_index = 0;
     double peak_mag = 0.0;
@@ -223,9 +224,16 @@ FirDesignMetrics analyze_fir_internal(const std::vector<double>& taps, double sa
             peak_index = i;
         }
     }
-    metrics.pre_echo_ms = static_cast<double>(peak_index) / sample_rate_hz * 1000.0;
-
+    std::size_t first_index = 0;
     const double threshold = peak_mag * 1e-3;
+    while (first_index < taps.size() && std::fabs(taps[first_index]) < threshold) {
+        ++first_index;
+    }
+    if (first_index >= taps.size()) {
+        first_index = 0;
+    }
+    metrics.pre_echo_ms = static_cast<double>(first_index) / sample_rate_hz * 1000.0;
+
     std::size_t last_index = peak_index;
     for (std::size_t i = peak_index; i < taps.size(); ++i) {
         if (std::fabs(taps[i]) >= threshold) {
@@ -234,6 +242,30 @@ FirDesignMetrics analyze_fir_internal(const std::vector<double>& taps, double sa
     }
     metrics.post_ringing_ms =
         static_cast<double>(last_index - peak_index) / sample_rate_hz * 1000.0;
+
+    const std::size_t samples = 8192;
+    const double square_hz = 1000.0;
+    std::vector<double> square(samples);
+    for (std::size_t n = 0; n < samples; ++n) {
+        const double phase = 2.0 * kPi * square_hz * static_cast<double>(n) / sample_rate_hz;
+        square[n] = (std::sin(phase) >= 0.0) ? 1.0 : -1.0;
+    }
+    std::vector<double> filtered(samples, 0.0);
+    for (std::size_t n = 0; n < samples; ++n) {
+        double acc_sq = 0.0;
+        const std::size_t tap_count = std::min(n + 1, taps.size());
+        for (std::size_t k = 0; k < tap_count; ++k) {
+            acc_sq += taps[k] * square[n - k];
+        }
+        filtered[n] = acc_sq;
+    }
+    double max_sq = -std::numeric_limits<double>::infinity();
+    double min_sq = std::numeric_limits<double>::infinity();
+    for (std::size_t n = 2048; n < samples; ++n) {
+        max_sq = std::max(max_sq, filtered[n]);
+        min_sq = std::min(min_sq, filtered[n]);
+    }
+    metrics.square_overshoot_ratio = std::max({0.0, max_sq - 1.0, -1.0 - min_sq});
 
     return metrics;
 }
@@ -266,7 +298,7 @@ bool meets_targets(const FirDesignSpec& spec, const FirDesignMetrics& metrics) {
     if (metrics.passband_ripple_db > spec.passband_ripple_db) {
         return false;
     }
-    if (metrics.overshoot_ratio > spec.overshoot_max) {
+    if (metrics.step_overshoot_ratio > spec.overshoot_max) {
         return false;
     }
     if (metrics.pre_echo_ms > spec.pre_echo_ms_max) {
@@ -340,8 +372,9 @@ std::vector<double> design_minimum_phase_lowpass(const FirDesignSpec& spec,
         throw std::invalid_argument("min_taps must be <= max_taps after odd adjustment");
     }
 
-    FirDesignMetrics best_metrics;
-    std::vector<double> best_taps;
+    FirDesignMetrics best_metrics{};
+    std::size_t best_taps_count = 0;
+    bool has_best = false;
     for (std::size_t taps = min_taps; taps <= max_taps; taps += 2) {
         auto candidate = design_minimum_phase_fixed(spec, taps);
         auto candidate_metrics = analyze_fir_internal(candidate, spec.sample_rate_hz,
@@ -352,18 +385,27 @@ std::vector<double> design_minimum_phase_lowpass(const FirDesignSpec& spec,
             }
             return candidate;
         }
-        if (best_taps.empty() ||
-            candidate_metrics.stopband_atten_db > best_metrics.stopband_atten_db) {
+        if (!has_best || candidate_metrics.stopband_atten_db > best_metrics.stopband_atten_db) {
             best_metrics = candidate_metrics;
-            best_taps = std::move(candidate);
+            best_taps_count = taps;
+            has_best = true;
         }
     }
 
     if (metrics != nullptr) {
         *metrics = best_metrics;
     }
-    if (!best_taps.empty()) {
-        return best_taps;
+    if (has_best) {
+        std::ostringstream oss;
+        oss << "failed to satisfy design constraints up to " << max_taps << " taps; "
+            << "best candidate taps=" << best_taps_count
+            << ", stopband_atten_db=" << best_metrics.stopband_atten_db
+            << ", passband_ripple_db=" << best_metrics.passband_ripple_db
+            << ", step_overshoot_ratio=" << best_metrics.step_overshoot_ratio
+            << ", square_overshoot_ratio=" << best_metrics.square_overshoot_ratio
+            << ", pre_echo_ms=" << best_metrics.pre_echo_ms
+            << ", post_ringing_ms=" << best_metrics.post_ringing_ms;
+        throw std::runtime_error(oss.str());
     }
 
     throw std::runtime_error("failed to design minimum-phase FIR");

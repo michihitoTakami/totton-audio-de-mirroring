@@ -25,7 +25,8 @@ struct FirDesignSpec {
 struct FirDesignMetrics {
     double passband_ripple_db = 0.0;
     double stopband_atten_db = 0.0;
-    double overshoot_ratio = 0.0;
+    double step_overshoot_ratio = 0.0;
+    double square_overshoot_ratio = 0.0;
     double pre_echo_ms = 0.0;
     double post_ringing_ms = 0.0;
 };

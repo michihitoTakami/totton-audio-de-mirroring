@@ -11,7 +11,8 @@ namespace {
 void print_metrics(const totton_audio_de_mirroring::dsp::FirDesignMetrics& metrics) {
     std::cout << "passband_ripple_db=" << metrics.passband_ripple_db << "\n";
     std::cout << "stopband_atten_db=" << metrics.stopband_atten_db << "\n";
-    std::cout << "overshoot_ratio=" << metrics.overshoot_ratio << "\n";
+    std::cout << "step_overshoot_ratio=" << metrics.step_overshoot_ratio << "\n";
+    std::cout << "square_overshoot_ratio=" << metrics.square_overshoot_ratio << "\n";
     std::cout << "pre_echo_ms=" << metrics.pre_echo_ms << "\n";
     std::cout << "post_ringing_ms=" << metrics.post_ringing_ms << "\n";
 }
