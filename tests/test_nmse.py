@@ -8,8 +8,8 @@ from totton_audio_de_mirroring.models.nmse import (
     NMSE,
     STFTConfig,
     _apply_fir_filter,
-    apply_energy_cap,
 )
+from totton_audio_de_mirroring.models.safety_constraints import apply_energy_cap
 from totton_audio_de_mirroring.models.unet import UNet2D
 
 

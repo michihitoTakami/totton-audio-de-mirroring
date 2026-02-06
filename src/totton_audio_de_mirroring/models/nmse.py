@@ -10,6 +10,12 @@ import torch
 import torch.nn.functional as torch_f
 from torch import nn
 
+from totton_audio_de_mirroring.models.safety_constraints import (
+    apply_safety_constraints,
+    build_envelope_target,
+    build_highband_mask,
+    enforce_highpass_dc_block,
+)
 from totton_audio_de_mirroring.models.unet import UNet2D
 
 
@@ -89,13 +95,13 @@ class NMSE(nn.Module):
         )
 
         freq_bins = self.stft_config.n_fft // 2 + 1
-        envelope = _build_envelope_target(
+        envelope = build_envelope_target(
             num_freqs=freq_bins,
             sample_rate=sample_rate,
             cutoff_hz=self.cutoff_hz,
             floor=envelope_floor,
         )
-        hb_mask = _build_highband_mask(
+        hb_mask = build_highband_mask(
             num_freqs=freq_bins,
             sample_rate=sample_rate,
             cutoff_hz=self.cutoff_hz,
@@ -184,14 +190,17 @@ class NMSE(nn.Module):
         masked_mag = magnitude * mask.squeeze(1)
         envelope = cast(torch.Tensor, self.envelope_target)
         highband = cast(torch.Tensor, self.highband_mask)
-        masked_mag = masked_mag * envelope[:, None]
-        masked_mag = masked_mag * highband[:, None]
         if self.energy_cap is not None:
-            masked_mag = apply_energy_cap(masked_mag, self.energy_cap)
+            masked_mag = apply_safety_constraints(
+                masked_mag,
+                envelope_target=envelope,
+                highband_mask=highband,
+                energy_cap=self.energy_cap,
+            )
 
         complex_spec = masked_mag * torch.exp(1j * phase)
         time_signal = self._istft(complex_spec, length=high_band.shape[-1])
-        time_signal = _apply_fir_filter(time_signal, self.highpass_taps)
+        time_signal = enforce_highpass_dc_block(time_signal, self.highpass_taps)
         if restore_shape is None:
             return time_signal
         batch, channels, time = restore_shape
@@ -386,86 +395,6 @@ class NMSE(nn.Module):
             raise ValueError(f"{name} cannot be empty.")
         if taps.size % 2 == 0:
             raise ValueError(f"{name} must have odd length for linear-phase FIR.")
-
-
-def apply_energy_cap(magnitude: torch.Tensor, energy_cap: float) -> torch.Tensor:
-    """Apply energy cap to high-band magnitude.
-
-    Args:
-        magnitude: STFT magnitude (batch, freq, time).
-        energy_cap: Maximum allowed energy.
-
-    Returns:
-        Magnitude with energy capped.
-
-    Physical Basis:
-        Limiting total high-band energy reduces IMD risk and enforces
-        safe spectral shaping in the ultrasonic band.
-    """
-    if energy_cap <= 0:
-        raise ValueError(f"energy_cap must be positive, got {energy_cap}.")
-    if magnitude.ndim != 3:
-        raise ValueError("magnitude must be 3D (batch, freq, time).")
-
-    energy = torch.sum(magnitude**2, dim=(-2, -1), keepdim=True)
-    scale = torch.sqrt(energy_cap / (energy + 1.0e-8))
-    scale = torch.clamp(scale, max=1.0)
-    return magnitude * scale
-
-
-def _build_envelope_target(
-    num_freqs: int,
-    sample_rate: int,
-    cutoff_hz: float,
-    floor: float,
-) -> torch.Tensor:
-    """Build fixed envelope target for high-band shaping.
-
-    Args:
-        num_freqs: Number of frequency bins.
-        sample_rate: Sample rate in Hz.
-        cutoff_hz: Cutoff frequency in Hz.
-        floor: Minimum envelope value at Nyquist.
-
-    Returns:
-        Envelope vector shaped (num_freqs,).
-
-    Physical Basis:
-        Enforcing a gentle decay above the cutoff prevents excessive
-        ultrasonic energy while preserving time response below 20kHz.
-    """
-    freqs = torch.linspace(0.0, sample_rate / 2, num_freqs)
-    envelope = torch.ones_like(freqs)
-    if cutoff_hz < sample_rate / 2:
-        high = freqs >= cutoff_hz
-        if torch.any(high):
-            decay = (freqs[high] - cutoff_hz) / ((sample_rate / 2) - cutoff_hz)
-            envelope[high] = torch.clamp(1.0 - decay, min=floor)
-    return envelope
-
-
-def _build_highband_mask(
-    num_freqs: int,
-    sample_rate: int,
-    cutoff_hz: float,
-) -> torch.Tensor:
-    """Build a binary high-band mask in frequency domain.
-
-    Args:
-        num_freqs: Number of frequency bins.
-        sample_rate: Sample rate in Hz.
-        cutoff_hz: Cutoff frequency in Hz.
-
-    Returns:
-        Binary mask with 1 for >= cutoff_hz bins, else 0.
-
-    Physical Basis:
-        Zeroing bins below cutoff enforces strict low-band preservation
-        by preventing high-band leakage into the audible band.
-    """
-    freqs = torch.linspace(0.0, sample_rate / 2, num_freqs)
-    mask = (freqs >= cutoff_hz).to(dtype=torch.float32)
-    return mask
 
 
 def _apply_fir_filter(signal: torch.Tensor, taps: torch.Tensor) -> torch.Tensor:
