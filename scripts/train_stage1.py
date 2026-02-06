@@ -34,7 +34,7 @@ def main() -> None:
     """
     args = _parse_args()
     data_config = _load_data_config(args.data_config)
-    training_config = _load_training_config(args.train_config)
+    training_config = _load_training_config(_resolve_train_config_path(args))
     training_config = _apply_overrides(training_config, args)
 
     loader_config = DataLoaderConfig(
@@ -80,6 +80,12 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("configs/data_generation.yaml"),
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Alias for --train-config (README compatibility).",
+    )
     parser.add_argument("--train-config", type=Path, default=None)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -90,6 +96,29 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("data/checkpoints"))
     parser.add_argument("--no-amp", action="store_true")
     return parser.parse_args()
+
+
+def _resolve_train_config_path(args: argparse.Namespace) -> Path | None:
+    """Resolve training config path from CLI options.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Returns:
+        Selected training config path or None.
+
+    Raises:
+        ValueError: If both --config and --train-config are specified.
+
+    Physical Basis:
+        A single source of truth for loss and optimizer settings prevents
+        ambiguous training behavior.
+    """
+    if args.config is not None and args.train_config is not None:
+        raise ValueError("Specify only one of --config or --train-config.")
+    if args.train_config is not None:
+        return args.train_config
+    return args.config
 
 
 def _load_data_config(path: Path) -> DataPipelineConfig:

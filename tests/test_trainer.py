@@ -35,6 +35,11 @@ def test_training_config_from_dict_parses_weights() -> None:
     assert config.loss_weights.stft == 0.5
 
 
+def test_training_config_from_dict_parses_use_amp_string_false() -> None:
+    config = TrainingConfig.from_dict({"use_amp": "false"})
+    assert config.use_amp is False
+
+
 def test_load_training_config_yaml(tmp_path: Path) -> None:
     config_path = tmp_path / "train.yaml"
     config_path.write_text(

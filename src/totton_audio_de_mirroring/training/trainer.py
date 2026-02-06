@@ -110,7 +110,7 @@ class TrainingConfig:
             learning_rate=float(raw.get("learning_rate", 1.0e-4)),
             weight_decay=float(raw.get("weight_decay", 0.0)),
             grad_clip=_optional_float(raw.get("grad_clip", 1.0)),
-            use_amp=bool(raw.get("use_amp", True)),
+            use_amp=_parse_bool(raw.get("use_amp", True)),
             log_interval=int(raw.get("log_interval", 20)),
             mask_config=mask_cfg,
             stft_configs=stft_cfgs,
@@ -406,6 +406,38 @@ def _parse_mask_mode(value: Any) -> LossMode:
     if value not in {"l1", "l2"}:
         raise ValueError("mask_mode must be 'l1' or 'l2'.")
     return cast(LossMode, value)
+
+
+def _parse_bool(value: Any) -> bool:
+    """Parse common bool representations.
+
+    Args:
+        value: Raw value from config mapping.
+
+    Returns:
+        Parsed boolean value.
+
+    Raises:
+        ValueError: If value cannot be interpreted as bool.
+
+    Physical Basis:
+        Explicit bool parsing avoids accidental inversion of runtime
+        flags such as AMP enable/disable.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+        raise ValueError(f"Invalid bool string: {value}")
+    if isinstance(value, int):
+        if value in {0, 1}:
+            return bool(value)
+        raise ValueError(f"Invalid bool integer: {value}")
+    raise ValueError(f"Invalid bool value type: {type(value).__name__}")
 
 
 def _optional_float(value: Any) -> float | None:
