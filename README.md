@@ -208,6 +208,14 @@ GANで質感生成を狙うのではなく、**抑制の正確さと“不用意
 
 ## 8. Jetson Orin Nano Implementation Notes
 
+### 8.1 Training Device Policy (Stage 1)
+
+* **Stage 1学習はGPU実行を必須**とする（CUDA利用可能環境ではCPU学習を許可しない）
+* 学習ログに`device`（GPU名/CUDA index）を必ず記録し、再現性を担保する
+* CPU実行はデバッグ用途の最小確認のみに限定し、学習結果の評価対象に含めない
+
+### 8.2 Inference / Deployment Notes
+
 * **Chunk Processing**：数秒遅延許容のため、1–4秒程度のチャンク推論を採用可
 * **Boundary Handling**：overlap-add / crossfade（HB側で実施）
 * **Optimization**：TensorRT（FP16推奨）
@@ -238,5 +246,3 @@ GANで質感生成を狙うのではなく、**抑制の正確さと“不用意
 * 本システムは **“超音波の創作”を目的としない**。
 * 20–44kHzは **折り返し不自然成分の除去と安全整形**を主目的とし、必要ならゼロでも正しい。
 * 可聴帯（0–20kHz）の時間応答・位相保護を最優先とする。
-
-

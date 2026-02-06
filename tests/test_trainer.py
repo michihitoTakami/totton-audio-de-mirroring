@@ -1,20 +1,50 @@
 """Tests for training utilities."""
 
+from __future__ import annotations
+
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
 
+from totton_audio_de_mirroring.training.losses import STFTLossConfig
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
     load_training_config,
     select_device,
+    train_stage1,
 )
+
+
+class _DummyNMSE(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gain = nn.Parameter(torch.tensor(0.9))
+        self.sample_rate = 88_200.0
+        self.cutoff_hz = 20_000.0
+
+    def forward_highband(self, high_band: torch.Tensor) -> torch.Tensor:
+        return high_band * self.gain
+
+    def forward(self, signal: torch.Tensor) -> torch.Tensor:
+        return signal
 
 
 def test_select_device_override_cpu() -> None:
     device = select_device(device_override="cpu")
     assert device.type == "cpu"
+
+
+def test_select_device_require_cuda_raises_without_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="GPU training is required"):
+        _ = select_device(require_cuda=True)
 
 
 def test_training_config_from_dict_parses_weights() -> None:
@@ -47,6 +77,7 @@ def test_load_training_config_yaml(tmp_path: Path) -> None:
             """
             epochs: 3
             learning_rate: 0.001
+            require_cuda: false
             loss_weights:
               mask: 1.0
               stft: 1.0
@@ -59,3 +90,70 @@ def test_load_training_config_yaml(tmp_path: Path) -> None:
     config = load_training_config(config_path)
     assert config.epochs == 3
     assert config.learning_rate == pytest.approx(0.001)
+    assert config.require_cuda is False
+
+
+def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
+    train_loader = _make_loader(num_steps=2)
+    val_loader = _make_loader(num_steps=1)
+
+    config = TrainingConfig(
+        epochs=2,
+        learning_rate=1.0e-3,
+        use_amp=False,
+        log_interval=100,
+        require_cuda=False,
+        mask_config=STFTLossConfig(n_fft=64, hop_length=16, win_length=64),
+        stft_configs=(STFTLossConfig(n_fft=64, hop_length=16, win_length=64),),
+    )
+
+    model = _DummyNMSE()
+    result = train_stage1(
+        model=model,
+        train_dataloader=train_loader,
+        val_dataloader=val_loader,
+        config=config,
+        checkpoint_dir=tmp_path,
+    )
+
+    assert result.last_checkpoint == tmp_path / "stage1_last.pt"
+    assert result.best_checkpoint == tmp_path / "stage1_best.pt"
+    assert result.last_checkpoint.exists()
+    assert result.best_checkpoint.exists()
+    assert len(result.train_history) == 2
+    assert len(result.val_history) == 2
+
+    state = torch.load(result.last_checkpoint, map_location="cpu", weights_only=False)
+    assert "model_state" in state
+    assert "optimizer_state" in state
+    assert "scheduler_state" in state
+    assert "training_config" in state
+    assert "device" in state
+
+
+def _make_loader(num_steps: int) -> DataLoader[dict[str, Any]]:
+    batch = _make_batch(batch_size=2, length=256)
+    data = [batch for _ in range(num_steps)]
+    return DataLoader(data, batch_size=None)
+
+
+def _make_batch(batch_size: int, length: int) -> dict[str, torch.Tensor]:
+    generator = torch.Generator().manual_seed(0)
+    high_band = torch.randn(batch_size, length, generator=generator)
+    hb_target = high_band * 0.8
+
+    stft = torch.stft(
+        high_band,
+        n_fft=64,
+        hop_length=16,
+        win_length=64,
+        window=torch.hann_window(64),
+        return_complex=True,
+    )
+    mirror_mask = torch.ones(batch_size, stft.shape[-2], stft.shape[-1])
+    return {
+        "high_band": high_band,
+        "hb_target": hb_target,
+        "mirror_mask": mirror_mask,
+        "x_full": high_band,
+    }

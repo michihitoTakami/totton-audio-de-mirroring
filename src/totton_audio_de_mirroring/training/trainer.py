@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +19,19 @@ from totton_audio_de_mirroring.training.losses import (
     LossTerms,
     LossWeights,
     STFTLossConfig,
+    _broadcast_mask,
+    _stft_magnitude,
     compute_losses,
+)
+from totton_audio_de_mirroring.training.runtime import (
+    EpochMetrics,
+    TrainingResult,
+    build_checkpoint_state,
+    compute_lowband_metrics,
+    ensure_dir,
+    gpu_peak_memory_mb,
+    restore_checkpoint,
+    save_checkpoint,
 )
 
 
@@ -39,6 +53,9 @@ class TrainingConfig:
         mask_mode: Loss mode for mask loss.
         device: Optional device override (e.g., "cuda", "cpu").
         seed: Optional random seed.
+        require_cuda: Require GPU execution.
+        scheduler_gamma: Optional exponential scheduler gamma.
+        log_memory: Whether to report GPU peak memory.
 
     Physical Basis:
         Training config aligns the optimization loop with mirror suppression
@@ -63,6 +80,9 @@ class TrainingConfig:
     mask_mode: LossMode = "l1"
     device: str | None = None
     seed: int | None = None
+    require_cuda: bool = True
+    scheduler_gamma: float | None = None
+    log_memory: bool = True
 
     def __post_init__(self) -> None:
         _validate_positive_int(self.epochs, "epochs")
@@ -75,6 +95,10 @@ class TrainingConfig:
         if not self.stft_configs:
             raise ValueError("stft_configs must be non-empty.")
         _validate_positive_float(self.energy_cap, "energy_cap")
+        if self.scheduler_gamma is not None:
+            _validate_positive_float(self.scheduler_gamma, "scheduler_gamma")
+            if self.scheduler_gamma > 1.0:
+                raise ValueError("scheduler_gamma must be <= 1.0.")
 
     @staticmethod
     def from_dict(raw: Mapping[str, Any]) -> TrainingConfig:
@@ -119,6 +143,9 @@ class TrainingConfig:
             mask_mode=_parse_mask_mode(raw.get("mask_mode", "l1")),
             device=raw.get("device"),
             seed=_optional_int(raw.get("seed")),
+            require_cuda=_parse_bool(raw.get("require_cuda", True)),
+            scheduler_gamma=_optional_float(raw.get("scheduler_gamma")),
+            log_memory=_parse_bool(raw.get("log_memory", True)),
         )
 
 
@@ -156,45 +183,68 @@ def load_training_config(path: Path) -> TrainingConfig:
 
 
 def select_device(
-    prefer_cuda: bool = True, device_override: str | None = None
+    prefer_cuda: bool = True,
+    device_override: str | None = None,
+    *,
+    require_cuda: bool = False,
 ) -> torch.device:
-    """Select a torch device with optional CUDA preference.
+    """Select a torch device with optional CUDA requirement.
 
     Args:
         prefer_cuda: Prefer CUDA when available.
         device_override: Optional explicit device string.
+        require_cuda: If True, require CUDA device.
 
     Returns:
         Selected torch.device.
+
+    Raises:
+        RuntimeError: If CUDA is required but unavailable or overridden to CPU.
 
     Physical Basis:
         GPU acceleration is required for practical training throughput
         at high sample rates and long receptive fields.
     """
     if device_override is not None:
-        return torch.device(device_override)
-    if prefer_cuda and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
+        selected = torch.device(device_override)
+    elif prefer_cuda and torch.cuda.is_available():
+        selected = torch.device("cuda")
+    else:
+        selected = torch.device("cpu")
+
+    if selected.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA device was requested but CUDA is not available.")
+    if require_cuda and selected.type != "cuda":
+        raise RuntimeError(
+            "GPU training is required, but CUDA device was not selected."
+        )
+    return selected
 
 
 def train_stage1(
     model: nn.Module,
-    dataloader: DataLoader[dict[str, Any]],
+    train_dataloader: DataLoader[dict[str, Any]],
     config: TrainingConfig,
-) -> list[LossTerms]:
+    *,
+    val_dataloader: DataLoader[dict[str, Any]] | None = None,
+    checkpoint_dir: Path | None = None,
+    resume_from: Path | None = None,
+) -> TrainingResult:
     """Train NMSE Stage 1 with composite losses.
 
     Args:
         model: NMSE model with forward_highband method.
-        dataloader: DataLoader yielding high-band batches.
+        train_dataloader: DataLoader yielding high-band training batches.
         config: Training configuration.
+        val_dataloader: Optional validation DataLoader.
+        checkpoint_dir: Optional checkpoint output directory.
+        resume_from: Optional checkpoint path for resume.
 
     Returns:
-        List of LossTerms per optimization step.
+        TrainingResult with histories and checkpoint paths.
 
     Raises:
-        ValueError: If model or dataloader are invalid.
+        ValueError: If model or dataloaders are invalid.
 
     Physical Basis:
         Training optimizes mirror suppression while preserving non-mirror
@@ -204,10 +254,12 @@ def train_stage1(
         raise ValueError("model must be a torch.nn.Module.")
     if not hasattr(model, "forward_highband"):
         raise ValueError("model must implement forward_highband().")
-    if dataloader is None:
-        raise ValueError("dataloader must be provided.")
+    if train_dataloader is None:
+        raise ValueError("train_dataloader must be provided.")
 
-    device = select_device(device_override=config.device)
+    device = select_device(
+        device_override=config.device, require_cuda=config.require_cuda
+    )
     _set_seed(config.seed)
 
     model = model.to(device)
@@ -218,25 +270,133 @@ def train_stage1(
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=config.use_amp and device.type == "cuda")
-
-    losses: list[LossTerms] = []
-    for epoch in range(config.epochs):
-        epoch_losses = _train_epoch(
-            model,
-            dataloader,
+    scheduler = (
+        torch.optim.lr_scheduler.ExponentialLR(
             optimizer,
-            scaler,
-            device,
-            config,
-            epoch,
+            gamma=config.scheduler_gamma,
         )
-        losses.extend(epoch_losses)
+        if config.scheduler_gamma is not None
+        else None
+    )
+    scaler = torch.amp.GradScaler(
+        "cuda",
+        enabled=config.use_amp and device.type == "cuda",
+    )
 
-    return losses
+    if checkpoint_dir is not None:
+        ensure_dir(checkpoint_dir)
+
+    train_history: list[EpochMetrics] = []
+    val_history: list[EpochMetrics] = []
+    best_val_total = math.inf
+    best_checkpoint: Path | None = None
+    last_checkpoint: Path | None = None
+
+    start_epoch = 0
+    if resume_from is not None:
+        start_epoch, best_val_total = restore_checkpoint(
+            resume_from=resume_from,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            scaler=scaler,
+        )
+
+    try:
+        for epoch in range(start_epoch, config.epochs):
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats(device)
+
+            train_epoch = _run_epoch(
+                model=model,
+                dataloader=train_dataloader,
+                optimizer=optimizer,
+                scaler=scaler,
+                device=device,
+                config=config,
+                epoch=epoch,
+                training=True,
+            )
+            train_history.append(train_epoch)
+
+            val_epoch: EpochMetrics | None = None
+            if val_dataloader is not None:
+                val_epoch = _run_epoch(
+                    model=model,
+                    dataloader=val_dataloader,
+                    optimizer=optimizer,
+                    scaler=scaler,
+                    device=device,
+                    config=config,
+                    epoch=epoch,
+                    training=False,
+                )
+                val_history.append(val_epoch)
+
+            if scheduler is not None:
+                scheduler.step()
+
+            monitor_total = (
+                val_epoch.total if val_epoch is not None else train_epoch.total
+            )
+            is_best = monitor_total < best_val_total
+            if is_best:
+                best_val_total = monitor_total
+
+            _log_epoch_summary(
+                epoch=epoch,
+                train_epoch=train_epoch,
+                val_epoch=val_epoch,
+                lr=optimizer.param_groups[0]["lr"],
+                device=device,
+            )
+
+            if checkpoint_dir is not None:
+                checkpoint_state = build_checkpoint_state(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=scaler,
+                    config=config,
+                    epoch=epoch,
+                    best_val_total=best_val_total,
+                    train_history=train_history,
+                    val_history=val_history,
+                    device=device,
+                )
+                last_checkpoint = checkpoint_dir / "stage1_last.pt"
+                save_checkpoint(last_checkpoint, checkpoint_state)
+                if is_best:
+                    best_checkpoint = checkpoint_dir / "stage1_best.pt"
+                    save_checkpoint(best_checkpoint, checkpoint_state)
+    except Exception as exc:
+        if checkpoint_dir is not None:
+            emergency_state = build_checkpoint_state(
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scaler=scaler,
+                config=config,
+                epoch=max(start_epoch, len(train_history) - 1),
+                best_val_total=best_val_total,
+                train_history=train_history,
+                val_history=val_history,
+                device=device,
+            )
+            save_checkpoint(checkpoint_dir / "stage1_emergency.pt", emergency_state)
+        raise RuntimeError(f"Training failed: {exc}") from exc
+
+    return TrainingResult(
+        device=str(device),
+        train_history=tuple(train_history),
+        val_history=tuple(val_history),
+        best_val_total=best_val_total,
+        last_checkpoint=last_checkpoint,
+        best_checkpoint=best_checkpoint,
+    )
 
 
-def _train_epoch(
+def _run_epoch(
     model: nn.Module,
     dataloader: DataLoader[dict[str, Any]],
     optimizer: torch.optim.Optimizer,
@@ -244,133 +404,284 @@ def _train_epoch(
     device: torch.device,
     config: TrainingConfig,
     epoch: int,
-) -> list[LossTerms]:
-    """Train a single epoch.
+    *,
+    training: bool,
+) -> EpochMetrics:
+    """Run one train/validation epoch and aggregate metrics."""
+    totals = {
+        "total": 0.0,
+        "mask": 0.0,
+        "stft": 0.0,
+        "preserve": 0.0,
+        "energy": 0.0,
+        "mirror_reduction_db": 0.0,
+        "touch_l1": 0.0,
+        "energy_cap_violation": 0.0,
+        "lb_mag_mae": 0.0,
+        "lb_phase_mae": 0.0,
+    }
+    lb_count = 0
+    sample_count = 0
+    step_count = 0
 
-    Args:
-        model: NMSE model.
-        dataloader: Training DataLoader.
-        optimizer: Optimizer instance.
-        scaler: AMP grad scaler.
-        device: Device for training.
-        config: Training configuration.
-        epoch: Current epoch index.
+    start = time.perf_counter()
+    model.train(mode=training)
 
-    Returns:
-        Loss terms for each step in the epoch.
-
-    Physical Basis:
-        Epoch-wise iteration ensures stable convergence while respecting
-        the mirror suppression constraints.
-    """
-    step_losses: list[LossTerms] = []
     for step, batch in enumerate(dataloader):
         hb_in, hb_target, mirror_mask = _prepare_batch(batch, device)
+        batch_size = hb_in.shape[0]
 
-        optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
-            hb_pred = _forward_highband(model, hb_in)
-            terms = compute_losses(
-                hb_in,
-                hb_target,
-                hb_pred,
-                mirror_mask,
-                mask_config=config.mask_config,
-                stft_configs=config.stft_configs,
-                weights=config.loss_weights,
-                energy_cap=config.energy_cap,
-                mask_mode=config.mask_mode,
-            )
+        if training:
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
+                hb_pred = _forward_highband(model, hb_in)
+                terms = compute_losses(
+                    hb_in,
+                    hb_target,
+                    hb_pred,
+                    mirror_mask,
+                    mask_config=config.mask_config,
+                    stft_configs=config.stft_configs,
+                    weights=config.loss_weights,
+                    energy_cap=config.energy_cap,
+                    mask_mode=config.mask_mode,
+                )
+            scaler.scale(terms.total).backward()
+            if config.grad_clip is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            with torch.no_grad():
+                hb_pred = _forward_highband(model, hb_in)
+                terms = compute_losses(
+                    hb_in,
+                    hb_target,
+                    hb_pred,
+                    mirror_mask,
+                    mask_config=config.mask_config,
+                    stft_configs=config.stft_configs,
+                    weights=config.loss_weights,
+                    energy_cap=config.energy_cap,
+                    mask_mode=config.mask_mode,
+                )
 
-        scaler.scale(terms.total).backward()
-        if config.grad_clip is not None:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
+        batch_metrics = _compute_batch_metrics(
+            model=model,
+            batch=batch,
+            hb_in=hb_in,
+            hb_pred=hb_pred,
+            mirror_mask=mirror_mask,
+            device=device,
+            mask_config=config.mask_config,
+            energy_cap=config.energy_cap,
+            compute_low_band=not training,
+        )
 
-        if step % config.log_interval == 0:
-            _log_progress(epoch, step, terms)
-        step_losses.append(terms)
+        totals["total"] += terms.total.detach().item()
+        totals["mask"] += terms.mask.detach().item()
+        totals["stft"] += terms.stft.detach().item()
+        totals["preserve"] += terms.preserve.detach().item()
+        totals["energy"] += terms.energy.detach().item()
+        totals["mirror_reduction_db"] += batch_metrics["mirror_reduction_db"]
+        totals["touch_l1"] += batch_metrics["touch_l1"]
+        totals["energy_cap_violation"] += batch_metrics["energy_cap_violation"]
+        if batch_metrics["lb_available"]:
+            totals["lb_mag_mae"] += batch_metrics["lb_mag_mae"]
+            totals["lb_phase_mae"] += batch_metrics["lb_phase_mae"]
+            lb_count += 1
 
-    return step_losses
+        step_count += 1
+        sample_count += batch_size
+
+        if training and step % config.log_interval == 0:
+            _log_step_progress(epoch=epoch, step=step, terms=terms)
+
+    if step_count == 0:
+        raise ValueError("dataloader produced zero batches.")
+
+    elapsed = max(time.perf_counter() - start, 1.0e-9)
+    peak_memory = gpu_peak_memory_mb(device, enabled=config.log_memory)
+
+    return EpochMetrics(
+        total=totals["total"] / step_count,
+        mask=totals["mask"] / step_count,
+        stft=totals["stft"] / step_count,
+        preserve=totals["preserve"] / step_count,
+        energy=totals["energy"] / step_count,
+        mirror_reduction_db=totals["mirror_reduction_db"] / step_count,
+        touch_l1=totals["touch_l1"] / step_count,
+        energy_cap_violation=totals["energy_cap_violation"] / step_count,
+        lb_mag_mae=(totals["lb_mag_mae"] / lb_count) if lb_count > 0 else 0.0,
+        lb_phase_mae=(totals["lb_phase_mae"] / lb_count) if lb_count > 0 else 0.0,
+        samples=sample_count,
+        steps=step_count,
+        throughput_samples_per_sec=float(sample_count / elapsed),
+        throughput_steps_per_sec=float(step_count / elapsed),
+        gpu_peak_memory_mb=peak_memory,
+    )
+
+
+def _compute_batch_metrics(
+    *,
+    model: nn.Module,
+    batch: Mapping[str, Any],
+    hb_in: torch.Tensor,
+    hb_pred: torch.Tensor,
+    mirror_mask: torch.Tensor,
+    device: torch.device,
+    mask_config: STFTLossConfig,
+    energy_cap: float,
+    compute_low_band: bool,
+) -> dict[str, float | bool]:
+    """Compute monitor-only batch metrics."""
+    eps = 1.0e-8
+    hb_in_mag = _stft_magnitude(hb_in, mask_config)
+    hb_pred_mag = _stft_magnitude(hb_pred, mask_config)
+
+    mirror = _broadcast_mask(mirror_mask, hb_in_mag.shape).to(
+        device=hb_in_mag.device,
+        dtype=hb_in_mag.dtype,
+    )
+    mirror = torch.clamp(mirror, 0.0, 1.0)
+
+    in_energy = torch.sum((hb_in_mag**2) * mirror, dim=(-2, -1))
+    out_energy = torch.sum((hb_pred_mag**2) * mirror, dim=(-2, -1))
+    mirror_reduction_db = torch.mean(
+        10.0 * torch.log10((in_energy + eps) / (out_energy + eps))
+    ).item()
+
+    touch = torch.mean(torch.abs(hb_pred_mag - hb_in_mag) * (1.0 - mirror)).item()
+    hb_energy = torch.sum(hb_pred_mag**2, dim=(-2, -1))
+    energy_violation = torch.mean(torch.clamp(hb_energy - energy_cap, min=0.0)).item()
+
+    lb_mag_mae = 0.0
+    lb_phase_mae = 0.0
+    lb_available = False
+    if compute_low_band and "x_full" in batch:
+        x_full = _to_device_tensor(batch["x_full"], device)
+        if x_full is not None:
+            with torch.no_grad():
+                y_full = model(x_full)
+            sample_rate = _get_model_float_attr(model, "sample_rate")
+            cutoff_hz = _get_model_float_attr(model, "cutoff_hz")
+            if sample_rate is not None and cutoff_hz is not None:
+                lb_mag_mae, lb_phase_mae = compute_lowband_metrics(
+                    x_full=x_full,
+                    y_full=y_full,
+                    sample_rate=sample_rate,
+                    cutoff_hz=cutoff_hz,
+                    stft_config=mask_config,
+                )
+                lb_available = True
+
+    return {
+        "mirror_reduction_db": float(mirror_reduction_db),
+        "touch_l1": float(touch),
+        "energy_cap_violation": float(energy_violation),
+        "lb_mag_mae": float(lb_mag_mae),
+        "lb_phase_mae": float(lb_phase_mae),
+        "lb_available": lb_available,
+    }
 
 
 def _prepare_batch(
-    batch: dict[str, Any],
+    batch: Mapping[str, Any],
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Extract and move batch tensors to device.
-
-    Args:
-        batch: Batch dictionary from DataLoader.
-        device: Device for tensors.
-
-    Returns:
-        Tuple of (hb_in, hb_target, mirror_mask) tensors.
-
-    Physical Basis:
-        Moving only required tensors keeps data flow minimal while
-        preserving mirror mask alignment.
-    """
+    """Extract and move batch tensors to device."""
     if "high_band" not in batch or "hb_target" not in batch:
         raise ValueError("batch must contain high_band and hb_target.")
     if "mirror_mask" not in batch:
         raise ValueError("batch must contain mirror_mask.")
 
-    hb_in = batch["high_band"].to(device, non_blocking=True)
-    hb_target = batch["hb_target"].to(device, non_blocking=True)
-    mirror_mask = batch["mirror_mask"].to(device, non_blocking=True)
+    hb_in = _to_device_tensor(batch["high_band"], device)
+    hb_target = _to_device_tensor(batch["hb_target"], device)
+    mirror_mask = _to_device_tensor(batch["mirror_mask"], device)
 
+    if hb_in is None or hb_target is None or mirror_mask is None:
+        raise ValueError("batch tensors must be torch.Tensor.")
     return hb_in, hb_target, mirror_mask
 
 
 def _forward_highband(model: nn.Module, hb_in: torch.Tensor) -> torch.Tensor:
-    """Forward high-band data through the NMSE model.
-
-    Args:
-        model: NMSE model with forward_highband method.
-        hb_in: High-band input tensor.
-
-    Returns:
-        Predicted high-band output.
-
-    Physical Basis:
-        High-band-only forward keeps low-band bypass intact and focuses
-        learning on mirror suppression.
-    """
+    """Forward high-band data through the NMSE model."""
     forward_fn = cast(Callable[[torch.Tensor], torch.Tensor], model.forward_highband)
     return forward_fn(hb_in)
 
 
-def _log_progress(epoch: int, step: int, terms: LossTerms) -> None:
-    """Log training progress.
-
-    Args:
-        epoch: Epoch index.
-        step: Step index.
-        terms: Loss terms for the step.
-
-    Physical Basis:
-        Lightweight logging tracks convergence without perturbing training.
-    """
-    message = (
-        f"epoch={epoch} step={step} total={terms.total.item():.6f} "
-        f"mask={terms.mask.item():.6f} stft={terms.stft.item():.6f} "
-        f"preserve={terms.preserve.item():.6f} energy={terms.energy.item():.6f}"
+def _log_step_progress(epoch: int, step: int, terms: LossTerms) -> None:
+    """Log step progress."""
+    print(
+        " ".join(
+            [
+                f"epoch={epoch}",
+                f"step={step}",
+                f"total={terms.total.item():.6f}",
+                f"mask={terms.mask.item():.6f}",
+                f"stft={terms.stft.item():.6f}",
+                f"preserve={terms.preserve.item():.6f}",
+                f"energy={terms.energy.item():.6f}",
+            ]
+        )
     )
-    print(message)
+
+
+def _log_epoch_summary(
+    *,
+    epoch: int,
+    train_epoch: EpochMetrics,
+    val_epoch: EpochMetrics | None,
+    lr: float,
+    device: torch.device,
+) -> None:
+    """Log epoch summary."""
+    train_line = (
+        f"epoch={epoch} split=train total={train_epoch.total:.6f} "
+        f"mirror_db={train_epoch.mirror_reduction_db:.3f} "
+        f"touch={train_epoch.touch_l1:.6f} "
+        f"energy_violation={train_epoch.energy_cap_violation:.6f} "
+        f"samples_per_sec={train_epoch.throughput_samples_per_sec:.2f} "
+        f"steps_per_sec={train_epoch.throughput_steps_per_sec:.2f} "
+        f"gpu_peak_mb={train_epoch.gpu_peak_memory_mb:.2f}"
+    )
+    print(train_line)
+
+    if val_epoch is not None:
+        val_line = (
+            f"epoch={epoch} split=val total={val_epoch.total:.6f} "
+            f"mirror_db={val_epoch.mirror_reduction_db:.3f} "
+            f"touch={val_epoch.touch_l1:.6f} "
+            f"energy_violation={val_epoch.energy_cap_violation:.6f} "
+            f"lb_mag_mae={val_epoch.lb_mag_mae:.6f} "
+            f"lb_phase_mae={val_epoch.lb_phase_mae:.6f}"
+        )
+        print(val_line)
+
+    device_line = f"epoch={epoch} lr={lr:.8f} device={device}"
+    if device.type == "cuda":
+        index = torch.cuda.current_device()
+        name = torch.cuda.get_device_name(index)
+        device_line += f" gpu={name} cuda_index={index}"
+    print(device_line)
+
+
+def _to_device_tensor(value: Any, device: torch.device) -> torch.Tensor | None:
+    if not isinstance(value, torch.Tensor):
+        return None
+    return value.to(device, non_blocking=True)
+
+
+def _get_model_float_attr(model: nn.Module, name: str) -> float | None:
+    value = getattr(model, name, None)
+    if isinstance(value, int | float):
+        return float(value)
+    return None
 
 
 def _set_seed(seed: int | None) -> None:
-    """Set random seeds for reproducibility.
-
-    Args:
-        seed: Seed value or None.
-
-    Physical Basis:
-        Deterministic seeding aids in comparing mirror suppression behavior.
-    """
+    """Set random seeds for reproducibility."""
     if seed is None:
         return
     if seed < 0:
@@ -409,21 +720,7 @@ def _parse_mask_mode(value: Any) -> LossMode:
 
 
 def _parse_bool(value: Any) -> bool:
-    """Parse common bool representations.
-
-    Args:
-        value: Raw value from config mapping.
-
-    Returns:
-        Parsed boolean value.
-
-    Raises:
-        ValueError: If value cannot be interpreted as bool.
-
-    Physical Basis:
-        Explicit bool parsing avoids accidental inversion of runtime
-        flags such as AMP enable/disable.
-    """
+    """Parse common bool representations."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
