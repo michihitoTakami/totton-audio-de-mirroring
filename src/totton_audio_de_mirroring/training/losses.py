@@ -399,13 +399,17 @@ def _resize_mask(
     if target_freq <= 0 or target_time <= 0:
         raise ValueError("target_freq and target_time must be positive.")
 
-    mask_4d = mask.unsqueeze(1)
+    original_dtype = mask.dtype
+    mask_4d = mask.unsqueeze(1).to(dtype=torch.float32)
     resized = F.interpolate(
         mask_4d,
         size=(target_freq, target_time),
         mode="nearest",
     )
-    return resized.squeeze(1)
+    resized_3d = resized.squeeze(1)
+    if original_dtype == torch.bool:
+        return resized_3d > 0.5
+    return resized_3d.to(dtype=original_dtype)
 
 
 def _validate_signal_2d(signal: torch.Tensor, name: str) -> None:
