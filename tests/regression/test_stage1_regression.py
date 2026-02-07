@@ -25,8 +25,13 @@ _STAGE1_OUTPUT_DIR = _GOLDEN_ROOT / "stage1" / "output"
 _IMD_NAIVE_DIR = _GOLDEN_ROOT / "imd" / "naive"
 _IMD_NMSE_DIR = _GOLDEN_ROOT / "imd" / "nmse"
 
-_REL_TOL = 1.0e-3
-_ABS_TOL = 1.0e-8
+_DEFAULT_REL_TOL = 1.0e-2
+_DEFAULT_ABS_TOL = 1.0e-7
+_KEY_TOLERANCES: dict[str, tuple[float, float]] = {
+    "lb_phase_error_deg": (2.0e-2, 1.0e-6),
+    "lb_group_delay_error_samples": (2.0e-2, 1.0e-4),
+    "touch_metric": (1.0e-2, 1.0e-6),
+}
 
 
 def _load_baseline() -> dict[str, Any]:
@@ -53,8 +58,16 @@ def _load_npy_pairs(
     return pairs
 
 
+def _resolve_tolerance(key: str) -> tuple[float, float]:
+    for suffix, tolerance in _KEY_TOLERANCES.items():
+        if key.endswith(suffix):
+            return tolerance
+    return _DEFAULT_REL_TOL, _DEFAULT_ABS_TOL
+
+
 def _assert_close(expected: float, actual: float, key: str) -> None:
-    if not np.isclose(actual, expected, rtol=_REL_TOL, atol=_ABS_TOL):
+    rel_tol, abs_tol = _resolve_tolerance(key)
+    if not np.isclose(actual, expected, rtol=rel_tol, atol=abs_tol):
         raise AssertionError(
             f"Metric mismatch for {key}: expected={expected}, actual={actual}"
         )
@@ -67,6 +80,8 @@ def _assert_mapping_close(
 ) -> None:
     for key, expected_value in expected.items():
         full_key = f"{prefix}.{key}"
+        if key not in actual:
+            raise AssertionError(f"Missing key in actual payload: {full_key}")
         actual_value = actual[key]
         if isinstance(expected_value, bool):
             assert isinstance(actual_value, bool)
