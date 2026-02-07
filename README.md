@@ -233,6 +233,35 @@ uv run python scripts/evaluate_stage1.py \
 uv run --extra dev pytest tests/regression/test_stage1_regression.py -v
 ```
 
+### 7.5 Issue #63 Workflow (Retrain + Checkpoint Selection)
+
+`scripts/run_issue63_stage1_workflow.py` は以下を一括実行する。
+
+1. 学習条件固定（config hash / seed / gate 設定を `run_manifest.json` へ保存）
+2. `scripts/train_stage1.py` による Stage 1 再学習
+3. Hard Metrics / Mirror Metrics 評価
+4. IMD proxy（naive vs NMSE）比較
+5. gate通過候補からベストcheckpoint選定とレポート保存
+
+```bash
+uv run python scripts/run_issue63_stage1_workflow.py \
+  --data-config configs/data_generation.yaml \
+  --train-config configs/training_stage1.yaml \
+  --eval-input-dir tests/fixtures/golden_samples/stage1/input \
+  --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
+  --checkpoint-dir data/checkpoints/issue63 \
+  --report-dir reports/issue63 \
+  --seed 1234 \
+  --strict-zero-energy-cap-violations \
+  --strict-positive-thdn-improvement
+```
+
+主な成果物:
+
+* `reports/issue63/run_manifest.json`
+* `reports/issue63/selected/selection_report.json`
+* `reports/issue63/selected/stage1_best_selected.pt`
+
 ---
 
 ## 8. Jetson Orin Nano Implementation Notes

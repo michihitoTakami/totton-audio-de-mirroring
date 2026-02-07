@@ -28,6 +28,7 @@ def test_resolve_train_config_rejects_both_options() -> None:
 def test_apply_overrides_rejects_conflicting_cuda_flags() -> None:
     args = Namespace(
         epochs=None,
+        seed=None,
         learning_rate=None,
         energy_cap=None,
         device=None,
@@ -37,3 +38,18 @@ def test_apply_overrides_rejects_conflicting_cuda_flags() -> None:
     )
     with pytest.raises(ValueError, match="Specify only one"):
         _ = _apply_overrides(TrainingConfig(), args)
+
+
+def test_apply_overrides_updates_seed() -> None:
+    args = Namespace(
+        epochs=None,
+        seed=1234,
+        learning_rate=None,
+        energy_cap=None,
+        device=None,
+        no_amp=False,
+        require_cuda=False,
+        allow_cpu=False,
+    )
+    updated = _apply_overrides(TrainingConfig(seed=1), args)
+    assert updated.seed == 1234
