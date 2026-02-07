@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import torch
+import torch.nn.functional as F
 
 LossMode = Literal["l1", "l2"]
 
@@ -368,13 +369,43 @@ def _broadcast_mask(mask: torch.Tensor, shape: torch.Size) -> torch.Tensor:
         mask = mask.unsqueeze(0)
     if mask.ndim != 3:
         raise ValueError("mirror_mask must be 2D or 3D.")
-    if mask.shape[1:] != shape[1:]:
-        raise ValueError("mirror_mask frequency/time dims must match.")
     if mask.shape[0] == 1 and shape[0] > 1:
         mask = mask.expand(shape[0], -1, -1)
     if mask.shape[0] != shape[0]:
         raise ValueError("mirror_mask batch dimension mismatch.")
+    if mask.shape[1:] != shape[1:]:
+        mask = _resize_mask(mask, target_freq=shape[1], target_time=shape[2])
     return mask
+
+
+def _resize_mask(
+    mask: torch.Tensor, target_freq: int, target_time: int
+) -> torch.Tensor:
+    """Resize mask to match STFT bin/time dimensions.
+
+    Args:
+        mask: Mask tensor with shape (batch, freq, time).
+        target_freq: Target frequency-bin count.
+        target_time: Target time-frame count.
+
+    Returns:
+        Resized mask tensor with shape (batch, target_freq, target_time).
+
+    Physical Basis:
+        Mirror masks can be generated on grids that differ slightly from
+        training STFT grids. Nearest-neighbor resizing preserves bin-wise
+        detection semantics while aligning dimensions for loss weighting.
+    """
+    if target_freq <= 0 or target_time <= 0:
+        raise ValueError("target_freq and target_time must be positive.")
+
+    mask_4d = mask.unsqueeze(1)
+    resized = F.interpolate(
+        mask_4d,
+        size=(target_freq, target_time),
+        mode="nearest",
+    )
+    return resized.squeeze(1)
 
 
 def _validate_signal_2d(signal: torch.Tensor, name: str) -> None:
