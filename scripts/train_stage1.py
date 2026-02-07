@@ -312,12 +312,13 @@ def _create_train_val_loaders(
 def _log_result(result: TrainingResult) -> None:
     """Print final training summary."""
     print(
-        f"training_completed device={result.device} best_val_total={result.best_val_total:.6f}"
+        f"training_completed device={result.device} best_val_total={result.best_val_total:.6f}",
+        flush=True,
     )
     if result.last_checkpoint is not None:
-        print(f"last_checkpoint={result.last_checkpoint}")
+        print(f"last_checkpoint={result.last_checkpoint}", flush=True)
     if result.best_checkpoint is not None:
-        print(f"best_checkpoint={result.best_checkpoint}")
+        print(f"best_checkpoint={result.best_checkpoint}", flush=True)
 
 
 if __name__ == "__main__":

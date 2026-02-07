@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from scripts.run_issue63_stage1_workflow import (
     GateConfig,
     _passes_hard_gate,
     _passes_imd_gate,
+    _run_command_with_live_log,
     _select_best_candidate,
 )
 
@@ -101,3 +103,29 @@ def test_select_best_candidate_raises_when_nothing_passes() -> None:
 
     with pytest.raises(RuntimeError, match="No checkpoint passed"):
         _ = _select_best_candidate([c1, c2])
+
+
+def test_run_command_with_live_log_streams_output(tmp_path: Path) -> None:
+    log_path = tmp_path / "stream.log"
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys,time;"
+            "print('line1', flush=True);"
+            "time.sleep(0.01);"
+            "print('line2', flush=True)"
+        ),
+    ]
+
+    exit_code = _run_command_with_live_log(
+        command,
+        log_path=log_path,
+        section_label="test",
+    )
+
+    assert exit_code == 0
+    text = log_path.read_text(encoding="utf-8")
+    assert "line1" in text
+    assert "line2" in text
+    assert "exit_code=0" in text

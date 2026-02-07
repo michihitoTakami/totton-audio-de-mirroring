@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -311,18 +313,13 @@ def _run_training_command(
     if args.energy_cap is not None:
         command.extend(["--energy-cap", str(args.energy_cap)])
 
-    completed = subprocess.run(  # noqa: S603
-        command,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
     training_log = args.report_dir / "training_stdout_stderr.log"
-    training_log.write_text(
-        f"$ {' '.join(command)}\n\n{completed.stdout}\n\n{completed.stderr}",
-        encoding="utf-8",
+    return_code = _run_command_with_live_log(
+        command,
+        log_path=training_log,
+        section_label="train_stage1",
     )
-    if completed.returncode != 0:
+    if return_code != 0:
         raise RuntimeError(f"Stage 1 training failed. See log: {training_log}")
 
 
@@ -484,17 +481,12 @@ def _run_stage1_hard_metrics_command(
         "--csv",
         str(csv_path),
     ]
-    completed = subprocess.run(  # noqa: S603
+    return_code = _run_command_with_live_log(
         command,
-        capture_output=True,
-        text=True,
-        check=False,
+        log_path=log_path,
+        section_label=f"evaluate_stage1:{candidate_name}",
     )
-    log_path.write_text(
-        f"$ {' '.join(command)}\n\n{completed.stdout}\n\n{completed.stderr}",
-        encoding="utf-8",
-    )
-    if completed.returncode != 0:
+    if return_code != 0:
         raise RuntimeError(f"Stage 1 evaluation failed. See log: {log_path}")
     try:
         return json.loads(json_path.read_text(encoding="utf-8"))
@@ -705,6 +697,77 @@ def _candidate_to_payload(candidate: CandidateEvaluation) -> dict[str, Any]:
         "mirror_metrics": candidate.mirror_summary,
         "imd_proxy": candidate.imd_summary,
     }
+
+
+def _run_command_with_live_log(
+    command: list[str],
+    *,
+    log_path: Path,
+    section_label: str,
+) -> int:
+    """Run command and stream stdout/stderr to log file in real time.
+
+    Args:
+        command: Command and args to execute.
+        log_path: Log file path.
+        section_label: Human-readable section label.
+
+    Returns:
+        Process return code.
+
+    Raises:
+        RuntimeError: If subprocess start/streaming fails.
+
+    Physical Basis:
+        Real-time logs are required to monitor long-running Stage 1 training
+        and pinpoint failure epoch/step without waiting for process exit.
+    """
+    if len(command) == 0:
+        raise ValueError("command cannot be empty.")
+
+    ensure_parent = log_path.parent
+    ensure_parent.mkdir(parents=True, exist_ok=True)
+    header = f"[{_timestamp_utc()}] [{section_label}] $ {shlex.join(command)}\n"
+
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+
+    try:
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(header)
+            log_file.flush()
+            print(header.rstrip(), flush=True)
+
+            process = subprocess.Popen(  # noqa: S603
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+            if process.stdout is None:
+                raise RuntimeError("Failed to capture subprocess output stream.")
+
+            for line in process.stdout:
+                stamped = f"[{_timestamp_utc()}] [{section_label}] {line}"
+                log_file.write(stamped)
+                log_file.flush()
+                print(stamped.rstrip(), flush=True)
+
+            return_code = process.wait()
+            footer = f"[{_timestamp_utc()}] [{section_label}] exit_code={return_code}\n"
+            log_file.write(footer)
+            log_file.flush()
+            print(footer.rstrip(), flush=True)
+            return int(return_code)
+    except Exception as exc:
+        raise RuntimeError(f"Failed while running command: {command}: {exc}") from exc
+
+
+def _timestamp_utc() -> str:
+    """Return compact UTC timestamp for log lines."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _write_run_manifest(

@@ -624,7 +624,8 @@ def _log_step_progress(epoch: int, step: int, terms: LossTerms) -> None:
                 f"preserve={terms.preserve.item():.6f}",
                 f"energy={terms.energy.item():.6f}",
             ]
-        )
+        ),
+        flush=True,
     )
 
 
@@ -646,7 +647,7 @@ def _log_epoch_summary(
         f"steps_per_sec={train_epoch.throughput_steps_per_sec:.2f} "
         f"gpu_peak_mb={train_epoch.gpu_peak_memory_mb:.2f}"
     )
-    print(train_line)
+    print(train_line, flush=True)
 
     if val_epoch is not None:
         val_line = (
@@ -657,14 +658,14 @@ def _log_epoch_summary(
             f"lb_mag_mae={val_epoch.lb_mag_mae:.6f} "
             f"lb_phase_mae={val_epoch.lb_phase_mae:.6f}"
         )
-        print(val_line)
+        print(val_line, flush=True)
 
     device_line = f"epoch={epoch} lr={lr:.8f} device={device}"
     if device.type == "cuda":
         index = torch.cuda.current_device()
         name = torch.cuda.get_device_name(index)
         device_line += f" gpu={name} cuda_index={index}"
-    print(device_line)
+    print(device_line, flush=True)
 
 
 def _to_device_tensor(value: Any, device: torch.device) -> torch.Tensor | None:
