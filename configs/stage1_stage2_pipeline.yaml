@@ -4,6 +4,9 @@ pipeline:
   output_sample_rate: 705600
   stage2_config_dir: cpp/configs
   stage2_num_stages: 3
+  stage2_backend: cpp
+  stage2_cpp_project_dir: cpp
+  stage2_cpp_build_dir: cpp/build
   chunk_duration_sec: 0.25
   crossfade_duration_sec: 0.05
   stage1_energy_cap: 0.001
