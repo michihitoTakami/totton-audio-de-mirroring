@@ -71,6 +71,8 @@ def test_cli_writes_json_and_csv(
     payload = json.loads(json_path.read_text())
     assert payload["summary"]["num_samples"] == 2
     assert "lb_phase_error_deg" in payload["summary"]
+    assert "mirror_metrics" in payload
+    assert "symmetry_reduction_ratio" in payload["mirror_metrics"]["summary"]
 
     with csv_path.open(newline="", encoding="utf-8") as csv_file:
         rows = list(csv.DictReader(csv_file))
@@ -126,3 +128,66 @@ def test_cli_raises_when_output_pair_is_missing(
 
     with pytest.raises(FileNotFoundError, match="Missing output pair"):
         main()
+
+
+def test_cli_exports_mirror_visualizations(
+    paired_npy_dirs: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should export mirror visualization images when requested."""
+    input_dir, output_dir = paired_npy_dirs
+    json_path = tmp_path / "report" / "metrics.json"
+    visual_dir = tmp_path / "report" / "mirror_visuals"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--json",
+            str(json_path),
+            "--mirror-visual-dir",
+            str(visual_dir),
+            "--mirror-visual-limit",
+            "1",
+        ],
+    )
+
+    main()
+
+    payload = json.loads(json_path.read_text())
+    exported = payload["mirror_visualizations"]
+    assert len(exported) == 1
+    assert Path(exported[0]).exists()
+
+
+def test_cli_strict_mirror_reduction_returns_exit_code_3(
+    paired_npy_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should fail with exit code 3 when mirror reduction target is unmet."""
+    input_dir, output_dir = paired_npy_dirs
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--strict-mirror-reduction",
+            "--mirror-target-reduction",
+            "0.70",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 3
