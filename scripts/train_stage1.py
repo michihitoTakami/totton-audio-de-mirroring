@@ -101,6 +101,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--validation-split", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--energy-cap", type=float, default=None)
     parser.add_argument("--device", type=str, default=None)
@@ -201,6 +202,8 @@ def _apply_overrides(
     updated = config
     if args.epochs is not None:
         updated = replace(updated, epochs=args.epochs)
+    if args.seed is not None:
+        updated = replace(updated, seed=args.seed)
     if args.learning_rate is not None:
         updated = replace(updated, learning_rate=args.learning_rate)
     if args.energy_cap is not None:
