@@ -48,6 +48,28 @@ def test_preserve_loss_respects_mirror_mask() -> None:
     assert torch.isclose(loss, torch.tensor(0.0))
 
 
+def test_preserve_loss_accepts_mismatched_mask_grid_by_resizing() -> None:
+    pred_mag = torch.ones(2, 4, 5)
+    input_mag = torch.zeros(2, 4, 5)
+    mirror_mask = torch.ones(2, 3, 2)
+
+    loss = preserve_loss(pred_mag, input_mag, mirror_mask)
+
+    assert torch.isfinite(loss)
+    assert torch.isclose(loss, torch.tensor(0.0))
+
+
+def test_preserve_loss_accepts_bool_mismatched_mask_grid() -> None:
+    pred_mag = torch.ones(1, 4, 5)
+    input_mag = torch.zeros(1, 4, 5)
+    mirror_mask = torch.ones(1, 2, 3, dtype=torch.bool)
+
+    loss = preserve_loss(pred_mag, input_mag, mirror_mask)
+
+    assert torch.isfinite(loss)
+    assert torch.isclose(loss, torch.tensor(0.0))
+
+
 def test_compute_losses_has_grad_flow() -> None:
     torch.manual_seed(0)
     batch = 2
