@@ -12,6 +12,9 @@ from totton_audio_de_mirroring.data.mirror_detection import (
     MirrorDetectionConfig,
     detect_mirror_artifacts,
 )
+from totton_audio_de_mirroring.evaluation.lb_preservation import (
+    evaluate_lowband_preservation,
+)
 
 DEFAULT_CUTOFF_HZ = 20_000.0
 DEFAULT_MIRROR_BAND_HZ = (20_000.0, 22_050.0)
@@ -137,12 +140,12 @@ def evaluate_stage1_hard_metrics(
     lb_in, hb_in = band_split(input_signal, lowpass_taps, highpass_taps)
     lb_out, hb_out = band_split(output_signal, lowpass_taps, highpass_taps)
 
-    lb_amplitude_error_db = _compute_lowband_amplitude_error_db(lb_in, lb_out)
-    lb_phase_error_deg = _compute_lowband_phase_error_deg(
-        lb_in, lb_out, sample_rate, cutoff_hz
-    )
-    lb_group_delay_error_samples = _compute_lowband_group_delay_error_samples(
-        lb_in, lb_out, sample_rate, cutoff_hz
+    low_band_metrics = evaluate_lowband_preservation(
+        input_signal=input_signal,
+        output_signal=output_signal,
+        sample_rate=sample_rate,
+        cutoff_hz=cutoff_hz,
+        num_taps=num_taps,
     )
 
     mirror_score_in, mirror_mask = _compute_mirror_score(
@@ -179,9 +182,9 @@ def evaluate_stage1_hard_metrics(
     )
 
     return Stage1HardMetrics(
-        lb_amplitude_error_db=lb_amplitude_error_db,
-        lb_phase_error_deg=lb_phase_error_deg,
-        lb_group_delay_error_samples=lb_group_delay_error_samples,
+        lb_amplitude_error_db=low_band_metrics.waveform_error_db,
+        lb_phase_error_deg=low_band_metrics.phase_error_deg,
+        lb_group_delay_error_samples=low_band_metrics.group_delay_error_samples,
         mirror_reduction_ratio=mirror_reduction_ratio,
         hb_energy=hb_energy,
         hb_energy_cap=energy_cap,
@@ -301,65 +304,6 @@ def _aggregate_results(
         mean_metrics=mean_metrics,
         hb_energy_cap_violation_rate=violation_rate,
     )
-
-
-def _compute_lowband_amplitude_error_db(
-    lb_in: np.ndarray,
-    lb_out: np.ndarray,
-) -> float:
-    error_rms = float(np.sqrt(np.mean(np.square(lb_out - lb_in))))
-    reference_rms = float(np.sqrt(np.mean(np.square(lb_in))))
-    ratio = error_rms / (reference_rms + 1.0e-12)
-    return float(20.0 * np.log10(ratio + 1.0e-12))
-
-
-def _compute_lowband_phase_error_deg(
-    lb_in: np.ndarray,
-    lb_out: np.ndarray,
-    sample_rate: int,
-    cutoff_hz: float,
-) -> float:
-    spectrum_in = np.fft.rfft(lb_in)
-    spectrum_out = np.fft.rfft(lb_out)
-    freqs = np.fft.rfftfreq(lb_in.shape[-1], d=1.0 / sample_rate)
-
-    mask = (freqs > 0.0) & (freqs <= cutoff_hz)
-    mask = mask & (np.abs(spectrum_in) > 1.0e-10)
-    if not np.any(mask):
-        return 0.0
-
-    transfer = spectrum_out[mask] / (spectrum_in[mask] + 1.0e-12)
-    phase_diff = np.angle(transfer)
-    weights = np.abs(spectrum_in[mask])
-    weighted_mean = np.sum(np.abs(phase_diff) * weights) / (np.sum(weights) + 1.0e-12)
-    return float(np.rad2deg(weighted_mean))
-
-
-def _compute_lowband_group_delay_error_samples(
-    lb_in: np.ndarray,
-    lb_out: np.ndarray,
-    sample_rate: int,
-    cutoff_hz: float,
-) -> float:
-    spectrum_in = np.fft.rfft(lb_in)
-    spectrum_out = np.fft.rfft(lb_out)
-    freqs = np.fft.rfftfreq(lb_in.shape[-1], d=1.0 / sample_rate)
-
-    mask = (freqs > 0.0) & (freqs <= cutoff_hz)
-    mask = mask & (np.abs(spectrum_in) > 1.0e-10)
-    indices = np.where(mask)[0]
-    if indices.size < 3:
-        return 0.0
-
-    transfer = spectrum_out[indices] / (spectrum_in[indices] + 1.0e-12)
-    phase = np.unwrap(np.angle(transfer))
-    omega = 2.0 * np.pi * freqs[indices] / sample_rate
-    group_delay = -np.diff(phase) / (np.diff(omega) + 1.0e-12)
-    weights = np.minimum(
-        np.abs(spectrum_in[indices[:-1]]), np.abs(spectrum_in[indices[1:]])
-    )
-    weighted_mean = np.sum(np.abs(group_delay) * weights) / (np.sum(weights) + 1.0e-12)
-    return float(weighted_mean)
 
 
 def _compute_mirror_score(
