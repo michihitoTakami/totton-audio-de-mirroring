@@ -19,11 +19,6 @@ import torch
 from totton_audio_de_mirroring.data.filters import design_band_split_filters
 from totton_audio_de_mirroring.data.pipeline_config import load_data_config
 from totton_audio_de_mirroring.evaluation.imd_proxy import evaluate_imd_proxy
-from totton_audio_de_mirroring.evaluation.metrics import evaluate_dataset
-from totton_audio_de_mirroring.evaluation.mirror_metrics import (
-    evaluate_mirror_reduction_dataset,
-    mirror_dataset_result_to_payload,
-)
 from totton_audio_de_mirroring.models.nmse import NMSE
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
@@ -109,7 +104,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--validation-split", type=float, default=0.1)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--energy-cap", type=float, default=None)
     parser.add_argument("--mirror-target-reduction", type=float, default=0.70)
     parser.add_argument(
@@ -120,8 +115,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-lb-phase-error-deg", type=float, default=15.0)
     parser.add_argument("--max-lb-group-delay-error-samples", type=float, default=600.0)
     parser.add_argument("--max-lb-amplitude-error-db", type=float, default=-20.0)
-    parser.add_argument("--strict-zero-energy-cap-violations", action="store_true")
-    parser.add_argument("--strict-positive-thdn-improvement", action="store_true")
+    parser.add_argument("--allow-energy-cap-violations", action="store_true")
+    parser.add_argument("--allow-nonpositive-thdn-improvement", action="store_true")
     parser.add_argument("--skip-training", action="store_true")
     return parser.parse_args()
 
@@ -152,8 +147,8 @@ def main() -> None:
         max_lb_phase_error_deg=args.max_lb_phase_error_deg,
         max_lb_group_delay_error_samples=args.max_lb_group_delay_error_samples,
         max_lb_amplitude_error_db=args.max_lb_amplitude_error_db,
-        require_zero_energy_cap_violations=args.strict_zero_energy_cap_violations,
-        require_positive_thdn_improvement=args.strict_positive_thdn_improvement,
+        require_zero_energy_cap_violations=not args.allow_energy_cap_violations,
+        require_positive_thdn_improvement=(not args.allow_nonpositive_thdn_improvement),
     )
 
     args.report_dir.mkdir(parents=True, exist_ok=True)
@@ -183,15 +178,13 @@ def main() -> None:
             device=args.device,
         )
 
-        hard_result = evaluate_dataset(
-            samples=_build_paired_samples(input_signals, output_dir),
+        evaluate_payload = _run_stage1_hard_metrics_command(
+            args=args,
+            output_dir=output_dir,
             sample_rate=data_config.target_sample_rate,
             energy_cap=training_config.energy_cap,
-        )
-        mirror_result = evaluate_mirror_reduction_dataset(
-            samples=_build_paired_samples(input_signals, output_dir),
-            sample_rate=data_config.target_sample_rate,
-            target_reduction_ratio=args.mirror_target_reduction,
+            mirror_target_reduction=args.mirror_target_reduction,
+            candidate_name=checkpoint_path.stem,
         )
         imd_summary = _evaluate_imd_dataset(
             naive_dir=args.imd_naive_dir,
@@ -199,13 +192,8 @@ def main() -> None:
             sample_rate=data_config.target_sample_rate,
         )
 
-        hard_summary = {
-            "num_samples": len(hard_result.samples),
-            "hb_energy_cap_violation_rate": hard_result.hb_energy_cap_violation_rate,
-            **asdict(hard_result.mean_metrics),
-        }
-        mirror_payload = mirror_dataset_result_to_payload(mirror_result)
-        mirror_summary = dict(mirror_payload["summary"])
+        hard_summary = _load_hard_summary(evaluate_payload)
+        mirror_summary = _load_mirror_summary(evaluate_payload)
 
         passes_hard = _passes_hard_gate(
             hard_summary=hard_summary, gate_config=gate_config
@@ -453,26 +441,100 @@ def _run_stage1_inference_for_inputs(
             np.save(output_dir / f"{sample_id}.npy", output_np)
 
 
-def _build_paired_samples(
-    input_signals: dict[str, np.ndarray],
+def _run_stage1_hard_metrics_command(
+    *,
+    args: argparse.Namespace,
     output_dir: Path,
-) -> list[tuple[str, np.ndarray, np.ndarray]]:
-    """Create paired sample list for evaluation metrics.
+    sample_rate: int,
+    energy_cap: float,
+    mirror_target_reduction: float,
+    candidate_name: str,
+) -> dict[str, Any]:
+    """Run scripts/evaluate_stage1.py and return parsed JSON payload.
+
+    Raises:
+        RuntimeError: If evaluation command fails or JSON parsing fails.
 
     Physical Basis:
-        Deterministic sample pairing avoids accidental metric drift from
-        file-order or missing-pair ambiguities.
+        Reusing evaluate_stage1 CLI keeps README 7.4 metric semantics
+        consistent between manual and automated checkpoint selection runs.
     """
-    pairs: list[tuple[str, np.ndarray, np.ndarray]] = []
-    for sample_id, input_signal in input_signals.items():
-        output_path = output_dir / f"{sample_id}.npy"
-        if not output_path.exists():
-            raise FileNotFoundError(f"Missing generated output: {output_path}")
-        output_signal = np.asarray(np.load(output_path), dtype=np.float64)
-        pairs.append(
-            (sample_id, np.asarray(input_signal, dtype=np.float64), output_signal)
-        )
-    return pairs
+    metrics_dir = args.report_dir / "candidate_metrics" / candidate_name
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    json_path = metrics_dir / "stage1_metrics.json"
+    csv_path = metrics_dir / "stage1_metrics.csv"
+    log_path = metrics_dir / "evaluate_stage1_stdout_stderr.log"
+    command = [
+        sys.executable,
+        "scripts/evaluate_stage1.py",
+        "--input-dir",
+        str(args.eval_input_dir),
+        "--output-dir",
+        str(output_dir),
+        "--glob",
+        args.eval_glob,
+        "--sample-rate",
+        str(sample_rate),
+        "--energy-cap",
+        str(energy_cap),
+        "--mirror-target-reduction",
+        str(mirror_target_reduction),
+        "--json",
+        str(json_path),
+        "--csv",
+        str(csv_path),
+    ]
+    completed = subprocess.run(  # noqa: S603
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    log_path.write_text(
+        f"$ {' '.join(command)}\n\n{completed.stdout}\n\n{completed.stderr}",
+        encoding="utf-8",
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"Stage 1 evaluation failed. See log: {log_path}")
+    try:
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to parse stage1 metrics JSON ({json_path}): {exc}"
+        ) from exc
+
+
+def _load_hard_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract hard metric summary from evaluate_stage1 JSON payload.
+
+    Raises:
+        RuntimeError: If summary payload is missing or malformed.
+
+    Physical Basis:
+        Hard summary drives LB-preservation and energy-cap safety gates.
+    """
+    summary = payload.get("summary")
+    if not isinstance(summary, dict):
+        raise RuntimeError("evaluate_stage1 payload missing 'summary' object.")
+    return dict(summary)
+
+
+def _load_mirror_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract mirror summary from evaluate_stage1 JSON payload.
+
+    Raises:
+        RuntimeError: If mirror summary payload is missing or malformed.
+
+    Physical Basis:
+        Mirror summary quantifies alias/mirror suppression used in ranking.
+    """
+    mirror = payload.get("mirror_metrics")
+    if not isinstance(mirror, dict):
+        raise RuntimeError("evaluate_stage1 payload missing 'mirror_metrics' object.")
+    summary = mirror.get("summary")
+    if not isinstance(summary, dict):
+        raise RuntimeError("evaluate_stage1 payload missing mirror summary.")
+    return dict(summary)
 
 
 def _evaluate_imd_dataset(
@@ -709,6 +771,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("batch_size must be positive")
     if args.num_workers < 0:
         raise ValueError("num_workers must be >= 0")
+    if len(args.device.strip()) == 0:
+        raise ValueError("device must be non-empty")
 
 
 if __name__ == "__main__":

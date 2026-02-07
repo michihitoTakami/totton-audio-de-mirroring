@@ -251,9 +251,7 @@ uv run python scripts/run_issue63_stage1_workflow.py \
   --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
   --checkpoint-dir data/checkpoints/issue63 \
   --report-dir reports/issue63 \
-  --seed 1234 \
-  --strict-zero-energy-cap-violations \
-  --strict-positive-thdn-improvement
+  --seed 1234
 ```
 
 主な成果物:
