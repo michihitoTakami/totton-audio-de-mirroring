@@ -8,7 +8,9 @@ import numpy as np
 import pytest
 
 from totton_audio_de_mirroring.evaluation.mirror_metrics import (
+    evaluate_metric_listening_correlation,
     evaluate_mirror_reduction,
+    evaluate_mirror_reduction_dataset,
     export_mirror_reduction_visualization,
 )
 
@@ -91,3 +93,38 @@ def test_evaluate_mirror_reduction_rejects_invalid_input_shape() -> None:
             after_signal=signal_2d,
             sample_rate=SAMPLE_RATE,
         )
+
+
+def test_evaluate_mirror_reduction_dataset_reports_pass_rate() -> None:
+    """Dataset mirror evaluation should compute target pass rate."""
+    before_a = _mirror_pair_signal(SAMPLE_RATE, DURATION_SEC)
+    after_a = 0.15 * before_a
+    before_b = _mirror_pair_signal(SAMPLE_RATE, DURATION_SEC)
+    after_b = before_b.copy()
+
+    result = evaluate_mirror_reduction_dataset(
+        samples=[("a", before_a, after_a), ("b", before_b, after_b)],
+        sample_rate=SAMPLE_RATE,
+        n_fft=1024,
+        hop_length=256,
+        target_reduction_ratio=0.70,
+    )
+
+    assert len(result.samples) == 2
+    assert result.target_reduction_ratio == pytest.approx(0.70)
+    assert result.symmetry_target_pass_rate == pytest.approx(0.5)
+
+
+def test_evaluate_metric_listening_correlation_returns_positive_correlation() -> None:
+    """Correlation helper should detect aligned objective/subjective trends."""
+    metric_values = np.array([0.10, 0.35, 0.60, 0.85], dtype=np.float64)
+    listening_scores = np.array([1.0, 2.0, 3.5, 4.5], dtype=np.float64)
+
+    correlation = evaluate_metric_listening_correlation(
+        metric_values=metric_values,
+        listening_scores=listening_scores,
+    )
+
+    assert correlation.num_pairs == 4
+    assert correlation.pearson_correlation > 0.95
+    assert correlation.spearman_correlation > 0.95

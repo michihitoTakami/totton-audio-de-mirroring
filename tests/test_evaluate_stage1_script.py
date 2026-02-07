@@ -71,6 +71,8 @@ def test_cli_writes_json_and_csv(
     payload = json.loads(json_path.read_text())
     assert payload["summary"]["num_samples"] == 2
     assert "lb_phase_error_deg" in payload["summary"]
+    assert "mirror_metrics" in payload
+    assert "symmetry_reduction_ratio" in payload["mirror_metrics"]["summary"]
 
     with csv_path.open(newline="", encoding="utf-8") as csv_file:
         rows = list(csv.DictReader(csv_file))
@@ -162,3 +164,30 @@ def test_cli_exports_mirror_visualizations(
     exported = payload["mirror_visualizations"]
     assert len(exported) == 1
     assert Path(exported[0]).exists()
+
+
+def test_cli_strict_mirror_reduction_returns_exit_code_3(
+    paired_npy_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should fail with exit code 3 when mirror reduction target is unmet."""
+    input_dir, output_dir = paired_npy_dirs
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--strict-mirror-reduction",
+            "--mirror-target-reduction",
+            "0.70",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 3

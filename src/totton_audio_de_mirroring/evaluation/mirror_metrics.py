@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import matplotlib
@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import signal as sp_signal
+from scipy import stats as sp_stats
 
 DEFAULT_MIRROR_BAND_HZ = (20_000.0, 22_050.0)
 DEFAULT_N_FFT = 2048
@@ -65,6 +66,63 @@ class MirrorVisualizationArtifacts:
     """
 
     plot_path: Path
+
+
+@dataclass(frozen=True)
+class MirrorSampleEvaluationResult:
+    """Per-sample mirror reduction evaluation payload.
+
+    Args:
+        sample_id: Sample identifier, usually file stem.
+        metrics: Mirror reduction metrics for the sample.
+
+    Physical Basis:
+        Mirror suppression quality can vary per sample, so outliers are
+        tracked at sample granularity.
+    """
+
+    sample_id: str
+    metrics: MirrorReductionMetrics
+
+
+@dataclass(frozen=True)
+class MirrorDatasetEvaluationResult:
+    """Dataset-level mirror reduction aggregate.
+
+    Args:
+        samples: Per-sample mirror reduction results.
+        mean_metrics: Arithmetic mean of mirror metrics across samples.
+        target_reduction_ratio: Target symmetry reduction threshold.
+        symmetry_target_pass_rate: Fraction of samples meeting target reduction.
+
+    Physical Basis:
+        Acceptance requires stable mirror reduction across a dataset,
+        not only isolated examples.
+    """
+
+    samples: tuple[MirrorSampleEvaluationResult, ...]
+    mean_metrics: MirrorReductionMetrics
+    target_reduction_ratio: float
+    symmetry_target_pass_rate: float
+
+
+@dataclass(frozen=True)
+class ListeningCorrelationMetrics:
+    """Correlation between objective mirror metrics and listening scores.
+
+    Args:
+        pearson_correlation: Pearson linear correlation coefficient.
+        spearman_correlation: Spearman rank correlation coefficient.
+        num_pairs: Number of paired samples used.
+
+    Physical Basis:
+        Correlation quantifies whether objective mirror metrics align
+        with subjective listening quality trends.
+    """
+
+    pearson_correlation: float
+    spearman_correlation: float
+    num_pairs: int
 
 
 def evaluate_mirror_reduction(
@@ -133,6 +191,169 @@ def evaluate_mirror_reduction(
         stripe_score_after=stripe_after,
         stripe_reduction_ratio=_relative_reduction(stripe_before, stripe_after),
     )
+
+
+def evaluate_mirror_reduction_dataset(
+    samples: list[tuple[str, np.ndarray, np.ndarray]],
+    sample_rate: int,
+    mirror_band_hz: tuple[float, float] = DEFAULT_MIRROR_BAND_HZ,
+    n_fft: int = DEFAULT_N_FFT,
+    hop_length: int = DEFAULT_HOP_LENGTH,
+    mirror_center_hz: float | None = None,
+    target_reduction_ratio: float = 0.70,
+) -> MirrorDatasetEvaluationResult:
+    """Evaluate mirror/aliasing reduction for a dataset of paired signals.
+
+    Args:
+        samples: List of (sample_id, before_signal, after_signal).
+        sample_rate: Sample rate in Hz.
+        mirror_band_hz: Frequency band used for mirror analysis.
+        n_fft: STFT FFT size.
+        hop_length: STFT hop size.
+        mirror_center_hz: Symmetry center frequency in Hz.
+        target_reduction_ratio: Target symmetry reduction threshold.
+
+    Returns:
+        MirrorDatasetEvaluationResult with per-sample and aggregate values.
+
+    Raises:
+        ValueError: If inputs are invalid.
+
+    Physical Basis:
+        Dataset-level acceptance checks mirror reduction robustness and
+        pass-rate against a fixed target threshold.
+    """
+    if len(samples) == 0:
+        raise ValueError("samples cannot be empty.")
+    _validate_ratio(target_reduction_ratio, "target_reduction_ratio")
+
+    sample_results: list[MirrorSampleEvaluationResult] = []
+    for sample_id, before_signal, after_signal in samples:
+        metrics = evaluate_mirror_reduction(
+            before_signal=before_signal,
+            after_signal=after_signal,
+            sample_rate=sample_rate,
+            mirror_band_hz=mirror_band_hz,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            mirror_center_hz=mirror_center_hz,
+        )
+        sample_results.append(
+            MirrorSampleEvaluationResult(sample_id=sample_id, metrics=metrics)
+        )
+
+    metric_matrix = np.array(
+        [
+            [
+                sample.metrics.symmetry_score_before,
+                sample.metrics.symmetry_score_after,
+                sample.metrics.symmetry_reduction_ratio,
+                sample.metrics.mirror_band_energy_before,
+                sample.metrics.mirror_band_energy_after,
+                sample.metrics.mirror_band_energy_reduction_ratio,
+                sample.metrics.stripe_score_before,
+                sample.metrics.stripe_score_after,
+                sample.metrics.stripe_reduction_ratio,
+            ]
+            for sample in sample_results
+        ],
+        dtype=np.float64,
+    )
+    mean_values = np.mean(metric_matrix, axis=0)
+    pass_rate = float(
+        np.mean(
+            [
+                sample.metrics.symmetry_reduction_ratio >= target_reduction_ratio
+                for sample in sample_results
+            ]
+        )
+    )
+
+    mean_metrics = MirrorReductionMetrics(
+        symmetry_score_before=float(mean_values[0]),
+        symmetry_score_after=float(mean_values[1]),
+        symmetry_reduction_ratio=float(mean_values[2]),
+        mirror_band_energy_before=float(mean_values[3]),
+        mirror_band_energy_after=float(mean_values[4]),
+        mirror_band_energy_reduction_ratio=float(mean_values[5]),
+        stripe_score_before=float(mean_values[6]),
+        stripe_score_after=float(mean_values[7]),
+        stripe_reduction_ratio=float(mean_values[8]),
+    )
+    return MirrorDatasetEvaluationResult(
+        samples=tuple(sample_results),
+        mean_metrics=mean_metrics,
+        target_reduction_ratio=target_reduction_ratio,
+        symmetry_target_pass_rate=pass_rate,
+    )
+
+
+def evaluate_metric_listening_correlation(
+    metric_values: np.ndarray,
+    listening_scores: np.ndarray,
+) -> ListeningCorrelationMetrics:
+    """Evaluate objective-to-subjective correlation.
+
+    Args:
+        metric_values: Objective metric values (e.g. symmetry reduction ratios).
+        listening_scores: Listening-test scores aligned with metric values.
+
+    Returns:
+        ListeningCorrelationMetrics with Pearson and Spearman correlations.
+
+    Raises:
+        ValueError: If inputs are invalid.
+
+    Physical Basis:
+        A useful objective metric should correlate with perceived quality
+        improvements in listening tests.
+    """
+    metric_vector = _validate_vector(metric_values, "metric_values")
+    listening_vector = _validate_vector(listening_scores, "listening_scores")
+    if metric_vector.shape != listening_vector.shape:
+        raise ValueError(
+            "metric_values and listening_scores must have the same shape. "
+            f"Got {metric_vector.shape} and {listening_vector.shape}."
+        )
+    if metric_vector.size < 2:
+        raise ValueError("At least two paired samples are required.")
+
+    pearson = float(np.corrcoef(metric_vector, listening_vector)[0, 1])
+    spearman = float(sp_stats.spearmanr(metric_vector, listening_vector).statistic)
+    return ListeningCorrelationMetrics(
+        pearson_correlation=_finite_or_zero(pearson),
+        spearman_correlation=_finite_or_zero(spearman),
+        num_pairs=int(metric_vector.size),
+    )
+
+
+def mirror_dataset_result_to_payload(
+    result: MirrorDatasetEvaluationResult,
+) -> dict[str, object]:
+    """Convert mirror dataset evaluation to JSON-serializable payload.
+
+    Args:
+        result: Dataset-level mirror evaluation result.
+
+    Returns:
+        Dictionary with aggregate and per-sample mirror metrics.
+
+    Physical Basis:
+        Structured payloads support reproducible acceptance checks and
+        downstream regression tracking.
+    """
+    return {
+        "summary": asdict(result.mean_metrics)
+        | {
+            "target_reduction_ratio": result.target_reduction_ratio,
+            "symmetry_target_pass_rate": result.symmetry_target_pass_rate,
+            "num_samples": len(result.samples),
+        },
+        "samples": [
+            {"sample_id": sample.sample_id, **asdict(sample.metrics)}
+            for sample in result.samples
+        ],
+    }
 
 
 def export_mirror_reduction_visualization(
@@ -416,3 +637,25 @@ def _validate_mirror_center(mirror_center_hz: float, sample_rate: int) -> None:
             f"mirror_center_hz must be lower than Nyquist ({nyquist}), "
             f"got {mirror_center_hz}."
         )
+
+
+def _validate_vector(values: np.ndarray, name: str) -> np.ndarray:
+    vector = np.asarray(values, dtype=np.float64)
+    if vector.ndim != 1:
+        raise ValueError(f"{name} must be 1D, got {vector.ndim}D.")
+    if vector.size == 0:
+        raise ValueError(f"{name} cannot be empty.")
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"{name} must be finite.")
+    return vector
+
+
+def _validate_ratio(value: float, name: str) -> None:
+    if not np.isfinite(value) or value < 0.0 or value > 1.0:
+        raise ValueError(f"{name} must be between 0 and 1, got {value}.")
+
+
+def _finite_or_zero(value: float) -> float:
+    if not np.isfinite(value):
+        return 0.0
+    return value

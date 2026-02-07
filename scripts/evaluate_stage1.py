@@ -17,7 +17,10 @@ from totton_audio_de_mirroring.evaluation.metrics import (
     sample_result_to_flat_dict,
 )
 from totton_audio_de_mirroring.evaluation.mirror_metrics import (
+    MirrorDatasetEvaluationResult,
+    evaluate_mirror_reduction_dataset,
     export_mirror_reduction_visualization,
+    mirror_dataset_result_to_payload,
 )
 
 
@@ -49,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json", type=Path, default=None)
     parser.add_argument("--print-json", action="store_true")
     parser.add_argument("--strict-energy-cap", action="store_true")
+    parser.add_argument("--strict-mirror-reduction", action="store_true")
+    parser.add_argument("--mirror-target-reduction", type=float, default=0.70)
     parser.add_argument("--mirror-visual-dir", type=Path, default=None)
     parser.add_argument("--mirror-visual-limit", type=int, default=16)
     return parser.parse_args()
@@ -77,6 +82,14 @@ def main() -> None:
         hop_length=args.hop_length,
         mirror_band_hz=(args.mirror_band_hz[0], args.mirror_band_hz[1]),
     )
+    mirror_result = evaluate_mirror_reduction_dataset(
+        samples=pairs,
+        sample_rate=args.sample_rate,
+        mirror_band_hz=(args.mirror_band_hz[0], args.mirror_band_hz[1]),
+        n_fft=args.n_fft,
+        hop_length=args.hop_length,
+        target_reduction_ratio=args.mirror_target_reduction,
+    )
 
     visual_exports: list[str] = []
     if args.mirror_visual_dir is not None:
@@ -93,23 +106,38 @@ def main() -> None:
     if args.csv is not None:
         _write_csv(result, args.csv)
     if args.json is not None:
-        _write_json(result, args.json, visual_exports=visual_exports)
+        _write_json(
+            result,
+            args.json,
+            mirror_result=mirror_result,
+            visual_exports=visual_exports,
+        )
 
     if args.print_json:
         print(
             json.dumps(
-                _to_payload(result, visual_exports=visual_exports),
+                _to_payload(
+                    result,
+                    mirror_result=mirror_result,
+                    visual_exports=visual_exports,
+                ),
                 indent=2,
                 sort_keys=True,
             )
         )
     else:
-        _print_summary(result)
+        _print_summary(result, mirror_result)
         if len(visual_exports) > 0:
             print(f"Mirror visualizations exported: {len(visual_exports)}")
 
     if args.strict_energy_cap and result.hb_energy_cap_violation_rate > 0.0:
         raise SystemExit(2)
+    if (
+        args.strict_mirror_reduction
+        and mirror_result.mean_metrics.symmetry_reduction_ratio
+        < args.mirror_target_reduction
+    ):
+        raise SystemExit(3)
 
 
 def _load_pairs(
@@ -168,6 +196,7 @@ def _load_pairs(
 
 def _to_payload(
     result: DatasetEvaluationResult,
+    mirror_result: MirrorDatasetEvaluationResult | None = None,
     visual_exports: list[str] | None = None,
 ) -> dict[str, Any]:
     """Convert dataset evaluation to JSON-serializable payload.
@@ -184,6 +213,8 @@ def _to_payload(
         },
         "samples": [sample_result_to_flat_dict(sample) for sample in result.samples],
     }
+    if mirror_result is not None:
+        payload["mirror_metrics"] = mirror_dataset_result_to_payload(mirror_result)
     if visual_exports is not None:
         payload["mirror_visualizations"] = visual_exports
     return payload
@@ -192,6 +223,7 @@ def _to_payload(
 def _write_json(
     result: DatasetEvaluationResult,
     path: Path,
+    mirror_result: MirrorDatasetEvaluationResult | None = None,
     visual_exports: list[str] | None = None,
 ) -> None:
     """Write evaluation payload to JSON file.
@@ -211,7 +243,11 @@ def _write_json(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
-                _to_payload(result, visual_exports=visual_exports),
+                _to_payload(
+                    result,
+                    mirror_result=mirror_result,
+                    visual_exports=visual_exports,
+                ),
                 indent=2,
                 sort_keys=True,
             )
@@ -302,7 +338,10 @@ def _write_csv(result: DatasetEvaluationResult, path: Path) -> None:
         raise RuntimeError(f"Failed to write CSV report: {exc}") from exc
 
 
-def _print_summary(result: DatasetEvaluationResult) -> None:
+def _print_summary(
+    result: DatasetEvaluationResult,
+    mirror_result: MirrorDatasetEvaluationResult,
+) -> None:
     """Print concise summary report to stdout.
 
     Physical Basis:
@@ -315,6 +354,15 @@ def _print_summary(result: DatasetEvaluationResult) -> None:
     print(f"LB phase error (deg): {summary.lb_phase_error_deg:.6f}")
     print(f"LB group delay error (samples): {summary.lb_group_delay_error_samples:.6f}")
     print(f"Mirror reduction ratio: {summary.mirror_reduction_ratio:.6f}")
+    print(
+        "Mirror symmetry reduction ratio (mean): "
+        f"{mirror_result.mean_metrics.symmetry_reduction_ratio:.6f}"
+    )
+    print(
+        "Mirror target pass rate: "
+        f"{mirror_result.symmetry_target_pass_rate:.6f} "
+        f"(target={mirror_result.target_reduction_ratio:.2f})"
+    )
     print(f"HB energy: {summary.hb_energy:.8e}")
     print(f"Touch metric: {summary.touch_metric:.6f}")
     print(f"HB energy cap violation rate: {result.hb_energy_cap_violation_rate:.6f}")
