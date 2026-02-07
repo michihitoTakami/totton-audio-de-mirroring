@@ -126,3 +126,39 @@ def test_cli_raises_when_output_pair_is_missing(
 
     with pytest.raises(FileNotFoundError, match="Missing output pair"):
         main()
+
+
+def test_cli_exports_mirror_visualizations(
+    paired_npy_dirs: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should export mirror visualization images when requested."""
+    input_dir, output_dir = paired_npy_dirs
+    json_path = tmp_path / "report" / "metrics.json"
+    visual_dir = tmp_path / "report" / "mirror_visuals"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--json",
+            str(json_path),
+            "--mirror-visual-dir",
+            str(visual_dir),
+            "--mirror-visual-limit",
+            "1",
+        ],
+    )
+
+    main()
+
+    payload = json.loads(json_path.read_text())
+    exported = payload["mirror_visualizations"]
+    assert len(exported) == 1
+    assert Path(exported[0]).exists()

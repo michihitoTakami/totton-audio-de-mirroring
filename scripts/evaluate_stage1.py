@@ -16,6 +16,9 @@ from totton_audio_de_mirroring.evaluation.metrics import (
     evaluate_dataset,
     sample_result_to_flat_dict,
 )
+from totton_audio_de_mirroring.evaluation.mirror_metrics import (
+    export_mirror_reduction_visualization,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,6 +49,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json", type=Path, default=None)
     parser.add_argument("--print-json", action="store_true")
     parser.add_argument("--strict-energy-cap", action="store_true")
+    parser.add_argument("--mirror-visual-dir", type=Path, default=None)
+    parser.add_argument("--mirror-visual-limit", type=int, default=16)
     return parser.parse_args()
 
 
@@ -73,15 +78,35 @@ def main() -> None:
         mirror_band_hz=(args.mirror_band_hz[0], args.mirror_band_hz[1]),
     )
 
+    visual_exports: list[str] = []
+    if args.mirror_visual_dir is not None:
+        visual_exports = _export_mirror_visualizations(
+            pairs=pairs,
+            output_dir=args.mirror_visual_dir,
+            sample_rate=args.sample_rate,
+            mirror_band_hz=(args.mirror_band_hz[0], args.mirror_band_hz[1]),
+            n_fft=args.n_fft,
+            hop_length=args.hop_length,
+            max_exports=args.mirror_visual_limit,
+        )
+
     if args.csv is not None:
         _write_csv(result, args.csv)
     if args.json is not None:
-        _write_json(result, args.json)
+        _write_json(result, args.json, visual_exports=visual_exports)
 
     if args.print_json:
-        print(json.dumps(_to_payload(result), indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                _to_payload(result, visual_exports=visual_exports),
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         _print_summary(result)
+        if len(visual_exports) > 0:
+            print(f"Mirror visualizations exported: {len(visual_exports)}")
 
     if args.strict_energy_cap and result.hb_energy_cap_violation_rate > 0.0:
         raise SystemExit(2)
@@ -141,14 +166,17 @@ def _load_pairs(
     return pairs
 
 
-def _to_payload(result: DatasetEvaluationResult) -> dict[str, Any]:
+def _to_payload(
+    result: DatasetEvaluationResult,
+    visual_exports: list[str] | None = None,
+) -> dict[str, Any]:
     """Convert dataset evaluation to JSON-serializable payload.
 
     Physical Basis:
         Structured payloads preserve metric definitions for downstream
         plotting and regression checks.
     """
-    return {
+    payload: dict[str, Any] = {
         "summary": asdict(result.mean_metrics)
         | {
             "hb_energy_cap_violation_rate": result.hb_energy_cap_violation_rate,
@@ -156,9 +184,16 @@ def _to_payload(result: DatasetEvaluationResult) -> dict[str, Any]:
         },
         "samples": [sample_result_to_flat_dict(sample) for sample in result.samples],
     }
+    if visual_exports is not None:
+        payload["mirror_visualizations"] = visual_exports
+    return payload
 
 
-def _write_json(result: DatasetEvaluationResult, path: Path) -> None:
+def _write_json(
+    result: DatasetEvaluationResult,
+    path: Path,
+    visual_exports: list[str] | None = None,
+) -> None:
     """Write evaluation payload to JSON file.
 
     Args:
@@ -174,9 +209,71 @@ def _write_json(result: DatasetEvaluationResult, path: Path) -> None:
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(_to_payload(result), indent=2, sort_keys=True))
+        path.write_text(
+            json.dumps(
+                _to_payload(result, visual_exports=visual_exports),
+                indent=2,
+                sort_keys=True,
+            )
+        )
     except Exception as exc:
         raise RuntimeError(f"Failed to write JSON report: {exc}") from exc
+
+
+def _export_mirror_visualizations(
+    pairs: list[tuple[str, np.ndarray, np.ndarray]],
+    output_dir: Path,
+    sample_rate: int,
+    mirror_band_hz: tuple[float, float],
+    n_fft: int,
+    hop_length: int,
+    max_exports: int,
+) -> list[str]:
+    """Export before/after mirror visualizations for selected samples.
+
+    Args:
+        pairs: Paired sample tuples (sample_id, input_signal, output_signal).
+        output_dir: Root directory for plot exports.
+        sample_rate: Signal sample rate in Hz.
+        mirror_band_hz: Band used for mirror analysis in Hz.
+        n_fft: STFT FFT size.
+        hop_length: STFT hop size.
+        max_exports: Maximum number of samples to export.
+
+    Returns:
+        List of exported visualization paths.
+
+    Raises:
+        ValueError: If max_exports is negative.
+        RuntimeError: If export fails.
+
+    Physical Basis:
+        Visual confirmation of mirror-band suppression supports objective
+        metrics and listening-test interpretation.
+    """
+    if max_exports < 0:
+        raise ValueError(f"mirror_visual_limit must be >= 0, got {max_exports}.")
+
+    exported_paths: list[str] = []
+    for sample_id, input_signal, output_signal in pairs[:max_exports]:
+        output_path = output_dir / f"{sample_id}_mirror_before_after.png"
+        try:
+            artifact = export_mirror_reduction_visualization(
+                before_signal=input_signal,
+                after_signal=output_signal,
+                sample_rate=sample_rate,
+                output_path=output_path,
+                mirror_band_hz=mirror_band_hz,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                title=f"Mirror Comparison: {sample_id}",
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to export mirror visualization for sample '{sample_id}': {exc}"
+            ) from exc
+        exported_paths.append(str(artifact.plot_path))
+    return exported_paths
 
 
 def _write_csv(result: DatasetEvaluationResult, path: Path) -> None:
