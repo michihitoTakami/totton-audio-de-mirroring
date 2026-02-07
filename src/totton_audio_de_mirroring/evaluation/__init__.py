@@ -1,5 +1,12 @@
 """Evaluation utilities for Stage 1 hard metrics."""
 
+from .imd_proxy import (
+    IMDPathMetrics,
+    IMDProxyMetrics,
+    apply_soft_clipping,
+    evaluate_imd_path,
+    evaluate_imd_proxy,
+)
 from .lb_preservation import (
     LowBandPreservationMetrics,
     evaluate_lowband_preservation,
@@ -32,9 +39,14 @@ __all__ = [
     "MirrorDatasetEvaluationResult",
     "ListeningCorrelationMetrics",
     "MirrorVisualizationArtifacts",
+    "IMDPathMetrics",
+    "IMDProxyMetrics",
     "DatasetEvaluationResult",
     "SampleEvaluationResult",
     "Stage1HardMetrics",
+    "apply_soft_clipping",
+    "evaluate_imd_path",
+    "evaluate_imd_proxy",
     "evaluate_lowband_preservation",
     "evaluate_mirror_reduction_dataset",
     "evaluate_mirror_reduction",
