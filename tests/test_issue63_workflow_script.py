@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -129,3 +131,44 @@ def test_run_command_with_live_log_streams_output(tmp_path: Path) -> None:
     assert "line1" in text
     assert "line2" in text
     assert "exit_code=0" in text
+
+
+def test_run_command_with_live_log_updates_during_execution(tmp_path: Path) -> None:
+    log_path = tmp_path / "stream_live.log"
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import time;"
+            "print('live-start', flush=True);"
+            "time.sleep(0.3);"
+            "print('live-end', flush=True)"
+        ),
+    ]
+
+    result: dict[str, int] = {}
+
+    def _runner() -> None:
+        result["exit_code"] = _run_command_with_live_log(
+            command,
+            log_path=log_path,
+            section_label="live-test",
+        )
+
+    thread = threading.Thread(target=_runner)
+    thread.start()
+
+    found_live_start = False
+    for _ in range(20):
+        if log_path.exists():
+            text = log_path.read_text(encoding="utf-8")
+            if "live-start" in text:
+                found_live_start = True
+                break
+        time.sleep(0.05)
+
+    thread.join(timeout=2.0)
+    assert found_live_start
+    assert result["exit_code"] == 0
+    final_text = log_path.read_text(encoding="utf-8")
+    assert "live-end" in final_text
