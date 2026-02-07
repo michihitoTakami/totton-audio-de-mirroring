@@ -324,7 +324,8 @@ def _draw_spectrogram(
 
 
 def _to_db(magnitude: np.ndarray) -> np.ndarray:
-    return 20.0 * np.log10(np.maximum(magnitude, EPSILON))
+    db_values = 20.0 * np.log10(np.maximum(magnitude, EPSILON))
+    return np.asarray(db_values, dtype=np.float64)
 
 
 def _relative_reduction(before: float, after: float) -> float:
