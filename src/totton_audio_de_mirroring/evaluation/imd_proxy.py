@@ -78,9 +78,8 @@ def apply_soft_clipping(
     _validate_signal(signal, "signal")
     _validate_positive_float(drive, "drive")
 
-    bounded_signal = np.clip(np.asarray(signal, dtype=np.float64), -1.0, 1.0)
-    normalized = np.tanh(drive * bounded_signal) / np.tanh(drive)
-    return np.asarray(normalized, dtype=np.float64)
+    clipped = np.tanh(drive * np.asarray(signal, dtype=np.float64))
+    return np.asarray(clipped, dtype=np.float64)
 
 
 def evaluate_imd_path(
