@@ -1,0 +1,98 @@
+{
+  "clip_drive": 2.5,
+  "imd_proxy": {
+    "sample_a": {
+      "audible_distortion_reduction_db": 4.868476250177874,
+      "nmse_has_lower_imd": true,
+      "thdn_improvement_db": 6.568769510517074,
+      "thdn_improvement_over_10db": false
+    },
+    "sample_b": {
+      "audible_distortion_reduction_db": 3.539537076080159,
+      "nmse_has_lower_imd": true,
+      "thdn_improvement_db": 5.296260271799262,
+      "thdn_improvement_over_10db": false
+    }
+  },
+  "mirror_metrics": {
+    "samples": [
+      {
+        "mirror_band_energy_after": 3.6136595166030565e-06,
+        "mirror_band_energy_before": 0.0005855682574761936,
+        "mirror_band_energy_reduction_ratio": 0.9938287988283757,
+        "sample_id": "sample_a",
+        "stripe_reduction_ratio": -0.04774980000023864,
+        "stripe_score_after": 0.07800793162494114,
+        "stripe_score_before": 0.07445282416176398,
+        "symmetry_reduction_ratio": 0.9248052427461823,
+        "symmetry_score_after": 0.0004176218376059442,
+        "symmetry_score_before": 0.005553869084200566
+      },
+      {
+        "mirror_band_energy_after": 3.613222700417599e-06,
+        "mirror_band_energy_before": 0.000585243400966078,
+        "mirror_band_energy_reduction_ratio": 0.9938261197060007,
+        "sample_id": "sample_b",
+        "stripe_reduction_ratio": -0.06150236757260429,
+        "stripe_score_after": 0.08154452773925185,
+        "stripe_score_before": 0.07681992073717574,
+        "symmetry_reduction_ratio": 0.9247845711058709,
+        "symmetry_score_after": 0.00039661635834063226,
+        "symmetry_score_before": 0.0052730718174710785
+      }
+    ],
+    "summary": {
+      "mirror_band_energy_after": 3.6134411085103276e-06,
+      "mirror_band_energy_before": 0.0005854058292211358,
+      "mirror_band_energy_reduction_ratio": 0.9938274592671882,
+      "num_samples": 2,
+      "stripe_reduction_ratio": -0.05462608378642146,
+      "stripe_score_after": 0.0797762296820965,
+      "stripe_score_before": 0.07563637244946986,
+      "symmetry_reduction_ratio": 0.9247949069260266,
+      "symmetry_score_after": 0.00040711909797328823,
+      "symmetry_score_before": 0.005413470450835822,
+      "symmetry_target_pass_rate": 1.0,
+      "target_reduction_ratio": 0.7
+    }
+  },
+  "sample_rate": 88200,
+  "stage1_hard_metrics": {
+    "samples": [
+      {
+        "hb_energy": 0.0003943668676169975,
+        "hb_energy_cap": 0.001,
+        "hb_energy_cap_violated": false,
+        "lb_amplitude_error_db": -37.115520904728015,
+        "lb_group_delay_error_samples": 380.7100514336362,
+        "lb_phase_error_deg": 8.966847368629347,
+        "mirror_reduction_ratio": 0.9215968423766385,
+        "sample_id": "sample_a",
+        "touch_metric": 0.8787684070706636
+      },
+      {
+        "hb_energy": 0.0003941784393474319,
+        "hb_energy_cap": 0.001,
+        "hb_energy_cap_violated": false,
+        "lb_amplitude_error_db": -35.6554308851323,
+        "lb_group_delay_error_samples": 438.304610955711,
+        "lb_phase_error_deg": 9.844908888213208,
+        "mirror_reduction_ratio": 0.9215324697181532,
+        "sample_id": "sample_b",
+        "touch_metric": 0.8769152702531887
+      }
+    ],
+    "summary": {
+      "hb_energy": 0.0003942726534822147,
+      "hb_energy_cap": 0.001,
+      "hb_energy_cap_violated": false,
+      "hb_energy_cap_violation_rate": 0.0,
+      "lb_amplitude_error_db": -36.38547589493015,
+      "lb_group_delay_error_samples": 409.5073311946736,
+      "lb_phase_error_deg": 9.405878128421278,
+      "mirror_reduction_ratio": 0.9215646560473958,
+      "num_samples": 2,
+      "touch_metric": 0.8778418386619262
+    }
+  }
+}
