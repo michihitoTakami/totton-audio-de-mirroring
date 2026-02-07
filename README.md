@@ -227,6 +227,12 @@ uv run python scripts/evaluate_stage1.py \
 5. HB energy cap違反率
 6. Touch指標（非ミラーHB変形量）
 
+回帰テスト（golden samples）:
+
+```bash
+uv run --extra dev pytest tests/regression/test_stage1_regression.py -v
+```
+
 ---
 
 ## 8. Jetson Orin Nano Implementation Notes
