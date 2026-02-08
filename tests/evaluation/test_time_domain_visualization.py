@@ -297,6 +297,34 @@ def test_compute_edge_aligned_ringing_metrics_raises_without_edge() -> None:
         )
 
 
+def test_compute_edge_aligned_ringing_metrics_rejects_plateau_beyond_signal() -> None:
+    """Plateau window that starts beyond signal length should fail."""
+    signal = np.concatenate([np.zeros(20), np.ones(20)]).astype(np.float64)
+    with pytest.raises(ValueError, match="plateau window starts beyond signal length"):
+        compute_edge_aligned_ringing_metrics(
+            signal=signal,
+            sample_rate=1_000,
+            plateau_start_ms=50.0,
+            plateau_end_ms=60.0,
+            ringing_window_ms=1.0,
+        )
+
+
+def test_compute_edge_aligned_ringing_metrics_rejects_empty_plateau_after_rounding() -> (
+    None
+):
+    """Rounded plateau offsets that collapse to zero-width should fail."""
+    signal = np.concatenate([np.zeros(80), np.ones(80)]).astype(np.float64)
+    with pytest.raises(ValueError, match="plateau window is empty"):
+        compute_edge_aligned_ringing_metrics(
+            signal=signal,
+            sample_rate=1_000,
+            plateau_start_ms=0.1,
+            plateau_end_ms=0.2,
+            ringing_window_ms=1.0,
+        )
+
+
 def test_waveform_comparison_constant_signals_is_finite():
     """Constant windows should not produce NaN correlation."""
     sample_rate = 88_200

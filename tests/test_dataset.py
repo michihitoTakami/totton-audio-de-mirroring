@@ -214,3 +214,13 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     assert target_call["suppression_floor"] == config.hb_target.suppression_floor
     assert target_call["energy_cap"] == config.hb_target.energy_cap
     assert target_call["envelope_min"] == config.hb_target.envelope_min
+
+
+def test_dataset_hb_target_respects_energy_cap() -> None:
+    """HB target energy should stay under configured cap."""
+    config = _small_config()
+    dataset = create_dataloader(config, DataLoaderConfig(batch_size=1)).dataset
+    sample = dataset[0]
+    hb_target = sample["hb_target"].detach().cpu().numpy().astype(np.float64)
+    hb_energy = float(np.mean(np.square(hb_target)))
+    assert hb_energy <= config.hb_target.energy_cap + 1.0e-9
