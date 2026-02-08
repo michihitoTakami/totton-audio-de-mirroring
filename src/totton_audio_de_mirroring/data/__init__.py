@@ -7,6 +7,7 @@ from totton_audio_de_mirroring.data.degradation import (
     apply_degradation_profile,
     apply_quantization,
     apply_random_degradation,
+    upsample_bessel_reference,
 )
 from totton_audio_de_mirroring.data.filters import (
     apply_fir_filter,
@@ -48,6 +49,7 @@ __all__ = [
     "apply_degradation_profile",
     "apply_quantization",
     "apply_random_degradation",
+    "upsample_bessel_reference",
     "apply_fir_filter",
     "band_split",
     "design_band_split_filters",

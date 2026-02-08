@@ -20,6 +20,7 @@ import numpy as np
 import scipy.signal as sp_signal
 import torch
 
+from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
 from totton_audio_de_mirroring.data.filters import design_band_split_filters
 from totton_audio_de_mirroring.data.pipeline_config import load_data_config
 from totton_audio_de_mirroring.evaluation.imd_proxy import evaluate_imd_proxy
@@ -662,9 +663,12 @@ def _evaluate_square_probe_ringing(
                 duration_sec=duration_sec,
                 amplitude=amplitude,
             )
-            before_signal = np.asarray(
-                sp_signal.resample_poly(source_signal, up=2, down=1),
-                dtype=np.float64,
+            before_signal = upsample_bessel_reference(
+                signal=source_signal,
+                source_sr=source_sample_rate,
+                target_sr=target_sample_rate,
+                cutoff_hz=20_000.0,
+                order=6,
             )
             tensor = (
                 torch.from_numpy(np.asarray(before_signal, dtype=np.float32))

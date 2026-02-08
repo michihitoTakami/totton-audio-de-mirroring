@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Protocol
 
 import numpy as np
-import scipy.signal as sp_signal
 import torch
 from torch import nn
 
+from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
 from totton_audio_de_mirroring.data.filters import design_band_split_filters
 from totton_audio_de_mirroring.data.pipeline_config import load_data_config
 from totton_audio_de_mirroring.evaluation.metrics import (
@@ -201,7 +201,8 @@ class ReferenceStage1Processor:
         Stage 1 -> Stage 2 wiring and provide a reproducible integration floor.
     """
 
-    window: str | tuple[str, float] = ("kaiser", 8.0)
+    cutoff_hz: float = 20_000.0
+    iir_order: int = 6
 
     def process(
         self,
@@ -214,13 +215,13 @@ class ReferenceStage1Processor:
             raise ValueError(
                 "ReferenceStage1Processor requires exact 2x upsampling ratio."
             )
-        upsampled = sp_signal.resample_poly(
-            np.asarray(signal, dtype=np.float64),
-            up=2,
-            down=1,
-            window=self.window,
+        return upsample_bessel_reference(
+            signal=np.asarray(signal, dtype=np.float64),
+            source_sr=source_sample_rate,
+            target_sr=target_sample_rate,
+            cutoff_hz=self.cutoff_hz,
+            order=self.iir_order,
         )
-        return np.asarray(upsampled, dtype=np.float64)
 
 
 @dataclass(frozen=True)
@@ -230,7 +231,8 @@ class NMSEStage1Processor:
     Args:
         model: NMSE model instance in eval mode.
         device: Torch device to run inference on.
-        reference_window: Window used for 44.1->88.2 reference SRC.
+        cutoff_hz: Cutoff used by Bessel reference SRC.
+        iir_order: Bessel IIR order for reference SRC.
 
     Physical Basis:
         Stage 1 keeps low-band identity by structure and only suppresses
@@ -239,7 +241,8 @@ class NMSEStage1Processor:
 
     model: nn.Module
     device: torch.device
-    reference_window: str | tuple[str, float] = ("kaiser", 8.0)
+    cutoff_hz: float = 20_000.0
+    iir_order: int = 6
 
     def process(
         self,
@@ -251,11 +254,12 @@ class NMSEStage1Processor:
         if target_sample_rate != source_sample_rate * 2:
             raise ValueError("NMSEStage1Processor requires exact 2x upsampling ratio.")
 
-        stage1_input = sp_signal.resample_poly(
-            np.asarray(signal, dtype=np.float64),
-            up=2,
-            down=1,
-            window=self.reference_window,
+        stage1_input = upsample_bessel_reference(
+            signal=np.asarray(signal, dtype=np.float64),
+            source_sr=source_sample_rate,
+            target_sr=target_sample_rate,
+            cutoff_hz=self.cutoff_hz,
+            order=self.iir_order,
         )
         tensor = (
             torch.from_numpy(np.asarray(stage1_input, dtype=np.float32))
@@ -384,11 +388,12 @@ def run_stage1_stage2_pipeline(
                 crossfade_output,
             )
             if config.evaluate_stage1_metrics:
-                reference_chunk = sp_signal.resample_poly(
-                    np.asarray(chunk, dtype=np.float64),
-                    up=2,
-                    down=1,
-                    window=("kaiser", 8.0),
+                reference_chunk = upsample_bessel_reference(
+                    signal=np.asarray(chunk, dtype=np.float64),
+                    source_sr=config.source_sample_rate,
+                    target_sr=config.stage1_sample_rate,
+                    cutoff_hz=20_000.0,
+                    order=6,
                 )
                 stage1_assembled = _crossfade_append(
                     stage1_assembled,
