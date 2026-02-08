@@ -260,6 +260,33 @@ uv run python scripts/run_issue63_stage1_workflow.py \
 * `reports/issue63/selected/selection_report.json`
 * `reports/issue63/selected/stage1_best_selected.pt`
 
+### 7.6 Issue #64 Workflow (Freeze Golden / Regression / ABX Pairs)
+
+Issue #63で確定したcheckpointを基準に、回帰/ABX基準を固定化する。
+
+```bash
+uv run python scripts/run_issue63_stage1_workflow.py \
+  --data-config configs/data_generation.yaml \
+  --train-config configs/training_stage1.yaml \
+  --eval-input-dir tests/fixtures/golden_samples/stage1/input \
+  --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
+  --checkpoint-dir data/checkpoints \
+  --report-dir reports/issue64 \
+  --seed 1234 \
+  --device cuda \
+  --skip-training \
+  --candidate-checkpoints stage1_best.pt stage1_last.pt stage1_emergency.pt
+```
+
+固定化対象（リポジトリ追跡）:
+
+* `tests/fixtures/golden_samples/stage1/output/*.npy`
+* `tests/fixtures/golden_samples/imd/nmse/*.npy`
+* `tests/fixtures/golden_samples/regression_baseline.json`
+* `tests/fixtures/golden_samples/abx_pairs.json`
+* `tests/fixtures/golden_samples/issue64_model_selection.json`
+* `docs/abx_listening_protocol.md`
+
 ---
 
 ## 8. Jetson Orin Nano Implementation Notes

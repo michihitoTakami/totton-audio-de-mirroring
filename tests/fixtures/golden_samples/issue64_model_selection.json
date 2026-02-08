@@ -1,0 +1,124 @@
+{
+  "candidates": [
+    {
+      "checkpoint_name": "stage1_best.pt",
+      "composite_score": 14.901503932073359,
+      "hard_metrics": {
+        "hb_energy": 1.6796991422305745e-06,
+        "hb_energy_cap": 1.0,
+        "hb_energy_cap_violated": false,
+        "hb_energy_cap_violation_rate": 0.0,
+        "lb_amplitude_error_db": -43.735147238915886,
+        "lb_group_delay_error_samples": 86.84556237710896,
+        "lb_phase_error_deg": 1.6395482208451677,
+        "mirror_reduction_ratio": 0.9960956390584994,
+        "num_samples": 2,
+        "touch_metric": 0.8729631264162356
+      },
+      "imd_proxy": {
+        "all_nmse_has_lower_imd": true,
+        "mean_audible_distortion_reduction_db": 5.711660852470235,
+        "mean_thdn_improvement_db": 7.081617556820916
+      },
+      "mirror_metrics": {
+        "mirror_band_energy_after": 3.04621202138581e-08,
+        "mirror_band_energy_before": 0.0005854058292211358,
+        "mirror_band_energy_reduction_ratio": 0.999947960160005,
+        "num_samples": 2,
+        "stripe_reduction_ratio": -7.71279171443512,
+        "stripe_score_after": 0.6587655839129651,
+        "stripe_score_before": 0.07563637244946986,
+        "symmetry_reduction_ratio": 0.9948388547570324,
+        "symmetry_score_after": 2.7864055424084982e-05,
+        "symmetry_score_before": 0.005413470450835822,
+        "symmetry_target_pass_rate": 1.0,
+        "target_reduction_ratio": 0.7
+      },
+      "passes_hard_gate": true,
+      "passes_imd_gate": true
+    },
+    {
+      "checkpoint_name": "stage1_last.pt",
+      "composite_score": 14.899377591183898,
+      "hard_metrics": {
+        "hb_energy": 1.6724314255491762e-06,
+        "hb_energy_cap": 1.0,
+        "hb_energy_cap_violated": false,
+        "hb_energy_cap_violation_rate": 0.0,
+        "lb_amplitude_error_db": -43.736026619591456,
+        "lb_group_delay_error_samples": 86.83502910467911,
+        "lb_phase_error_deg": 1.6394443934221372,
+        "mirror_reduction_ratio": 0.9961624023258199,
+        "num_samples": 2,
+        "touch_metric": 0.8842089556805688
+      },
+      "imd_proxy": {
+        "all_nmse_has_lower_imd": true,
+        "mean_audible_distortion_reduction_db": 5.711664990877684,
+        "mean_thdn_improvement_db": 7.0816218697126825
+      },
+      "mirror_metrics": {
+        "mirror_band_energy_after": 3.041118075632099e-08,
+        "mirror_band_energy_before": 0.0005854058292211358,
+        "mirror_band_energy_reduction_ratio": 0.9999480471654422,
+        "num_samples": 2,
+        "stripe_reduction_ratio": -7.720581368959219,
+        "stripe_score_after": 0.6593820528704786,
+        "stripe_score_before": 0.07563637244946986,
+        "symmetry_reduction_ratio": 0.9949478625657538,
+        "symmetry_score_after": 2.727527244540912e-05,
+        "symmetry_score_before": 0.005413470450835822,
+        "symmetry_target_pass_rate": 1.0,
+        "target_reduction_ratio": 0.7
+      },
+      "passes_hard_gate": true,
+      "passes_imd_gate": true
+    },
+    {
+      "checkpoint_name": "stage1_emergency.pt",
+      "composite_score": 14.8950497989936,
+      "hard_metrics": {
+        "hb_energy": 1.6827107583104262e-06,
+        "hb_energy_cap": 1.0,
+        "hb_energy_cap_violated": false,
+        "hb_energy_cap_violation_rate": 0.0,
+        "lb_amplitude_error_db": -43.734817154655445,
+        "lb_group_delay_error_samples": 87.016739834419,
+        "lb_phase_error_deg": 1.6394298717651066,
+        "mirror_reduction_ratio": 0.9968836583558336,
+        "num_samples": 2,
+        "touch_metric": 0.908403280299747
+      },
+      "imd_proxy": {
+        "all_nmse_has_lower_imd": true,
+        "mean_audible_distortion_reduction_db": 5.711656719086678,
+        "mean_thdn_improvement_db": 7.081613979801128
+      },
+      "mirror_metrics": {
+        "mirror_band_energy_after": 3.08659621184739e-08,
+        "mirror_band_energy_before": 0.0005854058292211358,
+        "mirror_band_energy_reduction_ratio": 0.9999472702659122,
+        "num_samples": 2,
+        "stripe_reduction_ratio": -7.989507856425844,
+        "stripe_score_after": 0.6798124103907557,
+        "stripe_score_before": 0.07563637244946986,
+        "symmetry_reduction_ratio": 0.9954739890395499,
+        "symmetry_score_after": 2.446944744286594e-05,
+        "symmetry_score_before": 0.005413470450835822,
+        "symmetry_target_pass_rate": 1.0,
+        "target_reduction_ratio": 0.7
+      },
+      "passes_hard_gate": true,
+      "passes_imd_gate": true
+    }
+  ],
+  "issue": 64,
+  "selected_checkpoint_name": "stage1_best.pt",
+  "selected_checkpoint_sha256": "ef9f2815e57663140eff3ff6860847148eb527c733e17e2890cba9a24ec4e025",
+  "selection_reason": {
+    "composite_score": 14.901503932073359,
+    "passes_hard_gate": true,
+    "passes_imd_gate": true
+  },
+  "timestamp_utc": "2026-02-08T09:22:58.658615+00:00"
+}
