@@ -176,9 +176,19 @@ def test_ringing_aux_losses_preserve_fp64_precision() -> None:
     assert torch.isfinite(step_loss)
 
 
-def test_ringing_aux_losses_promote_to_higher_precision_for_mixed_inputs() -> None:
-    pred = torch.tensor([[0.0, 1.0e-4, -1.0e-4, 0.0]], dtype=torch.float32)
-    target = torch.tensor([[0.0, 1.0e-6, -2.0e-6, 0.0]], dtype=torch.float64)
+@pytest.mark.parametrize(
+    ("pred_dtype", "target_dtype"),
+    (
+        (torch.float32, torch.float64),
+        (torch.float64, torch.float32),
+    ),
+)
+def test_ringing_aux_losses_promote_to_higher_precision_for_mixed_inputs(
+    pred_dtype: torch.dtype,
+    target_dtype: torch.dtype,
+) -> None:
+    pred = torch.tensor([[0.0, 1.0e-4, -1.0e-4, 0.0]], dtype=pred_dtype)
+    target = torch.tensor([[0.0, 1.0e-6, -2.0e-6, 0.0]], dtype=target_dtype)
     config = RingingLossConfig(step_window_size=3, eps=1.0e-12)
 
     edge_loss = ringing_edge_loss(pred, target, config=config)
