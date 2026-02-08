@@ -72,6 +72,11 @@ hb_target:
   energy_cap: 0.001
   envelope_min: 0.2
 
+stage1_path:
+  input_route: source_chunk_44k1_to_x_full_88k2_via_degradation
+  target_route: high_band_to_hb_target_via_mirror_detection
+  strict_route_validation: true
+
 cache:
   enabled: true
   max_items: 128

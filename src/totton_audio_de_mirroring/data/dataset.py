@@ -45,6 +45,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
 
     def __init__(self, config: DataPipelineConfig) -> None:
         _validate_pipeline_config(config)
+        _validate_stage1_path(config)
 
         self._config = config
         self._degradation = DegradationProfileManager(config.degradation)
@@ -148,6 +149,8 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             "high_band": _to_tensor(high_band),
             "hb_target": _to_tensor(hb_target_result.target),
             "mirror_mask": mirror_mask,
+            "input_route": self._config.stage1_path.input_route,
+            "target_route": self._config.stage1_path.target_route,
             "profile": profile,
             "signal_type": request.signal_type,
             "chunk_start": int(chunk_start),
@@ -369,6 +372,27 @@ def _to_tensor_2d(array: np.ndarray) -> torch.Tensor:
 def _validate_pipeline_config(config: DataPipelineConfig) -> None:
     if not isinstance(config, DataPipelineConfig):
         raise ValueError("config must be a DataPipelineConfig")
+
+
+def _validate_stage1_path(config: DataPipelineConfig) -> None:
+    """Validate Stage 1 input/target route consistency.
+
+    Args:
+        config: Data pipeline configuration to validate.
+
+    Raises:
+        ValueError: If strict route requirements are violated.
+
+    Physical Basis:
+        Stage 1 training assumes a fixed 2x path where `x_full` is formed
+        from the 44.1kHz chunk and `hb_target` is derived from `high_band`.
+    """
+    if not config.stage1_path.strict_route_validation:
+        return
+    if config.target_sample_rate != config.source_sample_rate * 2:
+        raise ValueError(
+            "strict stage1_path requires target_sample_rate = source_sample_rate * 2."
+        )
 
 
 def _validate_signal(signal: np.ndarray) -> None:

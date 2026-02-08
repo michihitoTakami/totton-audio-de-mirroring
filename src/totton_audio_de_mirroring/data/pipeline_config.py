@@ -21,6 +21,8 @@ DEFAULT_CHUNK_SEC = 0.25
 DEFAULT_NUM_SAMPLES = 10_000
 DEFAULT_CACHE_ITEMS = 128
 DEFAULT_SEED = None
+DEFAULT_INPUT_ROUTE = "source_chunk_44k1_to_x_full_88k2_via_degradation"
+DEFAULT_TARGET_ROUTE = "high_band_to_hb_target_via_mirror_detection"
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,39 @@ class CacheConfig:
 
 
 @dataclass(frozen=True)
+class Stage1PathConfig:
+    """Explicit Stage 1 data-path specification for input/target generation.
+
+    Args:
+        input_route: Route identifier for Stage 1 input (`x_full`) generation.
+        target_route: Route identifier for Stage 1 target (`hb_target`) generation.
+        strict_route_validation: If true, enforce the fixed 44.1kHz->88.2kHz 2x route.
+
+    Physical Basis:
+        Fixing route identifiers in configuration prevents silent drift between
+        documented design intent and implemented training data paths.
+    """
+
+    input_route: str = DEFAULT_INPUT_ROUTE
+    target_route: str = DEFAULT_TARGET_ROUTE
+    strict_route_validation: bool = True
+
+    def __post_init__(self) -> None:
+        _validate_non_empty(self.input_route, "input_route")
+        _validate_non_empty(self.target_route, "target_route")
+        if self.input_route != DEFAULT_INPUT_ROUTE:
+            raise ValueError(
+                "input_route must match the fixed Stage 1 route "
+                f"'{DEFAULT_INPUT_ROUTE}'."
+            )
+        if self.target_route != DEFAULT_TARGET_ROUTE:
+            raise ValueError(
+                "target_route must match the fixed Stage 1 route "
+                f"'{DEFAULT_TARGET_ROUTE}'."
+            )
+
+
+@dataclass(frozen=True)
 class DataPipelineConfig:
     """Configuration for the full data pipeline.
 
@@ -189,6 +224,7 @@ class DataPipelineConfig:
         band_split: Band-split configuration.
         mirror_detection: Mirror detection configuration.
         hb_target: HB_target normalization configuration.
+        stage1_path: Explicit Stage 1 input/target path specification.
         cache: Cache configuration.
 
     Physical Basis:
@@ -211,6 +247,7 @@ class DataPipelineConfig:
         default_factory=MirrorDetectionConfig
     )
     hb_target: HBTargetConfig = field(default_factory=HBTargetConfig)
+    stage1_path: Stage1PathConfig = field(default_factory=Stage1PathConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
 
     def __post_init__(self) -> None:
@@ -224,6 +261,11 @@ class DataPipelineConfig:
         ratio = self.target_sample_rate / self.source_sample_rate
         if abs(ratio - round(ratio)) > 1e-6:
             raise ValueError("target_sample_rate must be integer multiple of source.")
+        if self.stage1_path.strict_route_validation and round(ratio) != 2:
+            raise ValueError(
+                "strict stage1_path requires a fixed 2x route "
+                "(source_sample_rate -> target_sample_rate)."
+            )
         if self.seed is not None and not isinstance(self.seed, int):
             raise ValueError("seed must be an int or None.")
 
@@ -250,6 +292,7 @@ class DataPipelineConfig:
             "band_split": _dataclass_to_dict(self.band_split),
             "mirror_detection": _dataclass_to_dict(self.mirror_detection),
             "hb_target": _dataclass_to_dict(self.hb_target),
+            "stage1_path": _dataclass_to_dict(self.stage1_path),
             "cache": _dataclass_to_dict(self.cache),
         }
 
@@ -283,6 +326,7 @@ class DataPipelineConfig:
             MirrorDetectionConfig, raw.get("mirror_detection")
         )
         hb_target = _build_dataclass(HBTargetConfig, raw.get("hb_target"))
+        stage1_path = _build_dataclass(Stage1PathConfig, raw.get("stage1_path"))
         cache = _build_dataclass(CacheConfig, raw.get("cache"))
 
         return DataPipelineConfig(
@@ -313,6 +357,7 @@ class DataPipelineConfig:
             band_split=band_split,
             mirror_detection=mirror_detection,
             hb_target=hb_target,
+            stage1_path=stage1_path,
             cache=cache,
         )
 

@@ -120,6 +120,19 @@ AIは高域を生成するのではなく、**抑制マスク（ゲイン）**�
 
 理想マスターを前提にせず、**合成データ生成と規格化ターゲット**で学習を成立させる。
 
+### 3.0 Stage1 Input/Target Path Spec（固定仕様）
+
+`configs/data_generation.yaml` の `stage1_path` は、実装経路と1:1で対応する固定仕様とする。
+
+* `input_route = source_chunk_44k1_to_x_full_88k2_via_degradation`
+  * 意味: 44.1kHzチャンク (`source`) を劣化SRC経路で2xして `x_full` を作る
+* `target_route = high_band_to_hb_target_via_mirror_detection`
+  * 意味: `high_band = HPF(20kHz, x_full)` から mirror検出+抑制で `hb_target` を作る
+* `strict_route_validation = true`
+  * 意味: Stage1の学習データ経路を `44.1kHz -> 88.2kHz (2x)` に固定する
+
+この仕様は `MirrorSuppressionDataset` で検証され、経路が一致しない設定はエラーとする。
+
 ### 3.1 Source Material (Synthetic / Procedural)
 
 学習に用いる“元音源”は実音源でなくてもよい。一般化目的のため、以下を広く混ぜる：
@@ -147,6 +160,10 @@ AIは高域を生成するのではなく、**抑制マスク（ゲイン）**�
 * まず `HB_in` を得る
 * ルールベース/解析ベースで **折り返し特徴を持つ成分**を検出して減衰し、`HB_target` を作る
 * 最後に `HB_target` に対して **Energy Cap / Envelope Target** を適用して規格化する
+
+注意:
+`HB_target` は「高域抑制のための規格化ターゲット」であり、全帯域の物理的グラウンドトゥルースではない。
+0–20kHzの同一性は `LB_out = LB_in` の構造保証で担保する。
 
 このとき、学習は
 
