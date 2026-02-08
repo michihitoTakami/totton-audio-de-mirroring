@@ -70,12 +70,23 @@ def test_training_config_from_dict_parses_weights() -> None:
                 "stft": 0.5,
                 "preserve": 1.5,
                 "energy": 0.2,
+                "edge": 0.05,
+                "step": 0.07,
+            },
+            "ringing_loss_config": {
+                "edge_weight_cap": 3.0,
+                "step_window_size": 15,
+                "eps": 1.0e-7,
             },
         }
     )
     assert config.epochs == 2
     assert config.loss_weights.mask == 2.0
     assert config.loss_weights.stft == 0.5
+    assert config.loss_weights.edge == 0.05
+    assert config.loss_weights.step == 0.07
+    assert config.ringing_loss_config.edge_weight_cap == 3.0
+    assert config.ringing_loss_config.step_window_size == 15
 
 
 def test_training_config_from_dict_parses_use_amp_string_false() -> None:
@@ -96,6 +107,8 @@ def test_load_training_config_yaml(tmp_path: Path) -> None:
               stft: 1.0
               preserve: 1.0
               energy: 1.0
+              edge: 0.05
+              step: 0.05
             """
         ).strip(),
         encoding="utf-8",
@@ -135,6 +148,17 @@ def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
     assert result.best_checkpoint.exists()
     assert len(result.train_history) == 2
     assert len(result.val_history) == 2
+    assert result.train_history[0].edge >= 0.0
+    assert result.train_history[0].step >= 0.0
+    contrib_sum = (
+        result.train_history[0].contrib_mask
+        + result.train_history[0].contrib_stft
+        + result.train_history[0].contrib_preserve
+        + result.train_history[0].contrib_energy
+        + result.train_history[0].contrib_edge
+        + result.train_history[0].contrib_step
+    )
+    assert contrib_sum == pytest.approx(1.0, rel=1.0e-4, abs=1.0e-4)
 
     state = torch.load(result.last_checkpoint, map_location="cpu", weights_only=False)
     assert "model_state" in state

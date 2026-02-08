@@ -51,6 +51,8 @@ class LossWeights:
         stft: Weight for multi-resolution STFT loss.
         preserve: Weight for preservation loss.
         energy: Weight for energy cap penalty.
+        edge: Weight for edge-aligned ringing loss.
+        step: Weight for step-response ringing loss.
 
     Physical Basis:
         Weighted combination balances suppression accuracy, time-frequency
@@ -61,12 +63,42 @@ class LossWeights:
     stft: float = 1.0
     preserve: float = 1.0
     energy: float = 1.0
+    edge: float = 0.0
+    step: float = 0.0
 
     def __post_init__(self) -> None:
         _validate_non_negative(self.mask, "mask")
         _validate_non_negative(self.stft, "stft")
         _validate_non_negative(self.preserve, "preserve")
         _validate_non_negative(self.energy, "energy")
+        _validate_non_negative(self.edge, "edge")
+        _validate_non_negative(self.step, "step")
+
+
+@dataclass(frozen=True)
+class RingingLossConfig:
+    """Configuration for edge/step ringing auxiliary losses.
+
+    Args:
+        edge_weight_cap: Upper bound for edge weighting.
+        step_window_size: Dilation window for edge-focused step loss.
+        eps: Numerical stability constant.
+
+    Physical Basis:
+        Ringing artifacts emerge around sharp edges. Emphasizing edge
+        neighborhoods in the objective helps training avoid ripple regression.
+    """
+
+    edge_weight_cap: float = 4.0
+    step_window_size: int = 33
+    eps: float = 1.0e-8
+
+    def __post_init__(self) -> None:
+        _validate_positive_float(self.edge_weight_cap, "edge_weight_cap")
+        _validate_positive_int(self.step_window_size, "step_window_size")
+        if self.step_window_size % 2 == 0:
+            raise ValueError("step_window_size must be odd.")
+        _validate_positive_float(self.eps, "eps")
 
 
 @dataclass(frozen=True)
@@ -79,6 +111,8 @@ class LossTerms:
         stft: Multi-resolution STFT loss.
         preserve: Preservation loss outside mirror bins.
         energy: Energy cap penalty.
+        edge: Edge-aligned ringing loss.
+        step: Step-response ringing loss.
 
     Physical Basis:
         Tracking each term ensures mirror suppression while maintaining
@@ -90,6 +124,33 @@ class LossTerms:
     stft: torch.Tensor
     preserve: torch.Tensor
     energy: torch.Tensor
+    edge: torch.Tensor
+    step: torch.Tensor
+
+
+@dataclass(frozen=True)
+class LossContributionRatios:
+    """Weighted loss contribution ratios for one optimization step.
+
+    Args:
+        mask: Weighted contribution ratio of mask loss.
+        stft: Weighted contribution ratio of STFT loss.
+        preserve: Weighted contribution ratio of preservation loss.
+        energy: Weighted contribution ratio of energy cap loss.
+        edge: Weighted contribution ratio of edge ringing loss.
+        step: Weighted contribution ratio of step ringing loss.
+
+    Physical Basis:
+        Tracking weighted ratios quantifies which objectives dominate
+        optimization and prevents accidental drift from mirror-first goals.
+    """
+
+    mask: float
+    stft: float
+    preserve: float
+    energy: float
+    edge: float
+    step: float
 
 
 def compute_losses(
@@ -102,6 +163,7 @@ def compute_losses(
     stft_configs: Sequence[STFTLossConfig],
     weights: LossWeights,
     energy_cap: float,
+    ringing_config: RingingLossConfig | None = None,
     mask_mode: LossMode = "l1",
     eps: float = 1.0e-8,
 ) -> LossTerms:
@@ -116,6 +178,7 @@ def compute_losses(
         stft_configs: STFT configs for multi-resolution loss.
         weights: Loss weights.
         energy_cap: Maximum allowed high-band energy (sum of mag^2).
+        ringing_config: Configuration for ringing auxiliary losses.
         mask_mode: Loss mode for mask loss ("l1" or "l2").
         eps: Small constant for numerical stability.
 
@@ -137,6 +200,7 @@ def compute_losses(
     _validate_positive_float(energy_cap, "energy_cap")
     if eps <= 0.0:
         raise ValueError("eps must be positive.")
+    active_ringing_config = ringing_config or RingingLossConfig()
 
     hb_in_mag = _stft_magnitude(hb_in, mask_config)
     hb_target_mag = _stft_magnitude(hb_target, mask_config)
@@ -148,12 +212,16 @@ def compute_losses(
     loss_preserve = preserve_loss(hb_pred_mag, hb_in_mag, mirror_mask)
     loss_stft = multi_resolution_stft_loss(hb_pred, hb_target, stft_configs)
     loss_energy = energy_cap_loss(hb_pred_mag, energy_cap)
+    loss_edge = ringing_edge_loss(hb_pred, hb_target, config=active_ringing_config)
+    loss_step = ringing_step_loss(hb_pred, hb_target, config=active_ringing_config)
 
     total = (
         weights.mask * loss_mask
         + weights.stft * loss_stft
         + weights.preserve * loss_preserve
         + weights.energy * loss_energy
+        + weights.edge * loss_edge
+        + weights.step * loss_step
     )
 
     return LossTerms(
@@ -162,6 +230,58 @@ def compute_losses(
         stft=loss_stft,
         preserve=loss_preserve,
         energy=loss_energy,
+        edge=loss_edge,
+        step=loss_step,
+    )
+
+
+def compute_loss_contribution_ratios(
+    terms: LossTerms,
+    weights: LossWeights,
+    *,
+    eps: float = 1.0e-12,
+) -> LossContributionRatios:
+    """Compute weighted contribution ratios of each loss term.
+
+    Args:
+        terms: Per-step loss terms.
+        weights: Loss weights used for total loss.
+        eps: Numerical stability constant.
+
+    Returns:
+        Weighted contribution ratios that sum to 1.0.
+
+    Physical Basis:
+        Weighted ratios provide interpretable diagnostics for balancing
+        mirror suppression, safety, and ringing constraints.
+    """
+    _validate_positive_float(eps, "eps")
+    weighted = {
+        "mask": max(weights.mask * float(terms.mask.detach().item()), 0.0),
+        "stft": max(weights.stft * float(terms.stft.detach().item()), 0.0),
+        "preserve": max(weights.preserve * float(terms.preserve.detach().item()), 0.0),
+        "energy": max(weights.energy * float(terms.energy.detach().item()), 0.0),
+        "edge": max(weights.edge * float(terms.edge.detach().item()), 0.0),
+        "step": max(weights.step * float(terms.step.detach().item()), 0.0),
+    }
+    total = sum(weighted.values())
+    if total <= eps:
+        uniform = 1.0 / 6.0
+        return LossContributionRatios(
+            mask=uniform,
+            stft=uniform,
+            preserve=uniform,
+            energy=uniform,
+            edge=uniform,
+            step=uniform,
+        )
+    return LossContributionRatios(
+        mask=weighted["mask"] / total,
+        stft=weighted["stft"] / total,
+        preserve=weighted["preserve"] / total,
+        energy=weighted["energy"] / total,
+        edge=weighted["edge"] / total,
+        step=weighted["step"] / total,
     )
 
 
@@ -314,6 +434,87 @@ def energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.Tensor:
     return torch.mean(excess)
 
 
+def ringing_edge_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    config: RingingLossConfig | None = None,
+) -> torch.Tensor:
+    """Penalize edge-derivative mismatch to suppress ringing regression.
+
+    Args:
+        pred: Predicted high-band signal (batch, time).
+        target: Target high-band signal (batch, time).
+        config: Ringing loss configuration.
+
+    Returns:
+        Scalar edge-focused loss value.
+
+    Physical Basis:
+        Ringing growth appears as derivative mismatch near transitions.
+        Edge-weighted derivative alignment constrains transient behavior.
+    """
+    _validate_signal_2d(pred, "pred")
+    _validate_signal_2d(target, "target")
+    if pred.shape != target.shape:
+        raise ValueError("pred and target must share shape.")
+    active_config = config or RingingLossConfig()
+
+    pred_diff = torch.diff(pred, dim=-1)
+    target_diff = torch.diff(target, dim=-1)
+    weights = _edge_weights(
+        target_diff,
+        edge_weight_cap=active_config.edge_weight_cap,
+        eps=active_config.eps,
+    )
+    return torch.mean(torch.abs(pred_diff - target_diff) * weights)
+
+
+def ringing_step_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    config: RingingLossConfig | None = None,
+) -> torch.Tensor:
+    """Penalize edge-neighborhood step-response mismatch.
+
+    Args:
+        pred: Predicted high-band signal (batch, time).
+        target: Target high-band signal (batch, time).
+        config: Ringing loss configuration.
+
+    Returns:
+        Scalar step-response loss value.
+
+    Physical Basis:
+        Step-response mismatch around edges captures overshoot and ripple
+        tendencies that are not fully reflected by global spectral losses.
+    """
+    _validate_signal_2d(pred, "pred")
+    _validate_signal_2d(target, "target")
+    if pred.shape != target.shape:
+        raise ValueError("pred and target must share shape.")
+    active_config = config or RingingLossConfig()
+
+    pred_diff = torch.diff(pred, dim=-1)
+    target_diff = torch.diff(target, dim=-1)
+    weights = _edge_weights(
+        target_diff,
+        edge_weight_cap=active_config.edge_weight_cap,
+        eps=active_config.eps,
+    )
+    dilated_weights = F.max_pool1d(
+        weights.unsqueeze(1),
+        kernel_size=active_config.step_window_size,
+        stride=1,
+        padding=active_config.step_window_size // 2,
+    ).squeeze(1)
+
+    pred_step = torch.cumsum(pred_diff, dim=-1)
+    target_step = torch.cumsum(target_diff, dim=-1)
+    return torch.mean(torch.abs(pred_step - target_step) * dilated_weights)
+
+
 def _stft_magnitude(signal: torch.Tensor, config: STFTLossConfig) -> torch.Tensor:
     """Compute STFT magnitude for a batched signal.
 
@@ -376,6 +577,21 @@ def _broadcast_mask(mask: torch.Tensor, shape: torch.Size) -> torch.Tensor:
     if mask.shape[1:] != shape[1:]:
         mask = _resize_mask(mask, target_freq=shape[1], target_time=shape[2])
     return mask
+
+
+def _edge_weights(
+    target_diff: torch.Tensor,
+    *,
+    edge_weight_cap: float,
+    eps: float,
+) -> torch.Tensor:
+    """Build normalized edge weights from first-order target derivative."""
+    if target_diff.ndim != 2:
+        raise ValueError("target_diff must be 2D (batch, time-1).")
+    magnitude = torch.abs(target_diff)
+    scale = torch.mean(magnitude, dim=-1, keepdim=True)
+    normalized = magnitude / (scale + eps)
+    return torch.clamp(normalized, min=0.0, max=edge_weight_cap)
 
 
 def _resize_mask(
