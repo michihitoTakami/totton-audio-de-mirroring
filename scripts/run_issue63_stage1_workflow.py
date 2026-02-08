@@ -45,7 +45,9 @@ class CandidateEvaluation:
         mirror_summary: Aggregated mirror-metric summary payload.
         imd_summary: Aggregated IMD proxy summary payload.
         ringing_summary: Aggregated edge-aligned ringing summary payload.
+        gate_details: Per-gate thresholds/observations/pass details.
         passes_hard_gate: True when LB preservation and energy-cap gate passes.
+        passes_mirror_gate: True when mirror reduction target is satisfied.
         passes_imd_gate: True when IMD vs naive shows improvement.
         passes_ringing_gate: True when square-wave ringing does not regress.
         composite_score: Ranking score; higher is better.
@@ -61,7 +63,9 @@ class CandidateEvaluation:
     mirror_summary: dict[str, Any]
     imd_summary: dict[str, Any]
     ringing_summary: dict[str, Any]
+    gate_details: dict[str, Any]
     passes_hard_gate: bool
+    passes_mirror_gate: bool
     passes_imd_gate: bool
     passes_ringing_gate: bool
     composite_score: float
@@ -76,6 +80,7 @@ class GateConfig:
         max_lb_group_delay_error_samples: Maximum mean LB group-delay error.
         max_lb_amplitude_error_db: Maximum LB waveform error in dB.
         require_zero_energy_cap_violations: Require no HB cap violations.
+        min_mirror_symmetry_reduction_ratio: Minimum mirror reduction ratio.
         require_positive_thdn_improvement: Require THD+N improvement > 0 dB.
         max_plateau_ripple_rms_ratio: Max allowed after/before ripple RMS ratio.
         max_plateau_ripple_p2p_ratio: Max allowed after/before ripple P2P ratio.
@@ -91,6 +96,7 @@ class GateConfig:
     max_lb_group_delay_error_samples: float
     max_lb_amplitude_error_db: float
     require_zero_energy_cap_violations: bool
+    min_mirror_symmetry_reduction_ratio: float
     require_positive_thdn_improvement: bool
     max_plateau_ripple_rms_ratio: float
     max_plateau_ripple_p2p_ratio: float
@@ -183,6 +189,7 @@ def main() -> None:
         max_lb_group_delay_error_samples=args.max_lb_group_delay_error_samples,
         max_lb_amplitude_error_db=args.max_lb_amplitude_error_db,
         require_zero_energy_cap_violations=not args.allow_energy_cap_violations,
+        min_mirror_symmetry_reduction_ratio=args.mirror_target_reduction,
         require_positive_thdn_improvement=(not args.allow_nonpositive_thdn_improvement),
         max_plateau_ripple_rms_ratio=args.max_plateau_ripple_rms_ratio,
         max_plateau_ripple_p2p_ratio=args.max_plateau_ripple_p2p_ratio,
@@ -252,9 +259,19 @@ def main() -> None:
         passes_hard = _passes_hard_gate(
             hard_summary=hard_summary, gate_config=gate_config
         )
+        passes_mirror = _passes_mirror_gate(
+            mirror_summary=mirror_summary, gate_config=gate_config
+        )
         passes_imd = _passes_imd_gate(imd_summary=imd_summary, gate_config=gate_config)
         passes_ringing = _passes_ringing_gate(
             ringing_summary=ringing_summary, gate_config=gate_config
+        )
+        gate_details = _build_gate_details(
+            hard_summary=hard_summary,
+            mirror_summary=mirror_summary,
+            imd_summary=imd_summary,
+            ringing_summary=ringing_summary,
+            gate_config=gate_config,
         )
         score = _compute_composite_score(
             hard_summary=hard_summary,
@@ -269,7 +286,9 @@ def main() -> None:
                 mirror_summary=mirror_summary,
                 imd_summary=imd_summary,
                 ringing_summary=ringing_summary,
+                gate_details=gate_details,
                 passes_hard_gate=passes_hard,
+                passes_mirror_gate=passes_mirror,
                 passes_imd_gate=passes_imd,
                 passes_ringing_gate=passes_ringing,
                 composite_score=score,
@@ -288,6 +307,7 @@ def main() -> None:
         "selected_checkpoint_copy": str(selected_checkpoint_path),
         "selection_reason": {
             "passes_hard_gate": selected.passes_hard_gate,
+            "passes_mirror_gate": selected.passes_mirror_gate,
             "passes_imd_gate": selected.passes_imd_gate,
             "passes_ringing_gate": selected.passes_ringing_gate,
             "composite_score": selected.composite_score,
@@ -534,6 +554,8 @@ def _run_stage1_hard_metrics_command(
         str(energy_cap),
         "--mirror-target-reduction",
         str(mirror_target_reduction),
+        "--strict-energy-cap",
+        "--strict-mirror-reduction",
         "--json",
         str(json_path),
         "--csv",
@@ -550,13 +572,19 @@ def _run_stage1_hard_metrics_command(
         log_path=log_path,
         section_label=f"evaluate_stage1:{candidate_name}",
     )
-    if return_code != 0:
-        raise RuntimeError(f"Stage 1 evaluation failed. See log: {log_path}")
+    allowed_exit_codes = {0, 2, 3, 5}
+    if return_code not in allowed_exit_codes:
+        raise RuntimeError(
+            "Stage 1 evaluation failed unexpectedly "
+            f"(exit={return_code}). See log: {log_path}"
+        )
     try:
         parsed = json.loads(json_path.read_text(encoding="utf-8"))
         if not isinstance(parsed, dict):
             raise RuntimeError("Stage 1 metrics JSON root must be an object.")
-        return cast(dict[str, Any], parsed)
+        payload = cast(dict[str, Any], parsed)
+        payload["strict_exit_code"] = int(return_code)
+        return payload
     except Exception as exc:
         raise RuntimeError(
             f"Failed to parse stage1 metrics JSON ({json_path}): {exc}"
@@ -606,15 +634,18 @@ def _load_ringing_summary(payload: dict[str, Any]) -> dict[str, Any]:
         Ringing summary quantifies square-wave transient regressions and is
         used as a hard gate for time-response preservation.
     """
-    summary = payload.get("summary")
-    if isinstance(summary, dict):
-        return dict(summary)
-
     ringing = payload.get("ringing_metrics")
     if isinstance(ringing, dict):
         nested_summary = ringing.get("summary")
-        if isinstance(nested_summary, dict):
+        if (
+            isinstance(nested_summary, dict)
+            and "mean_plateau_ripple_rms_ratio" in nested_summary
+        ):
             return dict(nested_summary)
+
+    summary = payload.get("summary")
+    if isinstance(summary, dict) and "mean_plateau_ripple_rms_ratio" in summary:
+        return dict(summary)
 
     raise RuntimeError("payload missing ringing summary.")
 
@@ -903,6 +934,14 @@ def _passes_imd_gate(*, imd_summary: dict[str, Any], gate_config: GateConfig) ->
     )
 
 
+def _passes_mirror_gate(
+    *, mirror_summary: dict[str, Any], gate_config: GateConfig
+) -> bool:
+    """Check mirror-reduction gate against Stage1 acceptance threshold."""
+    observed = float(mirror_summary["symmetry_reduction_ratio"])
+    return observed >= gate_config.min_mirror_symmetry_reduction_ratio
+
+
 def _passes_ringing_gate(
     *,
     ringing_summary: dict[str, Any],
@@ -929,6 +968,102 @@ def _passes_ringing_gate(
         gate_config.require_nonpositive_ringing_ratio_delta
         and ringing_ratio_delta > 0.0
     )
+
+
+def _build_gate_details(
+    *,
+    hard_summary: dict[str, Any],
+    mirror_summary: dict[str, Any],
+    imd_summary: dict[str, Any],
+    ringing_summary: dict[str, Any],
+    gate_config: GateConfig,
+) -> dict[str, Any]:
+    """Build traceable gate threshold/observation payload."""
+    hard_observed = {
+        "hb_energy_cap_violation_rate": float(
+            hard_summary["hb_energy_cap_violation_rate"]
+        ),
+        "lb_phase_error_deg": float(hard_summary["lb_phase_error_deg"]),
+        "lb_group_delay_error_samples": float(
+            hard_summary["lb_group_delay_error_samples"]
+        ),
+        "lb_amplitude_error_db": float(hard_summary["lb_amplitude_error_db"]),
+    }
+    mirror_observed = {
+        "symmetry_reduction_ratio": float(mirror_summary["symmetry_reduction_ratio"])
+    }
+    imd_observed = {
+        "all_nmse_has_lower_imd": bool(imd_summary["all_nmse_has_lower_imd"]),
+        "mean_thdn_improvement_db": float(imd_summary["mean_thdn_improvement_db"]),
+    }
+    ringing_observed = {
+        "mean_plateau_ripple_rms_ratio": float(
+            ringing_summary["mean_plateau_ripple_rms_ratio"]
+        ),
+        "mean_plateau_ripple_p2p_ratio": float(
+            ringing_summary["mean_plateau_ripple_p2p_ratio"]
+        ),
+        "mean_overshoot_abs_delta": float(ringing_summary["mean_overshoot_abs_delta"]),
+        "mean_ringing_ratio_delta": float(ringing_summary["mean_ringing_ratio_delta"]),
+    }
+
+    return {
+        "hard_gate": {
+            "passed": _passes_hard_gate(
+                hard_summary=hard_summary, gate_config=gate_config
+            ),
+            "threshold": {
+                "max_lb_phase_error_deg": gate_config.max_lb_phase_error_deg,
+                "max_lb_group_delay_error_samples": gate_config.max_lb_group_delay_error_samples,
+                "max_lb_amplitude_error_db": gate_config.max_lb_amplitude_error_db,
+                "max_hb_energy_cap_violation_rate": (
+                    0.0
+                    if gate_config.require_zero_energy_cap_violations
+                    else float("inf")
+                ),
+            },
+            "observed": hard_observed,
+        },
+        "mirror_gate": {
+            "passed": _passes_mirror_gate(
+                mirror_summary=mirror_summary, gate_config=gate_config
+            ),
+            "threshold": {
+                "min_symmetry_reduction_ratio": gate_config.min_mirror_symmetry_reduction_ratio
+            },
+            "observed": mirror_observed,
+        },
+        "imd_gate": {
+            "passed": _passes_imd_gate(
+                imd_summary=imd_summary, gate_config=gate_config
+            ),
+            "threshold": {
+                "require_nmse_has_lower_imd": True,
+                "min_mean_thdn_improvement_db": (
+                    0.0
+                    if gate_config.require_positive_thdn_improvement
+                    else float("-inf")
+                ),
+            },
+            "observed": imd_observed,
+        },
+        "ringing_gate": {
+            "passed": _passes_ringing_gate(
+                ringing_summary=ringing_summary, gate_config=gate_config
+            ),
+            "threshold": {
+                "max_plateau_ripple_rms_ratio": gate_config.max_plateau_ripple_rms_ratio,
+                "max_plateau_ripple_p2p_ratio": gate_config.max_plateau_ripple_p2p_ratio,
+                "max_overshoot_abs_increase": gate_config.max_overshoot_abs_increase,
+                "max_ringing_ratio_delta": (
+                    0.0
+                    if gate_config.require_nonpositive_ringing_ratio_delta
+                    else float("inf")
+                ),
+            },
+            "observed": ringing_observed,
+        },
+    }
 
 
 def _compute_composite_score(
@@ -971,12 +1106,13 @@ def _select_best_candidate(
         for candidate in candidates
         if (
             candidate.passes_hard_gate
+            and candidate.passes_mirror_gate
             and candidate.passes_imd_gate
             and candidate.passes_ringing_gate
         )
     ]
     if len(passing) == 0:
-        raise RuntimeError("No checkpoint passed hard+IMD+ringing gates.")
+        raise RuntimeError("No checkpoint passed hard+mirror+IMD+ringing gates.")
 
     return sorted(
         passing,
@@ -995,9 +1131,11 @@ def _candidate_to_payload(candidate: CandidateEvaluation) -> dict[str, Any]:
         "checkpoint_path": str(candidate.checkpoint_path),
         "output_dir": str(candidate.output_dir),
         "passes_hard_gate": candidate.passes_hard_gate,
+        "passes_mirror_gate": candidate.passes_mirror_gate,
         "passes_imd_gate": candidate.passes_imd_gate,
         "passes_ringing_gate": candidate.passes_ringing_gate,
         "composite_score": candidate.composite_score,
+        "gate_details": candidate.gate_details,
         "hard_metrics": candidate.hard_summary,
         "mirror_metrics": candidate.mirror_summary,
         "imd_proxy": candidate.imd_summary,

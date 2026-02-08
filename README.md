@@ -258,6 +258,19 @@ uv run python scripts/evaluate_stage1.py \
 5. HB energy cap違反率
 6. Touch指標（非ミラーHB変形量）
 
+`--json` 出力には `gates` オブジェクトが含まれ、以下の判定根拠（threshold / observed / passed）を追跡できる:
+
+1. `energy_cap`
+2. `mirror_reduction`
+3. `ringing_regression`
+
+strict判定時の終了コードは固定:
+
+1. `2`: energy cap gate fail (`--strict-energy-cap`)
+2. `3`: mirror reduction gate fail (`--strict-mirror-reduction`)
+3. `4`: ringing regression gate fail (`--strict-ringing-regression`)
+4. `5`: strict複数指定時に2つ以上 fail
+
 回帰テスト（golden samples）:
 
 ```bash
@@ -272,7 +285,7 @@ uv run --extra dev pytest tests/regression/test_stage1_regression.py -v
 2. `scripts/train_stage1.py` による Stage 1 再学習
 3. Hard Metrics / Mirror Metrics 評価
 4. IMD proxy（naive vs NMSE）比較
-5. gate通過候補からベストcheckpoint選定とレポート保存
+5. hard + mirror + IMD + ringing gate通過候補からベストcheckpoint選定とレポート保存
 
 ```bash
 uv run python scripts/run_issue63_stage1_workflow.py \
