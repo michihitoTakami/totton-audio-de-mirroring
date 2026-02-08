@@ -203,6 +203,7 @@ GANで質感生成を狙うのではなく、**抑制の正確さと“不用意
 ### 7.3 Listening
 
 * ABXで“ジャリつき/刺さり/金属感”が減り、アタックが維持されること
+* 実施手順・記録様式は `docs/abx_listening_protocol.md` を使用する
 
 ### 7.4 Automated Stage 1 Hard Metrics
 
