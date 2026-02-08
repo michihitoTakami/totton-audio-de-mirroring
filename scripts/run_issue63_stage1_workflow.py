@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -16,11 +17,15 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import scipy.signal as sp_signal
 import torch
 
 from totton_audio_de_mirroring.data.filters import design_band_split_filters
 from totton_audio_de_mirroring.data.pipeline_config import load_data_config
 from totton_audio_de_mirroring.evaluation.imd_proxy import evaluate_imd_proxy
+from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
+    compare_edge_aligned_ringing,
+)
 from totton_audio_de_mirroring.models.nmse import NMSE
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
@@ -136,6 +141,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ringing-plateau-start-ms", type=float, default=0.1)
     parser.add_argument("--ringing-plateau-end-ms", type=float, default=0.8)
     parser.add_argument("--ringing-window-ms", type=float, default=0.8)
+    parser.add_argument(
+        "--ringing-square-frequencies-hz",
+        type=float,
+        nargs="+",
+        default=[500.0, 1_000.0, 5_000.0, 10_000.0],
+    )
+    parser.add_argument("--ringing-square-duration-sec", type=float, default=1.0)
+    parser.add_argument("--ringing-square-amplitude", type=float, default=0.5)
     parser.add_argument("--allow-energy-cap-violations", action="store_true")
     parser.add_argument("--allow-nonpositive-thdn-improvement", action="store_true")
     parser.add_argument("--skip-training", action="store_true")
@@ -216,10 +229,24 @@ def main() -> None:
             nmse_dir=output_dir,
             sample_rate=data_config.target_sample_rate,
         )
+        ringing_payload = _evaluate_square_probe_ringing(
+            checkpoint_path=checkpoint_path,
+            data_config_path=args.data_config,
+            device=args.device,
+            report_dir=args.report_dir / "candidate_metrics" / checkpoint_path.stem,
+            source_sample_rate=data_config.source_sample_rate,
+            target_sample_rate=data_config.target_sample_rate,
+            frequencies_hz=tuple(args.ringing_square_frequencies_hz),
+            duration_sec=args.ringing_square_duration_sec,
+            amplitude=args.ringing_square_amplitude,
+            plateau_start_ms=args.ringing_plateau_start_ms,
+            plateau_end_ms=args.ringing_plateau_end_ms,
+            ringing_window_ms=args.ringing_window_ms,
+        )
 
         hard_summary = _load_hard_summary(evaluate_payload)
         mirror_summary = _load_mirror_summary(evaluate_payload)
-        ringing_summary = _load_ringing_summary(evaluate_payload)
+        ringing_summary = _load_ringing_summary(ringing_payload)
 
         passes_hard = _passes_hard_gate(
             hard_summary=hard_summary, gate_config=gate_config
@@ -578,13 +605,196 @@ def _load_ringing_summary(payload: dict[str, Any]) -> dict[str, Any]:
         Ringing summary quantifies square-wave transient regressions and is
         used as a hard gate for time-response preservation.
     """
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        return dict(summary)
+
     ringing = payload.get("ringing_metrics")
-    if not isinstance(ringing, dict):
-        raise RuntimeError("evaluate_stage1 payload missing 'ringing_metrics' object.")
-    summary = ringing.get("summary")
-    if not isinstance(summary, dict):
-        raise RuntimeError("evaluate_stage1 payload missing ringing summary.")
-    return dict(summary)
+    if isinstance(ringing, dict):
+        nested_summary = ringing.get("summary")
+        if isinstance(nested_summary, dict):
+            return dict(nested_summary)
+
+    raise RuntimeError("payload missing ringing summary.")
+
+
+def _evaluate_square_probe_ringing(
+    *,
+    checkpoint_path: Path,
+    data_config_path: Path,
+    device: str,
+    report_dir: Path,
+    source_sample_rate: int,
+    target_sample_rate: int,
+    frequencies_hz: tuple[float, ...],
+    duration_sec: float,
+    amplitude: float,
+    plateau_start_ms: float,
+    plateau_end_ms: float,
+    ringing_window_ms: float,
+) -> dict[str, Any]:
+    """Evaluate square-wave ringing regression metrics for one checkpoint.
+
+    Returns:
+        JSON-serializable payload with summary and per-frequency metrics.
+
+    Raises:
+        RuntimeError: If square-probe metrics cannot be computed.
+
+    Physical Basis:
+        Fixed square probes isolate transient behavior and directly test
+        ringing regression against the Reference 2x SRC baseline.
+    """
+    report_dir.mkdir(parents=True, exist_ok=True)
+    model = _build_stage1_model_from_checkpoint(
+        checkpoint_path=checkpoint_path,
+        data_config_path=data_config_path,
+        device=device,
+    )
+    torch_device = torch.device(device)
+    per_probe: list[dict[str, Any]] = []
+
+    with torch.no_grad():
+        for frequency_hz in frequencies_hz:
+            source_signal = _generate_square_probe_signal(
+                sample_rate=source_sample_rate,
+                frequency_hz=frequency_hz,
+                duration_sec=duration_sec,
+                amplitude=amplitude,
+            )
+            before_signal = np.asarray(
+                sp_signal.resample_poly(source_signal, up=2, down=1),
+                dtype=np.float64,
+            )
+            tensor = (
+                torch.from_numpy(np.asarray(before_signal, dtype=np.float32))
+                .unsqueeze(0)
+                .to(torch_device)
+            )
+            after_signal = np.asarray(
+                model(tensor).squeeze(0).detach().cpu().numpy(),
+                dtype=np.float64,
+            )
+            comparison = compare_edge_aligned_ringing(
+                before_signal=before_signal,
+                after_signal=after_signal,
+                sample_rate=target_sample_rate,
+                plateau_start_ms=plateau_start_ms,
+                plateau_end_ms=plateau_end_ms,
+                ringing_window_ms=ringing_window_ms,
+            )
+            per_probe.append(
+                {
+                    "frequency_hz": frequency_hz,
+                    "sample_id": _square_probe_sample_id(frequency_hz),
+                    "plateau_ripple_rms_before": comparison.before.plateau_ripple_rms,
+                    "plateau_ripple_rms_after": comparison.after.plateau_ripple_rms,
+                    "plateau_ripple_rms_ratio": comparison.plateau_ripple_rms_ratio,
+                    "plateau_ripple_p2p_before": comparison.before.plateau_ripple_p2p,
+                    "plateau_ripple_p2p_after": comparison.after.plateau_ripple_p2p,
+                    "plateau_ripple_p2p_ratio": comparison.plateau_ripple_p2p_ratio,
+                    "overshoot_abs_before": comparison.before.overshoot_abs,
+                    "overshoot_abs_after": comparison.after.overshoot_abs,
+                    "overshoot_abs_delta": comparison.overshoot_abs_delta,
+                    "ringing_ratio_before": comparison.before.post_to_pre_ringing_energy_ratio,
+                    "ringing_ratio_after": comparison.after.post_to_pre_ringing_energy_ratio,
+                    "ringing_ratio_delta": comparison.ringing_ratio_delta,
+                }
+            )
+
+    summary = _summarize_square_probe_ringing(per_probe)
+    payload: dict[str, Any] = {
+        "probe_config": {
+            "source_sample_rate": source_sample_rate,
+            "target_sample_rate": target_sample_rate,
+            "frequencies_hz": list(frequencies_hz),
+            "duration_sec": duration_sec,
+            "amplitude": amplitude,
+            "plateau_start_ms": plateau_start_ms,
+            "plateau_end_ms": plateau_end_ms,
+            "ringing_window_ms": ringing_window_ms,
+        },
+        "summary": summary,
+        "samples": per_probe,
+    }
+
+    json_path = report_dir / "ringing_square_metrics.json"
+    csv_path = report_dir / "ringing_square_metrics.csv"
+    json_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    _write_dict_rows_csv(rows=per_probe, path=csv_path)
+    return payload
+
+
+def _generate_square_probe_signal(
+    *,
+    sample_rate: int,
+    frequency_hz: float,
+    duration_sec: float,
+    amplitude: float,
+) -> np.ndarray:
+    """Generate deterministic square-wave probe at source sample rate."""
+    if sample_rate <= 0:
+        raise ValueError(f"sample_rate must be positive, got {sample_rate}")
+    if frequency_hz <= 0.0:
+        raise ValueError(f"frequency_hz must be positive, got {frequency_hz}")
+    if frequency_hz >= (sample_rate / 2.0):
+        raise ValueError(
+            f"frequency_hz must be below Nyquist ({sample_rate / 2.0}), got {frequency_hz}"
+        )
+    if duration_sec <= 0.0:
+        raise ValueError(f"duration_sec must be positive, got {duration_sec}")
+    if amplitude <= 0.0:
+        raise ValueError(f"amplitude must be positive, got {amplitude}")
+
+    num_samples = int(round(duration_sec * float(sample_rate)))
+    if num_samples < 2:
+        raise ValueError("duration_sec too short for square-wave probe generation")
+    time_axis = np.arange(num_samples, dtype=np.float64) / float(sample_rate)
+    square = amplitude * sp_signal.square(2.0 * np.pi * frequency_hz * time_axis)
+    return np.asarray(square, dtype=np.float64)
+
+
+def _summarize_square_probe_ringing(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate per-frequency ringing metrics for square-wave probes."""
+    if len(samples) == 0:
+        raise ValueError("samples cannot be empty")
+
+    def _mean(field_name: str) -> float:
+        return float(np.mean([float(item[field_name]) for item in samples]))
+
+    return {
+        "num_samples": len(samples),
+        "mean_plateau_ripple_rms_before": _mean("plateau_ripple_rms_before"),
+        "mean_plateau_ripple_rms_after": _mean("plateau_ripple_rms_after"),
+        "mean_plateau_ripple_rms_ratio": _mean("plateau_ripple_rms_ratio"),
+        "mean_plateau_ripple_p2p_before": _mean("plateau_ripple_p2p_before"),
+        "mean_plateau_ripple_p2p_after": _mean("plateau_ripple_p2p_after"),
+        "mean_plateau_ripple_p2p_ratio": _mean("plateau_ripple_p2p_ratio"),
+        "mean_overshoot_abs_before": _mean("overshoot_abs_before"),
+        "mean_overshoot_abs_after": _mean("overshoot_abs_after"),
+        "mean_overshoot_abs_delta": _mean("overshoot_abs_delta"),
+        "mean_ringing_ratio_before": _mean("ringing_ratio_before"),
+        "mean_ringing_ratio_after": _mean("ringing_ratio_after"),
+        "mean_ringing_ratio_delta": _mean("ringing_ratio_delta"),
+    }
+
+
+def _write_dict_rows_csv(*, rows: list[dict[str, Any]], path: Path) -> None:
+    """Write list-of-dicts records to CSV file."""
+    if len(rows) == 0:
+        raise ValueError("rows cannot be empty")
+    fieldnames = list(rows[0].keys())
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _square_probe_sample_id(frequency_hz: float) -> str:
+    rounded_hz = int(round(frequency_hz))
+    return f"square_{rounded_hz}hz"
 
 
 def _evaluate_imd_dataset(
@@ -940,6 +1150,15 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("ringing_plateau_end_ms must be greater than start")
     if args.ringing_window_ms <= 0.0:
         raise ValueError("ringing_window_ms must be positive")
+    if args.ringing_square_duration_sec <= 0.0:
+        raise ValueError("ringing_square_duration_sec must be positive")
+    if args.ringing_square_amplitude <= 0.0:
+        raise ValueError("ringing_square_amplitude must be positive")
+    frequencies_hz = tuple(float(freq) for freq in args.ringing_square_frequencies_hz)
+    if len(frequencies_hz) == 0:
+        raise ValueError("ringing_square_frequencies_hz cannot be empty")
+    if min(frequencies_hz) <= 0.0:
+        raise ValueError("ringing_square_frequencies_hz must be all positive")
 
 
 if __name__ == "__main__":
