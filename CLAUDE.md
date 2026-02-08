@@ -33,7 +33,7 @@ The system targets **mirror-removal and time-response preservation** rather than
 
 ### Design Intent / Success Criteria
 
-The system aims for **time-response preservation (transients, phase, group delay) while removing audible unnaturalness from mirror/aliasing**, not "aggressive ultrasonic generation". Since content above 22.05kHz cannot be uniquely reconstructed from 44.1kHz input, the 20kHz+ band is treated as **suppression of unnatural components and safe shaping (zero is acceptable if needed)**, not "reconstruction".
+The system aims for **no ringing regression with time-response preservation (transients, phase, group delay) while removing audible unnaturalness from mirror/aliasing**, not "aggressive ultrasonic generation". Since content above 22.05kHz cannot be uniquely reconstructed from 44.1kHz input, the 20kHz+ band is treated as **suppression of unnatural components and safe shaping (zero is acceptable if needed)**, not "reconstruction".
 
 #### Hard Requirements (Failure if not met)
 
@@ -41,6 +41,16 @@ The system aims for **time-response preservation (transients, phase, group delay
 2. **Suppress mirror patterns** and reduce audible "digital harshness/graininess"
 3. **20–44kHz can be near-zero** (no forced harmonic generation)
 4. **High-frequency total energy cap** (20–44kHz) always enforced (IMD safety)
+5. **No ringing regression** on square-wave probes against reference SRC
+
+#### Stage 1 Quantitative Acceptance
+
+- `symmetry_reduction_ratio >= 0.70`
+- `hb_energy_cap_violation_rate == 0.0`
+- `plateau_ripple_rms_after / before <= 1.10`
+- `plateau_ripple_p2p_after / before <= 1.10`
+- `overshoot_abs_after - overshoot_abs_before <= 5e-3`
+- `ringing_ratio_after - ringing_ratio_before <= 0.0`
 
 ---
 
@@ -326,7 +336,7 @@ After network output, always apply:
 
 ### Network Goal
 
-Learn the mapping: `Input (Bessel-upsampled with mirror artifacts) → Target (Clean)`
+Learn the mapping: `Input (Bessel-upsampled with mirror artifacts) → Target (HB anti-mirror target + no-ringing-regression constraints)`
 
 The network learns to:
 1. **Remove mirror/aliasing artifacts** in the 20kHz-22.05kHz range

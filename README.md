@@ -10,7 +10,7 @@ Latency: **数秒オーダー許容（非リアルタイムでも可）**
 
 ## 0. Design Intent / Success Criteria
 
-本システムの狙いは「超高域の積極的生成」ではなく、**時間応答（過渡・位相・群遅延）を守りつつ、折り返し（ミラー）由来の聴覚的不自然さを除去する**ことに置く。
+本システムの狙いは「超高域の積極的生成」ではなく、**リンギングを増やさずに時間応答（過渡・位相・群遅延）を維持しつつ、折り返し（ミラー）由来の聴覚的不自然さを除去する**ことに置く。
 44.1kHz入力から22.05kHz超の成分は一意に復元できないため、20kHz以上帯域は「復元」ではなく、**不自然成分の抑制と安全な整形（必要ならゼロでも可）**として扱う。
 
 ### Hard Requirements（満たせない場合は失敗）
@@ -19,6 +19,19 @@ Latency: **数秒オーダー許容（非リアルタイムでも可）**
 2. **折り返し（ミラー）パターンを抑制**し、可聴上の“デジタル臭さ/ジャリつき”を低減
 3. **20–44kHzはゼロ近傍でもOK**（無理に倍音を作らない）
 4. 20–44kHzの**高域総エネルギーは固定上限（energy cap）**を常に遵守（IMD安全側）
+5. **リンギング回帰を禁止**（矩形波プローブで before 比悪化を許容しない）
+
+### Stage1 Quantitative Acceptance Criteria
+
+以下の定量基準を満たさない Stage1 チェックポイントは不採用とする。
+
+1. **Mirror Reduction**: `symmetry_reduction_ratio >= 0.70`
+2. **Energy Cap**: `hb_energy_cap_violation_rate == 0.0`
+3. **Ringing Regression Gate**（square-wave, edge-aligned）:
+   * `plateau_ripple_rms_after / before <= 1.10`
+   * `plateau_ripple_p2p_after / before <= 1.10`
+   * `overshoot_abs_after - overshoot_abs_before <= 5e-3`
+   * `ringing_ratio_after - ringing_ratio_before <= 0.0`
 
 ---
 
@@ -129,7 +142,7 @@ AIは高域を生成するのではなく、**抑制マスク（ゲイン）**�
 
 ### 3.3 Training Target (Normalized “Anti-Mirror” Target)
 
-「正解HB」を真値として与えず、**折り返し由来の不自然成分のみ抑制したターゲット**を作る。
+全帯域の「理想クリーン波形」を教師にせず、**折り返し由来の不自然成分のみ抑制したHBターゲット**を作る。
 
 * まず `HB_in` を得る
 * ルールベース/解析ベースで **折り返し特徴を持つ成分**を検出して減衰し、`HB_target` を作る
