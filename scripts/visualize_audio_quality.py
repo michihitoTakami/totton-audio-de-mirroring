@@ -18,6 +18,14 @@ from totton_audio_de_mirroring.evaluation.frequency_response import (
 from totton_audio_de_mirroring.evaluation.thdn_visualization import (
     evaluate_thdn_spectrum_pair,
 )
+from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
+    compute_impulse_response,
+    compute_square_wave_response,
+    compute_waveform_comparison,
+    plot_impulse_response,
+    plot_square_wave_response,
+    plot_waveform_comparison,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -250,6 +258,75 @@ def main() -> None:
             )
         except Exception as e:
             print(f"  ! THD+N spectrum failed: {e}")
+
+        # Waveform comparison visualization
+        waveform_output_path = args.visual_dir / f"{sample_id}_waveform_comparison.png"
+        print(f"  - Generating waveform comparison: {waveform_output_path.name}")
+
+        try:
+            waveform_metrics = compute_waveform_comparison(
+                input_signal=before_signal,
+                target_signal=before_signal,  # Use same for now
+                output_signal=after_signal,
+                sample_rate=args.sample_rate,
+                window_ms=10.0,  # 10ms window
+                offset_ms=0.0,
+            )
+            plot_waveform_comparison(
+                metrics=waveform_metrics,
+                output_path=waveform_output_path,
+                title=f"Waveform: {sample_id}",
+            )
+        except Exception as e:
+            print(f"  ! Waveform comparison failed: {e}")
+
+        # Square wave response (if signal looks like square wave)
+        square_output_path = args.visual_dir / f"{sample_id}_square_wave.png"
+        print(f"  - Generating square wave response: {square_output_path.name}")
+
+        try:
+            square_before = compute_square_wave_response(
+                system_signal=before_signal,
+                sample_rate=args.sample_rate,
+                transition_time_ms=0.5,
+            )
+            square_after = compute_square_wave_response(
+                system_signal=after_signal,
+                sample_rate=args.sample_rate,
+                transition_time_ms=0.5,
+            )
+            plot_square_wave_response(
+                before_metrics=square_before,
+                after_metrics=square_after,
+                output_path=square_output_path,
+                title=f"Square Wave: {sample_id}",
+            )
+        except Exception as e:
+            print(f"  ! Square wave response failed: {e}")
+
+        # Impulse response
+        impulse_output_path = args.visual_dir / f"{sample_id}_impulse_response.png"
+        print(f"  - Generating impulse response: {impulse_output_path.name}")
+
+        try:
+            impulse_before = compute_impulse_response(
+                system_signal=before_signal,
+                sample_rate=args.sample_rate,
+                window_ms=2.0,
+            )
+            impulse_after = compute_impulse_response(
+                system_signal=after_signal,
+                sample_rate=args.sample_rate,
+                window_ms=2.0,
+            )
+            plot_impulse_response(
+                before_metrics=impulse_before,
+                after_metrics=impulse_after,
+                output_path=impulse_output_path,
+                title=f"Impulse: {sample_id}",
+            )
+        except Exception as e:
+            print(f"  ! Impulse response failed: {e}")
 
     # Compute summary statistics
     if freq_metrics_all:
