@@ -460,7 +460,8 @@ def ringing_edge_loss(
     if pred.shape != target.shape:
         raise ValueError("pred and target must share shape.")
     active_config = config or RingingLossConfig()
-    working_dtype = _ringing_compute_dtype(pred.dtype)
+    promoted_dtype = torch.promote_types(pred.dtype, target.dtype)
+    working_dtype = _ringing_compute_dtype(promoted_dtype)
 
     with _autocast_disabled(pred.device.type):
         pred_stable = pred.to(dtype=working_dtype)
@@ -500,7 +501,8 @@ def ringing_step_loss(
     if pred.shape != target.shape:
         raise ValueError("pred and target must share shape.")
     active_config = config or RingingLossConfig()
-    working_dtype = _ringing_compute_dtype(pred.dtype)
+    promoted_dtype = torch.promote_types(pred.dtype, target.dtype)
+    working_dtype = _ringing_compute_dtype(promoted_dtype)
 
     with _autocast_disabled(pred.device.type):
         pred_stable = pred.to(dtype=working_dtype)
