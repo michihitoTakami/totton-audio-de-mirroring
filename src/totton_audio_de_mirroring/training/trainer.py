@@ -791,7 +791,13 @@ def _validate_batch_finite(
     step: int,
     split: str,
 ) -> None:
-    """Ensure model outputs and loss terms remain finite."""
+    """Ensure model outputs and loss terms remain finite.
+
+    Physical Basis:
+        Non-finite values break optimization dynamics and can invalidate
+        mirror-suppression metrics, so training must fail fast to avoid
+        propagating corrupted states.
+    """
     if not torch.all(torch.isfinite(hb_pred)):
         raise RuntimeError(
             f"Non-finite model output detected at epoch={epoch}, "
@@ -814,7 +820,13 @@ def _validate_batch_finite(
 
 
 def _safe_float(value: float, metric_name: str) -> float:
-    """Replace non-finite metric values to keep epoch aggregation stable."""
+    """Replace non-finite metric values to keep epoch aggregation stable.
+
+    Physical Basis:
+        Monitoring metrics are diagnostic only; sanitizing non-finite
+        diagnostics prevents summary collapse while preserving the
+        underlying model-state checks in the training step.
+    """
     if math.isfinite(value):
         return float(value)
     print(
