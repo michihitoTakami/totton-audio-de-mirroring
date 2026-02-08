@@ -91,7 +91,7 @@ class RingingLossConfig:
 
     edge_weight_cap: float = 4.0
     step_window_size: int = 33
-    eps: float = 1.0e-8
+    eps: float = 1.0e-5
 
     def __post_init__(self) -> None:
         _validate_positive_float(self.edge_weight_cap, "edge_weight_cap")
@@ -590,7 +590,9 @@ def _edge_weights(
         raise ValueError("target_diff must be 2D (batch, time-1).")
     magnitude = torch.abs(target_diff)
     scale = torch.mean(magnitude, dim=-1, keepdim=True)
-    normalized = magnitude / (scale + eps)
+    safe_min = max(eps, torch.finfo(scale.dtype).tiny)
+    safe_scale = torch.clamp(scale, min=safe_min)
+    normalized = magnitude / safe_scale
     return torch.clamp(normalized, min=0.0, max=edge_weight_cap)
 
 

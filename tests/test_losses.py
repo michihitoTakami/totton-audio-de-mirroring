@@ -130,6 +130,24 @@ def test_ringing_aux_losses_increase_for_edge_distortion() -> None:
     assert step_loss > 0.0
 
 
+def test_ringing_aux_losses_stay_finite_for_fp16_silence() -> None:
+    pred = torch.nn.Parameter(
+        torch.tensor([[0.0, 1.0e-3, -1.0e-3, 0.0]], dtype=torch.float16)
+    )
+    target = torch.zeros_like(pred)
+    config = RingingLossConfig(step_window_size=3, eps=1.0e-8)
+
+    edge_loss = ringing_edge_loss(pred, target, config=config)
+    step_loss = ringing_step_loss(pred, target, config=config)
+    total = edge_loss + step_loss
+    total.backward()
+
+    assert torch.isfinite(edge_loss)
+    assert torch.isfinite(step_loss)
+    assert pred.grad is not None
+    assert torch.all(torch.isfinite(pred.grad))
+
+
 def test_compute_loss_contribution_ratios_sums_to_one() -> None:
     hb_in = torch.randn(1, 128)
     hb_target = hb_in * 0.5

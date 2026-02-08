@@ -20,7 +20,7 @@ loss_weights:
 ringing_loss_config:
   edge_weight_cap: 4.0
   step_window_size: 33
-  eps: 1.0e-8
+  eps: 1.0e-5
 
 mask_config:
   n_fft: 2048

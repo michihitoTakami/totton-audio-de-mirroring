@@ -793,7 +793,7 @@ def _parse_ringing_loss_config(raw: Mapping[str, Any]) -> RingingLossConfig:
     return RingingLossConfig(
         edge_weight_cap=float(raw.get("edge_weight_cap", 4.0)),
         step_window_size=int(raw.get("step_window_size", 33)),
-        eps=float(raw.get("eps", 1.0e-8)),
+        eps=float(raw.get("eps", 1.0e-5)),
     )
 
 
