@@ -274,6 +274,7 @@ uv run python scripts/run_issue63_stage1_workflow.py \
   --report-dir reports/issue64 \
   --seed 1234 \
   --device cuda \
+  --energy-cap 1e-3 \
   --skip-training \
   --candidate-checkpoints stage1_best.pt stage1_last.pt stage1_emergency.pt
 ```

@@ -17,7 +17,7 @@
   "selected_checkpoint_name": "stage1_best.pt",
   "selected_checkpoint_sha256": "ef9f2815e57663140eff3ff6860847148eb527c733e17e2890cba9a24ec4e025",
   "selection_reason": {
-    "composite_score": 14.901503932073359,
+    "composite_score": 14.901503933471115,
     "passes_hard_gate": true,
     "passes_imd_gate": true
   }
