@@ -148,6 +148,37 @@ def test_ringing_aux_losses_stay_finite_for_fp16_silence() -> None:
     assert torch.all(torch.isfinite(pred.grad))
 
 
+def test_ringing_aux_losses_compute_in_fp32_for_fp16_inputs() -> None:
+    pred = torch.tensor([[0.0, 1.0e-4, -1.0e-4, 0.0]], dtype=torch.float16)
+    target = torch.zeros_like(pred)
+    config = RingingLossConfig(step_window_size=3, eps=1.0e-8)
+
+    edge_loss = ringing_edge_loss(pred, target, config=config)
+    step_loss = ringing_step_loss(pred, target, config=config)
+
+    assert edge_loss.dtype == torch.float32
+    assert step_loss.dtype == torch.float32
+    assert torch.isfinite(edge_loss)
+    assert torch.isfinite(step_loss)
+
+
+def test_ringing_step_loss_stays_finite_for_long_fp16_sequence() -> None:
+    length = 22_050
+    values = torch.zeros(1, length, dtype=torch.float16)
+    values[:, 1::2] = 1.0e-3
+    values[:, 2::2] = -1.0e-3
+    pred = torch.nn.Parameter(values)
+    target = torch.zeros_like(pred)
+    config = RingingLossConfig(step_window_size=33, eps=1.0e-8)
+
+    step_loss = ringing_step_loss(pred, target, config=config)
+    step_loss.backward()
+
+    assert torch.isfinite(step_loss)
+    assert pred.grad is not None
+    assert torch.all(torch.isfinite(pred.grad))
+
+
 def test_compute_loss_contribution_ratios_sums_to_one() -> None:
     hb_in = torch.randn(1, 128)
     hb_target = hb_in * 0.5
