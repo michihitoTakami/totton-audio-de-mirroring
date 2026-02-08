@@ -44,9 +44,13 @@ from .thdn_visualization import (
     plot_thdn_spectrum,
 )
 from .time_domain_visualization import (
+    EdgeAlignedRingingMetrics,
     ImpulseResponseMetrics,
+    RingingComparisonMetrics,
     SquareWaveMetrics,
     WaveformComparisonMetrics,
+    compare_edge_aligned_ringing,
+    compute_edge_aligned_ringing_metrics,
     compute_impulse_response,
     compute_square_wave_response,
     compute_waveform_comparison,
@@ -57,6 +61,7 @@ from .time_domain_visualization import (
 
 __all__ = [
     "FrequencyResponseMetrics",
+    "EdgeAlignedRingingMetrics",
     "ImpulseResponseMetrics",
     "LowBandPreservationMetrics",
     "MirrorReductionMetrics",
@@ -68,11 +73,14 @@ __all__ = [
     "IMDProxyMetrics",
     "DatasetEvaluationResult",
     "SampleEvaluationResult",
+    "RingingComparisonMetrics",
     "SquareWaveMetrics",
     "Stage1HardMetrics",
     "THDNSpectrumMetrics",
     "WaveformComparisonMetrics",
     "apply_soft_clipping",
+    "compare_edge_aligned_ringing",
+    "compute_edge_aligned_ringing_metrics",
     "compute_frequency_response",
     "compute_impulse_response",
     "compute_square_wave_response",

@@ -13,6 +13,7 @@ from scripts.run_issue63_stage1_workflow import (
     GateConfig,
     _passes_hard_gate,
     _passes_imd_gate,
+    _passes_ringing_gate,
     _run_command_with_live_log,
     _select_best_candidate,
 )
@@ -25,6 +26,10 @@ def _gate_config() -> GateConfig:
         max_lb_amplitude_error_db=-20.0,
         require_zero_energy_cap_violations=True,
         require_positive_thdn_improvement=True,
+        max_plateau_ripple_rms_ratio=1.10,
+        max_plateau_ripple_p2p_ratio=1.10,
+        max_overshoot_abs_increase=0.005,
+        require_nonpositive_ringing_ratio_delta=True,
     )
 
 
@@ -34,6 +39,7 @@ def _candidate(
     score: float,
     pass_hard: bool = True,
     pass_imd: bool = True,
+    pass_ringing: bool = True,
     thdn: float = 1.0,
     symmetry: float = 0.8,
     touch: float = 0.4,
@@ -53,8 +59,15 @@ def _candidate(
             "mean_thdn_improvement_db": thdn,
             "all_nmse_has_lower_imd": True,
         },
+        ringing_summary={
+            "mean_plateau_ripple_rms_ratio": 1.0,
+            "mean_plateau_ripple_p2p_ratio": 1.0,
+            "mean_overshoot_abs_delta": 0.0,
+            "mean_ringing_ratio_delta": 0.0,
+        },
         passes_hard_gate=pass_hard,
         passes_imd_gate=pass_imd,
+        passes_ringing_gate=pass_ringing,
         composite_score=score,
     )
 
@@ -90,6 +103,28 @@ def test_passes_imd_gate_requires_positive_improvement_when_strict() -> None:
     assert not _passes_imd_gate(imd_summary=imd_summary, gate_config=gate)
 
 
+def test_passes_ringing_gate_rejects_ripple_regression() -> None:
+    gate = _gate_config()
+    ringing_summary = {
+        "mean_plateau_ripple_rms_ratio": 1.20,
+        "mean_plateau_ripple_p2p_ratio": 1.05,
+        "mean_overshoot_abs_delta": 0.0,
+        "mean_ringing_ratio_delta": 0.0,
+    }
+    assert not _passes_ringing_gate(ringing_summary=ringing_summary, gate_config=gate)
+
+
+def test_passes_ringing_gate_accepts_within_thresholds() -> None:
+    gate = _gate_config()
+    ringing_summary = {
+        "mean_plateau_ripple_rms_ratio": 1.05,
+        "mean_plateau_ripple_p2p_ratio": 1.03,
+        "mean_overshoot_abs_delta": 0.001,
+        "mean_ringing_ratio_delta": 0.0,
+    }
+    assert _passes_ringing_gate(ringing_summary=ringing_summary, gate_config=gate)
+
+
 def test_select_best_candidate_uses_highest_score_among_passing() -> None:
     c1 = _candidate(name="a", score=1.0)
     c2 = _candidate(name="b", score=2.0)
@@ -101,7 +136,7 @@ def test_select_best_candidate_uses_highest_score_among_passing() -> None:
 
 def test_select_best_candidate_raises_when_nothing_passes() -> None:
     c1 = _candidate(name="a", score=1.0, pass_hard=False)
-    c2 = _candidate(name="b", score=2.0, pass_imd=False)
+    c2 = _candidate(name="b", score=2.0, pass_imd=False, pass_ringing=False)
 
     with pytest.raises(RuntimeError, match="No checkpoint passed"):
         _ = _select_best_candidate([c1, c2])

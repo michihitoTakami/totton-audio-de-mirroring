@@ -6,9 +6,13 @@ import numpy as np
 import pytest
 
 from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
+    EdgeAlignedRingingMetrics,
     ImpulseResponseMetrics,
+    RingingComparisonMetrics,
     SquareWaveMetrics,
     WaveformComparisonMetrics,
+    compare_edge_aligned_ringing,
+    compute_edge_aligned_ringing_metrics,
     compute_impulse_response,
     compute_square_wave_response,
     compute_waveform_comparison,
@@ -245,6 +249,52 @@ def test_square_wave_settling_time_non_negative_after_transition():
     metrics = compute_square_wave_response(signal, sample_rate, transition_time_ms=1.0)
 
     assert metrics.settling_time_ms >= 0.0
+
+
+def test_compute_edge_aligned_ringing_metrics_basic() -> None:
+    """Edge-aligned ringing metrics should be computable for square waves."""
+    sample_rate = 88_200
+    signal = np.concatenate([np.zeros(2_000), np.ones(2_000)])
+
+    metrics = compute_edge_aligned_ringing_metrics(
+        signal=signal,
+        sample_rate=sample_rate,
+        plateau_start_ms=0.1,
+        plateau_end_ms=0.8,
+        ringing_window_ms=0.8,
+    )
+
+    assert isinstance(metrics, EdgeAlignedRingingMetrics)
+    assert metrics.edge_index > 0
+    assert metrics.plateau_ripple_rms >= 0.0
+    assert metrics.plateau_ripple_p2p >= 0.0
+
+
+def test_compare_edge_aligned_ringing_detects_regression() -> None:
+    """Comparison API should report higher ripple ratio on degraded signal."""
+    sample_rate = 88_200
+    before = np.concatenate([np.zeros(2_000), np.ones(2_000)])
+    after = before.copy()
+    after[2_015:2_060] += 0.05 * np.sin(np.linspace(0.0, 6.0 * np.pi, 45))
+
+    metrics = compare_edge_aligned_ringing(
+        before_signal=before,
+        after_signal=after,
+        sample_rate=sample_rate,
+    )
+
+    assert isinstance(metrics, RingingComparisonMetrics)
+    assert metrics.plateau_ripple_rms_ratio > 1.0
+    assert metrics.plateau_ripple_p2p_ratio > 1.0
+
+
+def test_compute_edge_aligned_ringing_metrics_raises_without_edge() -> None:
+    """Signals without sign-change edge should be rejected."""
+    with pytest.raises(ValueError, match="No sign-change edge"):
+        compute_edge_aligned_ringing_metrics(
+            signal=np.ones(4_000, dtype=np.float64),
+            sample_rate=88_200,
+        )
 
 
 def test_waveform_comparison_constant_signals_is_finite():
