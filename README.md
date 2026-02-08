@@ -289,6 +289,31 @@ uv run python scripts/run_issue63_stage1_workflow.py \
 * `tests/fixtures/golden_samples/issue64_model_selection.json`
 * `docs/abx_listening_protocol.md`
 
+### 7.7 Issue #75 Workflow (Frequency/THD+N/Time-Domain Visualization)
+
+Issue #75では、Hard Metricsの数値だけでなく、周波数応答・THD+Nスペクトル・時間領域応答を画像で確認できるようにする。
+
+```bash
+uv run python scripts/visualize_audio_quality.py \
+  --input-dir tests/fixtures/golden_samples/stage1/input \
+  --output-dir tests/fixtures/golden_samples/stage1/output \
+  --visual-dir reports/issue75/visualizations \
+  --sample-rate 88200 \
+  --n-fft 8192 \
+  --cutoff-hz 20000 \
+  --num-taps 1025 \
+  --summary-json reports/issue75/visualization_summary.json
+```
+
+主な成果物:
+
+* `reports/issue75/visualizations/*_frequency_response.png`
+* `reports/issue75/visualizations/*_thdn_spectrum.png`
+* `reports/issue75/visualizations/*_waveform_comparison.png`
+* `reports/issue75/visualizations/*_square_wave.png`
+* `reports/issue75/visualizations/*_impulse_response.png`
+* `reports/issue75/visualization_summary.json`
+
 ---
 
 ## 8. Jetson Orin Nano Implementation Notes

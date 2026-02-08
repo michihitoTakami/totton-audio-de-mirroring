@@ -8,6 +8,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+EPSILON = 1.0e-12
+
 
 @dataclass(frozen=True)
 class SquareWaveMetrics:
@@ -107,8 +109,14 @@ def compute_square_wave_response(
     """
     if system_signal.ndim != 1:
         raise ValueError(f"Signal must be 1D, got {system_signal.ndim}D")
+    if system_signal.size == 0:
+        raise ValueError("Signal cannot be empty")
     if sample_rate <= 0:
         raise ValueError(f"Sample rate must be positive, got {sample_rate}")
+    if transition_time_ms <= 0:
+        raise ValueError(
+            f"transition_time_ms must be positive, got {transition_time_ms}"
+        )
 
     # Find transition point (zero crossing or midpoint)
     transition_idx = len(system_signal) // 2
@@ -119,22 +127,29 @@ def compute_square_wave_response(
     end_idx = min(len(system_signal), transition_idx + window_samples)
 
     response = system_signal[start_idx:end_idx]
+    if response.size == 0:
+        raise ValueError("Transition window is empty; increase transition_time_ms")
     time_samples = np.arange(len(response))
     time_ms = (time_samples - window_samples) * 1000.0 / sample_rate
 
     # Compute overshoot (assume step response settles to 1.0)
-    final_value = np.mean(response[-int(sample_rate * 0.01) :])  # Last 10ms
+    settle_window_samples = max(1, int(sample_rate * 0.01))
+    final_value = np.mean(response[-settle_window_samples:])  # Last 10ms
     peak_value = np.max(response)
-    overshoot_percent = float((peak_value - final_value) / abs(final_value) * 100.0)
+    overshoot_percent = float(
+        (peak_value - final_value) / max(abs(final_value), EPSILON) * 100.0
+    )
 
-    # Compute settling time (5% criterion)
+    # Compute settling time (5% criterion) after the transition point.
     tolerance = 0.05 * abs(final_value)
     settled_mask = np.abs(response - final_value) <= tolerance
-    if np.any(settled_mask):
-        settling_idx = np.where(settled_mask)[0][0]
-        settling_time_ms = float(time_ms[settling_idx])
-    else:
-        settling_time_ms = float(time_ms[-1])
+    transition_in_window = transition_idx - start_idx
+    settling_idx = len(response) - 1
+    for idx in range(transition_in_window, len(response)):
+        if np.all(settled_mask[idx:]):
+            settling_idx = idx
+            break
+    settling_time_ms = float(time_ms[settling_idx])
 
     # Detect ringing (oscillations after peak)
     peak_idx = np.argmax(response)
@@ -180,8 +195,12 @@ def compute_impulse_response(
     """
     if system_signal.ndim != 1:
         raise ValueError(f"Signal must be 1D, got {system_signal.ndim}D")
+    if system_signal.size == 0:
+        raise ValueError("Signal cannot be empty")
     if sample_rate <= 0:
         raise ValueError(f"Sample rate must be positive, got {sample_rate}")
+    if window_ms <= 0:
+        raise ValueError(f"window_ms must be positive, got {window_ms}")
 
     # Find peak
     peak_idx = np.argmax(np.abs(system_signal))
@@ -255,14 +274,27 @@ def compute_waveform_comparison(
         raise ValueError("All signals must be 1D")
     if not (input_signal.shape == target_signal.shape == output_signal.shape):
         raise ValueError("All signals must have same shape")
+    if input_signal.size == 0:
+        raise ValueError("Signals cannot be empty")
     if sample_rate <= 0:
         raise ValueError(f"Sample rate must be positive, got {sample_rate}")
+    if window_ms <= 0:
+        raise ValueError(f"window_ms must be positive, got {window_ms}")
+    if offset_ms < 0:
+        raise ValueError(f"offset_ms must be non-negative, got {offset_ms}")
 
     # Extract window
     offset_samples = int(offset_ms * sample_rate / 1000.0)
     window_samples = int(window_ms * sample_rate / 1000.0)
+    if offset_samples >= len(input_signal):
+        raise ValueError(
+            f"offset_ms ({offset_ms}) exceeds signal duration "
+            f"({len(input_signal) * 1000.0 / sample_rate:.3f} ms)"
+        )
     start_idx = offset_samples
     end_idx = min(len(input_signal), offset_samples + window_samples)
+    if end_idx <= start_idx:
+        raise ValueError("Window is empty; increase window_ms or reduce offset_ms")
 
     input_window = input_signal[start_idx:end_idx]
     target_window = target_signal[start_idx:end_idx]
@@ -273,9 +305,15 @@ def compute_waveform_comparison(
 
     # Compute metrics
     mse_input_output = float(np.mean((input_window - output_window) ** 2))
-    correlation = float(
-        np.corrcoef(input_window, output_window)[0, 1] if len(input_window) > 1 else 1.0
-    )
+    if len(input_window) <= 1:
+        correlation = 1.0
+    else:
+        input_std = float(np.std(input_window))
+        output_std = float(np.std(output_window))
+        if input_std <= EPSILON or output_std <= EPSILON:
+            correlation = 1.0 if np.allclose(input_window, output_window) else 0.0
+        else:
+            correlation = float(np.corrcoef(input_window, output_window)[0, 1])
 
     return WaveformComparisonMetrics(
         time_ms=time_ms,

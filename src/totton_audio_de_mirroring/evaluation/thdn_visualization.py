@@ -76,8 +76,20 @@ def compute_thdn_spectrum(
         raise ValueError("Signals must be 1D arrays")
     if reference_signal.shape != measured_signal.shape:
         raise ValueError("Signals must have the same shape")
+    if reference_signal.size == 0:
+        raise ValueError("Signals cannot be empty")
     if sample_rate <= 0:
         raise ValueError(f"Sample rate must be positive, got {sample_rate}")
+    if n_fft <= 0:
+        raise ValueError(f"n_fft must be positive, got {n_fft}")
+    if num_taps <= 0:
+        raise ValueError(f"num_taps must be positive, got {num_taps}")
+    if num_taps % 2 == 0:
+        raise ValueError(f"num_taps must be odd, got {num_taps}")
+    if reference_signal.size < num_taps:
+        raise ValueError(
+            f"Signal length ({reference_signal.size}) must be >= num_taps ({num_taps})"
+        )
 
     # Apply soft clipping to simulate nonlinearity
     clipped_reference = apply_soft_clipping(reference_signal, drive=clip_drive)
@@ -116,10 +128,10 @@ def compute_thdn_spectrum(
     signal_spectrum_db = 20.0 * np.log10(ref_magnitude)
     distortion_spectrum_db = 20.0 * np.log10(distortion_magnitude)
 
-    # Normalize signal to 0dB at peak
-    signal_spectrum_db -= np.max(signal_spectrum_db)
-    # Normalize distortion relative to signal peak
-    distortion_spectrum_db -= np.max(signal_spectrum_db)
+    # Normalize both spectra to the same reference peak.
+    signal_peak_db = float(np.max(signal_spectrum_db))
+    signal_spectrum_db -= signal_peak_db
+    distortion_spectrum_db -= signal_peak_db
 
     # Compute overall THD+N
     ref_rms = float(np.sqrt(np.mean(lb_ref_scaled**2)))

@@ -57,6 +57,20 @@ def test_compute_thdn_spectrum_invalid_input():
     with pytest.raises(ValueError, match="must be positive"):
         compute_thdn_spectrum(signal, signal, -1)
 
+    # Empty signal should raise error
+    with pytest.raises(ValueError, match="cannot be empty"):
+        compute_thdn_spectrum(np.array([]), np.array([]), 88_200)
+
+    # Invalid FFT/taps should raise error
+    with pytest.raises(ValueError, match="n_fft must be positive"):
+        compute_thdn_spectrum(signal, signal, 88_200, n_fft=0)
+    with pytest.raises(ValueError, match="num_taps must be positive"):
+        compute_thdn_spectrum(signal, signal, 88_200, num_taps=0)
+    with pytest.raises(ValueError, match="num_taps must be odd"):
+        compute_thdn_spectrum(signal, signal, 88_200, num_taps=100)
+    with pytest.raises(ValueError, match="must be >= num_taps"):
+        compute_thdn_spectrum(signal[:100], signal[:100], 88_200, num_taps=129)
+
 
 def test_evaluate_thdn_spectrum_pair_creates_file(tmp_path: Path):
     """Test that THD+N visualization file is created."""

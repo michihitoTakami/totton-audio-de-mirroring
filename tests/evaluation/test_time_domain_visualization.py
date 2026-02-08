@@ -50,6 +50,10 @@ def test_compute_square_wave_response_invalid_input():
     with pytest.raises(ValueError, match="must be positive"):
         compute_square_wave_response(signal, -1)
 
+    # Empty signal should raise error
+    with pytest.raises(ValueError, match="cannot be empty"):
+        compute_square_wave_response(np.array([]), 48_000)
+
 
 def test_compute_impulse_response_basic():
     """Test basic impulse response computation."""
@@ -131,6 +135,12 @@ def test_compute_waveform_comparison_invalid_input():
     # Invalid sample rate should raise error
     with pytest.raises(ValueError, match="must be positive"):
         compute_waveform_comparison(signal, signal, signal, -1)
+
+    # Invalid window/offset should raise error
+    with pytest.raises(ValueError, match="window_ms must be positive"):
+        compute_waveform_comparison(signal, signal, signal, 48_000, window_ms=0.0)
+    with pytest.raises(ValueError, match="offset_ms must be non-negative"):
+        compute_waveform_comparison(signal, signal, signal, 48_000, offset_ms=-1.0)
 
 
 def test_plot_square_wave_response_creates_file(tmp_path: Path):
@@ -225,3 +235,30 @@ def test_waveform_comparison_perfect_match():
     # Perfect match should have zero MSE and correlation = 1
     assert metrics.mse_input_output < 1e-10
     assert abs(metrics.correlation - 1.0) < 1e-6
+
+
+def test_square_wave_settling_time_non_negative_after_transition():
+    """Settling time should be measured from transition onward."""
+    sample_rate = 88_200
+    signal = np.concatenate([np.zeros(2_000), np.ones(2_000)])
+
+    metrics = compute_square_wave_response(signal, sample_rate, transition_time_ms=1.0)
+
+    assert metrics.settling_time_ms >= 0.0
+
+
+def test_waveform_comparison_constant_signals_is_finite():
+    """Constant windows should not produce NaN correlation."""
+    sample_rate = 88_200
+    input_signal = np.ones(1_000, dtype=np.float64)
+    output_signal = np.ones(1_000, dtype=np.float64)
+
+    metrics = compute_waveform_comparison(
+        input_signal=input_signal,
+        target_signal=input_signal,
+        output_signal=output_signal,
+        sample_rate=sample_rate,
+        window_ms=5.0,
+    )
+
+    assert metrics.correlation == 1.0
