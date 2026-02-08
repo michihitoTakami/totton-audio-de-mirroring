@@ -11,7 +11,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from totton_audio_de_mirroring.training.losses import STFTLossConfig
+from totton_audio_de_mirroring.training.losses import LossWeights, STFTLossConfig
 from totton_audio_de_mirroring.training.runtime import compute_lowband_metrics
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
@@ -129,6 +129,7 @@ def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
         use_amp=False,
         log_interval=100,
         require_cuda=False,
+        loss_weights=LossWeights(edge=0.05, step=0.05),
         mask_config=STFTLossConfig(n_fft=64, hop_length=16, win_length=64),
         stft_configs=(STFTLossConfig(n_fft=64, hop_length=16, win_length=64),),
     )
@@ -166,6 +167,8 @@ def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
     assert "scheduler_state" in state
     assert "training_config" in state
     assert "device" in state
+    assert state["training_config"]["loss_weights"]["edge"] == pytest.approx(0.05)
+    assert state["training_config"]["loss_weights"]["step"] == pytest.approx(0.05)
 
 
 def test_compute_lowband_metrics_normalizes_by_lowband_bins_only() -> None:

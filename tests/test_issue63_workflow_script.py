@@ -121,6 +121,12 @@ def test_passes_mirror_gate_requires_symmetry_threshold() -> None:
     assert not _passes_mirror_gate(mirror_summary=mirror_summary, gate_config=gate)
 
 
+def test_passes_mirror_gate_accepts_on_threshold() -> None:
+    gate = _gate_config()
+    mirror_summary = {"symmetry_reduction_ratio": 0.70}
+    assert _passes_mirror_gate(mirror_summary=mirror_summary, gate_config=gate)
+
+
 def test_passes_ringing_gate_rejects_ripple_regression() -> None:
     gate = _gate_config()
     ringing_summary = {
@@ -141,6 +147,28 @@ def test_passes_ringing_gate_accepts_within_thresholds() -> None:
         "mean_ringing_ratio_delta": 0.0,
     }
     assert _passes_ringing_gate(ringing_summary=ringing_summary, gate_config=gate)
+
+
+def test_passes_ringing_gate_accepts_on_threshold() -> None:
+    gate = _gate_config()
+    ringing_summary = {
+        "mean_plateau_ripple_rms_ratio": 1.10,
+        "mean_plateau_ripple_p2p_ratio": 1.10,
+        "mean_overshoot_abs_delta": 0.005,
+        "mean_ringing_ratio_delta": 0.0,
+    }
+    assert _passes_ringing_gate(ringing_summary=ringing_summary, gate_config=gate)
+
+
+def test_passes_ringing_gate_rejects_positive_ratio_delta_when_strict() -> None:
+    gate = _gate_config()
+    ringing_summary = {
+        "mean_plateau_ripple_rms_ratio": 1.0,
+        "mean_plateau_ripple_p2p_ratio": 1.0,
+        "mean_overshoot_abs_delta": 0.0,
+        "mean_ringing_ratio_delta": 1.0e-6,
+    }
+    assert not _passes_ringing_gate(ringing_summary=ringing_summary, gate_config=gate)
 
 
 def test_select_best_candidate_uses_highest_score_among_passing() -> None:
