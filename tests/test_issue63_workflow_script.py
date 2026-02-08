@@ -13,10 +13,13 @@ import torch
 from scripts.run_issue63_stage1_workflow import (
     CandidateEvaluation,
     GateConfig,
+    _build_gate_details,
     _evaluate_square_probe_ringing,
     _generate_square_probe_signal,
+    _load_ringing_summary,
     _passes_hard_gate,
     _passes_imd_gate,
+    _passes_mirror_gate,
     _passes_ringing_gate,
     _run_command_with_live_log,
     _select_best_candidate,
@@ -30,6 +33,7 @@ def _gate_config() -> GateConfig:
         max_lb_group_delay_error_samples=600.0,
         max_lb_amplitude_error_db=-20.0,
         require_zero_energy_cap_violations=True,
+        min_mirror_symmetry_reduction_ratio=0.70,
         require_positive_thdn_improvement=True,
         max_plateau_ripple_rms_ratio=1.10,
         max_plateau_ripple_p2p_ratio=1.10,
@@ -70,7 +74,9 @@ def _candidate(
             "mean_overshoot_abs_delta": 0.0,
             "mean_ringing_ratio_delta": 0.0,
         },
+        gate_details={},
         passes_hard_gate=pass_hard,
+        passes_mirror_gate=True,
         passes_imd_gate=pass_imd,
         passes_ringing_gate=pass_ringing,
         composite_score=score,
@@ -106,6 +112,12 @@ def test_passes_imd_gate_requires_positive_improvement_when_strict() -> None:
         "all_nmse_has_lower_imd": True,
     }
     assert not _passes_imd_gate(imd_summary=imd_summary, gate_config=gate)
+
+
+def test_passes_mirror_gate_requires_symmetry_threshold() -> None:
+    gate = _gate_config()
+    mirror_summary = {"symmetry_reduction_ratio": 0.69}
+    assert not _passes_mirror_gate(mirror_summary=mirror_summary, gate_config=gate)
 
 
 def test_passes_ringing_gate_rejects_ripple_regression() -> None:
@@ -261,6 +273,51 @@ def test_summarize_square_probe_ringing_computes_means() -> None:
     assert summary["num_samples"] == 2
     assert summary["mean_plateau_ripple_rms_ratio"] == pytest.approx(1.15)
     assert summary["mean_overshoot_abs_delta"] == pytest.approx(0.0075)
+
+
+def test_load_ringing_summary_prefers_ringing_metrics_over_top_summary() -> None:
+    payload = {
+        "summary": {"lb_phase_error_deg": 1.0},
+        "ringing_metrics": {
+            "summary": {
+                "mean_plateau_ripple_rms_ratio": 1.02,
+                "mean_plateau_ripple_p2p_ratio": 1.01,
+                "mean_overshoot_abs_delta": 0.0,
+                "mean_ringing_ratio_delta": -0.1,
+            }
+        },
+    }
+    summary = _load_ringing_summary(payload)
+    assert summary["mean_plateau_ripple_rms_ratio"] == pytest.approx(1.02)
+
+
+def test_build_gate_details_contains_traceable_thresholds() -> None:
+    gate = _gate_config()
+    details = _build_gate_details(
+        hard_summary={
+            "hb_energy_cap_violation_rate": 0.0,
+            "lb_phase_error_deg": 5.0,
+            "lb_group_delay_error_samples": 100.0,
+            "lb_amplitude_error_db": -30.0,
+        },
+        mirror_summary={"symmetry_reduction_ratio": 0.75},
+        imd_summary={
+            "all_nmse_has_lower_imd": True,
+            "mean_thdn_improvement_db": 0.2,
+        },
+        ringing_summary={
+            "mean_plateau_ripple_rms_ratio": 1.0,
+            "mean_plateau_ripple_p2p_ratio": 1.0,
+            "mean_overshoot_abs_delta": 0.0,
+            "mean_ringing_ratio_delta": 0.0,
+        },
+        gate_config=gate,
+    )
+    assert details["mirror_gate"]["passed"] is True
+    assert "min_symmetry_reduction_ratio" in details["mirror_gate"]["threshold"]
+    assert details["ringing_gate"]["observed"][
+        "mean_plateau_ripple_rms_ratio"
+    ] == pytest.approx(1.0)
 
 
 def test_evaluate_square_probe_ringing_writes_json_and_csv(

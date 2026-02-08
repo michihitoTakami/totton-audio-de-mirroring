@@ -67,6 +67,35 @@ class RingingDatasetSummary:
     mean_ringing_ratio_delta: float
 
 
+@dataclass(frozen=True)
+class Stage1GateConfig:
+    """Threshold configuration for Stage1 acceptance gates.
+
+    Args:
+        mirror_target_reduction: Minimum mirror symmetry-reduction ratio.
+        max_plateau_ripple_rms_ratio: Max allowed after/before ripple RMS ratio.
+        max_plateau_ripple_p2p_ratio: Max allowed after/before ripple P2P ratio.
+        max_overshoot_abs_increase: Max allowed overshoot absolute increase.
+        require_nonpositive_ringing_ratio_delta: Require no ringing-ratio increase.
+
+    Physical Basis:
+        Stage1 acceptance combines mirror suppression, high-band safety,
+        and ringing non-regression into explicit reproducible thresholds.
+    """
+
+    mirror_target_reduction: float
+    max_plateau_ripple_rms_ratio: float
+    max_plateau_ripple_p2p_ratio: float
+    max_overshoot_abs_increase: float
+    require_nonpositive_ringing_ratio_delta: bool
+
+
+_STRICT_EXIT_ENERGY_CAP = 2
+_STRICT_EXIT_MIRROR_REDUCTION = 3
+_STRICT_EXIT_RINGING_REGRESSION = 4
+_STRICT_EXIT_MULTIPLE_GATES = 5
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for Stage 1 evaluation.
 
@@ -96,7 +125,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--print-json", action="store_true")
     parser.add_argument("--strict-energy-cap", action="store_true")
     parser.add_argument("--strict-mirror-reduction", action="store_true")
+    parser.add_argument("--strict-ringing-regression", action="store_true")
     parser.add_argument("--mirror-target-reduction", type=float, default=0.70)
+    parser.add_argument("--max-plateau-ripple-rms-ratio", type=float, default=1.10)
+    parser.add_argument("--max-plateau-ripple-p2p-ratio", type=float, default=1.10)
+    parser.add_argument("--max-overshoot-abs-increase", type=float, default=5.0e-3)
+    parser.add_argument("--allow-ringing-ratio-increase", action="store_true")
     parser.add_argument("--mirror-visual-dir", type=Path, default=None)
     parser.add_argument("--mirror-visual-limit", type=int, default=16)
     parser.add_argument("--ringing-json", type=Path, default=None)
@@ -119,7 +153,9 @@ def main() -> None:
         mirror suppression behavior under varied signal conditions.
     """
     args = parse_args()
+    _validate_args(args)
     pairs = _load_pairs(args.input_dir, args.output_dir, args.glob)
+    gate_config = _build_stage1_gate_config(args)
     result = evaluate_dataset(
         samples=pairs,
         sample_rate=args.sample_rate,
@@ -146,6 +182,12 @@ def main() -> None:
         ringing_window_ms=args.ringing_window_ms,
     )
     ringing_summary = _summarize_ringing_metrics(ringing_metrics)
+    gate_status = _evaluate_stage1_gates(
+        result=result,
+        mirror_result=mirror_result,
+        ringing_summary=ringing_summary,
+        gate_config=gate_config,
+    )
 
     visual_exports: list[str] = []
     if args.mirror_visual_dir is not None:
@@ -160,7 +202,12 @@ def main() -> None:
         )
 
     if args.csv is not None:
-        _write_csv(result, args.csv, ringing_metrics=ringing_metrics)
+        _write_csv(
+            result,
+            args.csv,
+            ringing_metrics=ringing_metrics,
+            gate_status=gate_status,
+        )
     if args.ringing_csv is not None:
         _write_ringing_csv(ringing_metrics, args.ringing_csv)
     if args.json is not None:
@@ -171,6 +218,7 @@ def main() -> None:
             visual_exports=visual_exports,
             ringing_metrics=ringing_metrics,
             ringing_summary=ringing_summary,
+            gate_status=gate_status,
         )
     if args.ringing_json is not None:
         _write_ringing_json(
@@ -188,6 +236,7 @@ def main() -> None:
                     visual_exports=visual_exports,
                     ringing_metrics=ringing_metrics,
                     ringing_summary=ringing_summary,
+                    gate_status=gate_status,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -198,14 +247,7 @@ def main() -> None:
         if len(visual_exports) > 0:
             print(f"Mirror visualizations exported: {len(visual_exports)}")
 
-    if args.strict_energy_cap and result.hb_energy_cap_violation_rate > 0.0:
-        raise SystemExit(2)
-    if (
-        args.strict_mirror_reduction
-        and mirror_result.mean_metrics.symmetry_reduction_ratio
-        < args.mirror_target_reduction
-    ):
-        raise SystemExit(3)
+    _raise_for_strict_gate_failures(args=args, gate_status=gate_status)
 
 
 def _load_pairs(
@@ -262,12 +304,26 @@ def _load_pairs(
     return pairs
 
 
+def _build_stage1_gate_config(args: argparse.Namespace) -> Stage1GateConfig:
+    """Build immutable gate-threshold config from CLI args."""
+    return Stage1GateConfig(
+        mirror_target_reduction=float(args.mirror_target_reduction),
+        max_plateau_ripple_rms_ratio=float(args.max_plateau_ripple_rms_ratio),
+        max_plateau_ripple_p2p_ratio=float(args.max_plateau_ripple_p2p_ratio),
+        max_overshoot_abs_increase=float(args.max_overshoot_abs_increase),
+        require_nonpositive_ringing_ratio_delta=(
+            not bool(args.allow_ringing_ratio_increase)
+        ),
+    )
+
+
 def _to_payload(
     result: DatasetEvaluationResult,
     mirror_result: MirrorDatasetEvaluationResult | None = None,
     visual_exports: list[str] | None = None,
     ringing_metrics: list[dict[str, Any]] | None = None,
     ringing_summary: RingingDatasetSummary | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert dataset evaluation to JSON-serializable payload.
 
@@ -292,6 +348,8 @@ def _to_payload(
             "summary": asdict(ringing_summary),
             "samples": ringing_metrics,
         }
+    if gate_status is not None:
+        payload["gates"] = gate_status
     return payload
 
 
@@ -302,6 +360,7 @@ def _write_json(
     visual_exports: list[str] | None = None,
     ringing_metrics: list[dict[str, Any]] | None = None,
     ringing_summary: RingingDatasetSummary | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> None:
     """Write evaluation payload to JSON file.
 
@@ -326,6 +385,7 @@ def _write_json(
                     visual_exports=visual_exports,
                     ringing_metrics=ringing_metrics,
                     ringing_summary=ringing_summary,
+                    gate_status=gate_status,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -395,6 +455,7 @@ def _write_csv(
     result: DatasetEvaluationResult,
     path: Path,
     ringing_metrics: list[dict[str, Any]] | None = None,
+    gate_status: dict[str, Any] | None = None,
 ) -> None:
     """Write per-sample metrics to CSV file.
 
@@ -416,6 +477,7 @@ def _write_csv(
         else {}
     )
     merged_rows: list[dict[str, Any]] = []
+    gate_columns = _gate_status_to_csv_columns(gate_status)
     for row in rows:
         merged = dict(row)
         ringing_row = ringing_by_id.get(str(row["sample_id"]))
@@ -424,6 +486,7 @@ def _write_csv(
                 if key == "sample_id":
                     continue
                 merged[key] = value
+        merged.update(gate_columns)
         merged_rows.append(merged)
     fieldnames = list(merged_rows[0].keys())
     try:
@@ -548,6 +611,194 @@ def _write_ringing_json(
         path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     except Exception as exc:
         raise RuntimeError(f"Failed to write ringing JSON report: {exc}") from exc
+
+
+def _evaluate_stage1_gates(
+    *,
+    result: DatasetEvaluationResult,
+    mirror_result: MirrorDatasetEvaluationResult,
+    ringing_summary: RingingDatasetSummary,
+    gate_config: Stage1GateConfig,
+) -> dict[str, Any]:
+    """Evaluate Stage1 acceptance gates and include thresholds/observations.
+
+    Physical Basis:
+        Explicit gate evidence ensures acceptance/failure is reproducible in
+        CI and offline analysis, not inferred from opaque summaries.
+    """
+    energy_observed = float(result.hb_energy_cap_violation_rate)
+    mirror_observed = float(mirror_result.mean_metrics.symmetry_reduction_ratio)
+    ringing_ratio_delta = float(ringing_summary.mean_ringing_ratio_delta)
+    ringing_ratio_threshold = (
+        0.0 if gate_config.require_nonpositive_ringing_ratio_delta else float("inf")
+    )
+
+    energy_pass = energy_observed <= 0.0
+    mirror_pass = mirror_observed >= gate_config.mirror_target_reduction
+    ringing_rms_observed = float(ringing_summary.mean_plateau_ripple_rms_ratio)
+    ringing_p2p_observed = float(ringing_summary.mean_plateau_ripple_p2p_ratio)
+    overshoot_observed = float(ringing_summary.mean_overshoot_abs_delta)
+    ringing_ratio_pass = (
+        ringing_ratio_delta <= 0.0
+        if gate_config.require_nonpositive_ringing_ratio_delta
+        else True
+    )
+    ringing_pass = bool(
+        ringing_rms_observed <= gate_config.max_plateau_ripple_rms_ratio
+        and ringing_p2p_observed <= gate_config.max_plateau_ripple_p2p_ratio
+        and overshoot_observed <= gate_config.max_overshoot_abs_increase
+        and ringing_ratio_pass
+    )
+    stage1_acceptance_pass = bool(energy_pass and mirror_pass and ringing_pass)
+    return {
+        "stage1_acceptance_pass": stage1_acceptance_pass,
+        "energy_cap": {
+            "strict_selected": True,
+            "passed": energy_pass,
+            "threshold": {"max_hb_energy_cap_violation_rate": 0.0},
+            "observed": {"hb_energy_cap_violation_rate": energy_observed},
+        },
+        "mirror_reduction": {
+            "strict_selected": True,
+            "passed": mirror_pass,
+            "threshold": {
+                "min_symmetry_reduction_ratio": gate_config.mirror_target_reduction
+            },
+            "observed": {"symmetry_reduction_ratio": mirror_observed},
+        },
+        "ringing_regression": {
+            "strict_selected": True,
+            "passed": ringing_pass,
+            "threshold": {
+                "max_plateau_ripple_rms_ratio": gate_config.max_plateau_ripple_rms_ratio,
+                "max_plateau_ripple_p2p_ratio": gate_config.max_plateau_ripple_p2p_ratio,
+                "max_overshoot_abs_increase": gate_config.max_overshoot_abs_increase,
+                "max_ringing_ratio_delta": ringing_ratio_threshold,
+                "allow_ringing_ratio_increase": (
+                    not gate_config.require_nonpositive_ringing_ratio_delta
+                ),
+            },
+            "observed": {
+                "mean_plateau_ripple_rms_ratio": ringing_rms_observed,
+                "mean_plateau_ripple_p2p_ratio": ringing_p2p_observed,
+                "mean_overshoot_abs_delta": overshoot_observed,
+                "mean_ringing_ratio_delta": ringing_ratio_delta,
+            },
+        },
+    }
+
+
+def _gate_status_to_csv_columns(gate_status: dict[str, Any] | None) -> dict[str, Any]:
+    """Flatten gate status payload into CSV columns."""
+    if gate_status is None:
+        return {}
+
+    def _gate(key: str) -> dict[str, Any]:
+        value = gate_status.get(key)
+        return value if isinstance(value, dict) else {}
+
+    energy = _gate("energy_cap")
+    mirror = _gate("mirror_reduction")
+    ringing = _gate("ringing_regression")
+    energy_observed = energy.get("observed", {})
+    mirror_observed = mirror.get("observed", {})
+    ringing_observed = ringing.get("observed", {})
+    return {
+        "gate_stage1_acceptance_pass": gate_status.get("stage1_acceptance_pass"),
+        "gate_energy_cap_pass": energy.get("passed"),
+        "gate_energy_cap_violation_rate_observed": energy_observed.get(
+            "hb_energy_cap_violation_rate"
+        ),
+        "gate_mirror_reduction_pass": mirror.get("passed"),
+        "gate_mirror_symmetry_reduction_ratio_observed": mirror_observed.get(
+            "symmetry_reduction_ratio"
+        ),
+        "gate_ringing_regression_pass": ringing.get("passed"),
+        "gate_ringing_plateau_rms_ratio_observed": ringing_observed.get(
+            "mean_plateau_ripple_rms_ratio"
+        ),
+        "gate_ringing_plateau_p2p_ratio_observed": ringing_observed.get(
+            "mean_plateau_ripple_p2p_ratio"
+        ),
+        "gate_ringing_overshoot_delta_observed": ringing_observed.get(
+            "mean_overshoot_abs_delta"
+        ),
+        "gate_ringing_ratio_delta_observed": ringing_observed.get(
+            "mean_ringing_ratio_delta"
+        ),
+    }
+
+
+def _raise_for_strict_gate_failures(
+    *, args: argparse.Namespace, gate_status: dict[str, Any]
+) -> None:
+    """Raise `SystemExit` with fixed code mapping for strict gate failures."""
+    failures: list[int] = []
+
+    def _strict_failed(strict_flag: bool, gate_key: str, exit_code: int) -> None:
+        if not strict_flag:
+            return
+        gate_raw = gate_status.get(gate_key)
+        if not isinstance(gate_raw, dict):
+            raise RuntimeError(f"gate_status missing gate '{gate_key}'")
+        if not bool(gate_raw.get("passed")):
+            failures.append(exit_code)
+
+    _strict_failed(args.strict_energy_cap, "energy_cap", _STRICT_EXIT_ENERGY_CAP)
+    _strict_failed(
+        args.strict_mirror_reduction,
+        "mirror_reduction",
+        _STRICT_EXIT_MIRROR_REDUCTION,
+    )
+    _strict_failed(
+        args.strict_ringing_regression,
+        "ringing_regression",
+        _STRICT_EXIT_RINGING_REGRESSION,
+    )
+
+    if len(failures) == 0:
+        return
+    if len(failures) > 1:
+        raise SystemExit(_STRICT_EXIT_MULTIPLE_GATES)
+    raise SystemExit(failures[0])
+
+
+def _validate_args(args: argparse.Namespace) -> None:
+    """Validate CLI arguments before metric evaluation."""
+    if args.sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if args.cutoff_hz <= 0.0:
+        raise ValueError("cutoff_hz must be positive")
+    if args.energy_cap < 0.0:
+        raise ValueError("energy_cap must be non-negative")
+    if args.num_taps <= 0:
+        raise ValueError("num_taps must be positive")
+    if args.n_fft <= 0:
+        raise ValueError("n_fft must be positive")
+    if args.hop_length <= 0:
+        raise ValueError("hop_length must be positive")
+    mirror_lower_hz = float(args.mirror_band_hz[0])
+    mirror_upper_hz = float(args.mirror_band_hz[1])
+    if mirror_lower_hz < 0.0:
+        raise ValueError("mirror-band lower bound must be non-negative")
+    if mirror_upper_hz <= mirror_lower_hz:
+        raise ValueError("mirror-band upper bound must be greater than lower bound")
+    if args.mirror_target_reduction < 0.0 or args.mirror_target_reduction > 1.0:
+        raise ValueError("mirror_target_reduction must be in [0.0, 1.0]")
+    if args.max_plateau_ripple_rms_ratio <= 0.0:
+        raise ValueError("max_plateau_ripple_rms_ratio must be positive")
+    if args.max_plateau_ripple_p2p_ratio <= 0.0:
+        raise ValueError("max_plateau_ripple_p2p_ratio must be positive")
+    if args.max_overshoot_abs_increase < 0.0:
+        raise ValueError("max_overshoot_abs_increase must be non-negative")
+    if args.ringing_plateau_start_ms < 0.0:
+        raise ValueError("ringing_plateau_start_ms must be non-negative")
+    if args.ringing_plateau_end_ms <= args.ringing_plateau_start_ms:
+        raise ValueError("ringing_plateau_end_ms must be greater than start")
+    if args.ringing_window_ms <= 0.0:
+        raise ValueError("ringing_window_ms must be positive")
+    if args.mirror_visual_limit < 0:
+        raise ValueError("mirror_visual_limit must be non-negative")
 
 
 def _print_summary(
