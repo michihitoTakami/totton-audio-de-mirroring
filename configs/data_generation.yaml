@@ -44,16 +44,11 @@ augmentation:
 
 degradation:
   cutoff_hz_range: [18000.0, 22000.0]
-  phase_modes: [linear, minimum, analog]
+  phase_modes: [analog]
   quantization_bits: [16, 24]
   dither_modes: [none, rectangular, triangular]
   methods:
-    - zoh
-    - linear
-    - sinc_short
-    - sinc_long
     - iir_bessel
-    - iir_butter
   iir_order: 6
 
 band_split:
