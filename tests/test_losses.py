@@ -1,14 +1,19 @@
 """Tests for training loss functions."""
 
+import pytest
 import torch
 
 from totton_audio_de_mirroring.training.losses import (
     LossWeights,
+    RingingLossConfig,
     STFTLossConfig,
+    compute_loss_contribution_ratios,
     compute_losses,
     energy_cap_loss,
     mask_loss,
     preserve_loss,
+    ringing_edge_loss,
+    ringing_step_loss,
 )
 
 
@@ -104,3 +109,54 @@ def test_energy_cap_loss_penalizes_excess() -> None:
     pred_mag = torch.ones(1, 4, 5)
     loss = energy_cap_loss(pred_mag, energy_cap=1.0)
     assert loss > 0.0
+
+
+def test_ringing_aux_losses_are_zero_when_prediction_matches_target() -> None:
+    signal = torch.tensor([[0.0, 0.2, 0.8, 1.0, 0.9, 0.5]], dtype=torch.float32)
+    edge_loss = ringing_edge_loss(signal, signal)
+    step_loss = ringing_step_loss(signal, signal)
+    assert torch.isclose(edge_loss, torch.tensor(0.0))
+    assert torch.isclose(step_loss, torch.tensor(0.0))
+
+
+def test_ringing_aux_losses_increase_for_edge_distortion() -> None:
+    target = torch.tensor([[0.0, 0.0, 1.0, 1.0, 1.0, 1.0]], dtype=torch.float32)
+    pred = torch.tensor([[0.0, 0.2, 0.6, 0.9, 1.1, 1.2]], dtype=torch.float32)
+
+    config = RingingLossConfig(step_window_size=3)
+    edge_loss = ringing_edge_loss(pred, target, config=config)
+    step_loss = ringing_step_loss(pred, target, config=config)
+    assert edge_loss > 0.0
+    assert step_loss > 0.0
+
+
+def test_compute_loss_contribution_ratios_sums_to_one() -> None:
+    hb_in = torch.randn(1, 128)
+    hb_target = hb_in * 0.5
+    hb_pred = hb_in * 0.8
+    mask_config = _make_stft_config()
+    mirror_mask = _make_mirror_mask(hb_in, mask_config)
+
+    terms = compute_losses(
+        hb_in,
+        hb_target,
+        hb_pred,
+        mirror_mask,
+        mask_config=mask_config,
+        stft_configs=(mask_config,),
+        weights=LossWeights(edge=0.1, step=0.1),
+        energy_cap=10.0,
+    )
+    contrib = compute_loss_contribution_ratios(
+        terms,
+        LossWeights(edge=0.1, step=0.1),
+    )
+    total = (
+        contrib.mask
+        + contrib.stft
+        + contrib.preserve
+        + contrib.energy
+        + contrib.edge
+        + contrib.step
+    )
+    assert total == pytest.approx(1.0, rel=1.0e-6, abs=1.0e-6)

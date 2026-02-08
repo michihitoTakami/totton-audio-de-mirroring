@@ -15,12 +15,15 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from totton_audio_de_mirroring.training.losses import (
+    LossContributionRatios,
     LossMode,
     LossTerms,
     LossWeights,
+    RingingLossConfig,
     STFTLossConfig,
     _broadcast_mask,
     _stft_magnitude,
+    compute_loss_contribution_ratios,
     compute_losses,
 )
 from totton_audio_de_mirroring.training.runtime import (
@@ -50,6 +53,7 @@ class TrainingConfig:
         stft_configs: STFT configs for multi-resolution loss.
         loss_weights: Composite loss weights.
         energy_cap: Energy cap used for loss penalty.
+        ringing_loss_config: Ringing auxiliary loss configuration.
         mask_mode: Loss mode for mask loss.
         device: Optional device override (e.g., "cuda", "cpu").
         seed: Optional random seed.
@@ -77,6 +81,7 @@ class TrainingConfig:
     )
     loss_weights: LossWeights = LossWeights()
     energy_cap: float = 1.0
+    ringing_loss_config: RingingLossConfig = RingingLossConfig()
     mask_mode: LossMode = "l1"
     device: str | None = None
     seed: int | None = None
@@ -128,6 +133,7 @@ class TrainingConfig:
             )
         )
         weights = _parse_loss_weights(raw.get("loss_weights", {}))
+        ringing_cfg = _parse_ringing_loss_config(raw.get("ringing_loss_config", {}))
 
         return TrainingConfig(
             epochs=int(raw.get("epochs", 10)),
@@ -140,6 +146,7 @@ class TrainingConfig:
             stft_configs=stft_cfgs,
             loss_weights=weights,
             energy_cap=float(raw.get("energy_cap", 1.0)),
+            ringing_loss_config=ringing_cfg,
             mask_mode=_parse_mask_mode(raw.get("mask_mode", "l1")),
             device=raw.get("device"),
             seed=_optional_int(raw.get("seed")),
@@ -414,6 +421,14 @@ def _run_epoch(
         "stft": 0.0,
         "preserve": 0.0,
         "energy": 0.0,
+        "edge": 0.0,
+        "step": 0.0,
+        "contrib_mask": 0.0,
+        "contrib_stft": 0.0,
+        "contrib_preserve": 0.0,
+        "contrib_energy": 0.0,
+        "contrib_edge": 0.0,
+        "contrib_step": 0.0,
         "mirror_reduction_db": 0.0,
         "touch_l1": 0.0,
         "energy_cap_violation": 0.0,
@@ -444,6 +459,7 @@ def _run_epoch(
                     stft_configs=config.stft_configs,
                     weights=config.loss_weights,
                     energy_cap=config.energy_cap,
+                    ringing_config=config.ringing_loss_config,
                     mask_mode=config.mask_mode,
                 )
             _validate_batch_finite(
@@ -480,6 +496,7 @@ def _run_epoch(
                     stft_configs=config.stft_configs,
                     weights=config.loss_weights,
                     energy_cap=config.energy_cap,
+                    ringing_config=config.ringing_loss_config,
                     mask_mode=config.mask_mode,
                 )
             _validate_batch_finite(
@@ -507,6 +524,15 @@ def _run_epoch(
         totals["stft"] += terms.stft.detach().item()
         totals["preserve"] += terms.preserve.detach().item()
         totals["energy"] += terms.energy.detach().item()
+        totals["edge"] += terms.edge.detach().item()
+        totals["step"] += terms.step.detach().item()
+        contributions = compute_loss_contribution_ratios(terms, config.loss_weights)
+        totals["contrib_mask"] += contributions.mask
+        totals["contrib_stft"] += contributions.stft
+        totals["contrib_preserve"] += contributions.preserve
+        totals["contrib_energy"] += contributions.energy
+        totals["contrib_edge"] += contributions.edge
+        totals["contrib_step"] += contributions.step
         totals["mirror_reduction_db"] += batch_metrics["mirror_reduction_db"]
         totals["touch_l1"] += batch_metrics["touch_l1"]
         totals["energy_cap_violation"] += batch_metrics["energy_cap_violation"]
@@ -533,6 +559,14 @@ def _run_epoch(
         stft=totals["stft"] / step_count,
         preserve=totals["preserve"] / step_count,
         energy=totals["energy"] / step_count,
+        edge=totals["edge"] / step_count,
+        step=totals["step"] / step_count,
+        contrib_mask=totals["contrib_mask"] / step_count,
+        contrib_stft=totals["contrib_stft"] / step_count,
+        contrib_preserve=totals["contrib_preserve"] / step_count,
+        contrib_energy=totals["contrib_energy"] / step_count,
+        contrib_edge=totals["contrib_edge"] / step_count,
+        contrib_step=totals["contrib_step"] / step_count,
         mirror_reduction_db=totals["mirror_reduction_db"] / step_count,
         touch_l1=totals["touch_l1"] / step_count,
         energy_cap_violation=totals["energy_cap_violation"] / step_count,
@@ -656,6 +690,8 @@ def _log_step_progress(epoch: int, step: int, terms: LossTerms) -> None:
                 f"stft={terms.stft.item():.6f}",
                 f"preserve={terms.preserve.item():.6f}",
                 f"energy={terms.energy.item():.6f}",
+                f"edge={terms.edge.item():.6f}",
+                f"step={terms.step.item():.6f}",
             ]
         ),
         flush=True,
@@ -681,6 +717,7 @@ def _log_epoch_summary(
         f"gpu_peak_mb={train_epoch.gpu_peak_memory_mb:.2f}"
     )
     print(train_line, flush=True)
+    _print_loss_contribution_line(epoch=epoch, split="train", metrics=train_epoch)
 
     if val_epoch is not None:
         val_line = (
@@ -692,6 +729,7 @@ def _log_epoch_summary(
             f"lb_phase_mae={val_epoch.lb_phase_mae:.6f}"
         )
         print(val_line, flush=True)
+        _print_loss_contribution_line(epoch=epoch, split="val", metrics=val_epoch)
 
     device_line = f"epoch={epoch} lr={lr:.8f} device={device}"
     if device.type == "cuda":
@@ -744,6 +782,46 @@ def _parse_loss_weights(raw: Mapping[str, Any]) -> LossWeights:
         stft=float(raw.get("stft", 1.0)),
         preserve=float(raw.get("preserve", 1.0)),
         energy=float(raw.get("energy", 1.0)),
+        edge=float(raw.get("edge", 0.0)),
+        step=float(raw.get("step", 0.0)),
+    )
+
+
+def _parse_ringing_loss_config(raw: Mapping[str, Any]) -> RingingLossConfig:
+    if not isinstance(raw, Mapping):
+        raise ValueError("ringing_loss_config must be a mapping.")
+    return RingingLossConfig(
+        edge_weight_cap=float(raw.get("edge_weight_cap", 4.0)),
+        step_window_size=int(raw.get("step_window_size", 33)),
+        eps=float(raw.get("eps", 1.0e-8)),
+    )
+
+
+def _print_loss_contribution_line(
+    *,
+    epoch: int,
+    split: str,
+    metrics: EpochMetrics,
+) -> None:
+    contributions = LossContributionRatios(
+        mask=metrics.contrib_mask,
+        stft=metrics.contrib_stft,
+        preserve=metrics.contrib_preserve,
+        energy=metrics.contrib_energy,
+        edge=metrics.contrib_edge,
+        step=metrics.contrib_step,
+    )
+    print(
+        (
+            f"epoch={epoch} split={split} loss_contrib "
+            f"mask={contributions.mask:.3f} "
+            f"stft={contributions.stft:.3f} "
+            f"preserve={contributions.preserve:.3f} "
+            f"energy={contributions.energy:.3f} "
+            f"edge={contributions.edge:.3f} "
+            f"step={contributions.step:.3f}"
+        ),
+        flush=True,
     )
 
 
