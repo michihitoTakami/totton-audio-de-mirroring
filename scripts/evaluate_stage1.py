@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,49 @@ from totton_audio_de_mirroring.evaluation.mirror_metrics import (
     export_mirror_reduction_visualization,
     mirror_dataset_result_to_payload,
 )
+from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
+    RingingComparisonMetrics,
+    compare_edge_aligned_ringing,
+)
+
+
+@dataclass(frozen=True)
+class RingingDatasetSummary:
+    """Dataset-level summary for edge-aligned ringing comparisons.
+
+    Args:
+        num_samples: Number of evaluated sample pairs.
+        mean_plateau_ripple_rms_before: Mean RMS ripple before processing.
+        mean_plateau_ripple_rms_after: Mean RMS ripple after processing.
+        mean_plateau_ripple_rms_ratio: Mean after/before RMS ripple ratio.
+        mean_plateau_ripple_p2p_before: Mean P2P ripple before processing.
+        mean_plateau_ripple_p2p_after: Mean P2P ripple after processing.
+        mean_plateau_ripple_p2p_ratio: Mean after/before P2P ripple ratio.
+        mean_overshoot_abs_before: Mean absolute overshoot before processing.
+        mean_overshoot_abs_after: Mean absolute overshoot after processing.
+        mean_overshoot_abs_delta: Mean after-before overshoot increase.
+        mean_ringing_ratio_before: Mean post/pre ringing ratio before processing.
+        mean_ringing_ratio_after: Mean post/pre ringing ratio after processing.
+        mean_ringing_ratio_delta: Mean after-before ringing-ratio increase.
+
+    Physical Basis:
+        Aggregating edge-aligned metrics across square probes quantifies
+        whether a checkpoint preserves time response compared with baseline SRC.
+    """
+
+    num_samples: int
+    mean_plateau_ripple_rms_before: float
+    mean_plateau_ripple_rms_after: float
+    mean_plateau_ripple_rms_ratio: float
+    mean_plateau_ripple_p2p_before: float
+    mean_plateau_ripple_p2p_after: float
+    mean_plateau_ripple_p2p_ratio: float
+    mean_overshoot_abs_before: float
+    mean_overshoot_abs_after: float
+    mean_overshoot_abs_delta: float
+    mean_ringing_ratio_before: float
+    mean_ringing_ratio_after: float
+    mean_ringing_ratio_delta: float
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,6 +99,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mirror-target-reduction", type=float, default=0.70)
     parser.add_argument("--mirror-visual-dir", type=Path, default=None)
     parser.add_argument("--mirror-visual-limit", type=int, default=16)
+    parser.add_argument("--ringing-json", type=Path, default=None)
+    parser.add_argument("--ringing-csv", type=Path, default=None)
+    parser.add_argument("--ringing-plateau-start-ms", type=float, default=0.1)
+    parser.add_argument("--ringing-plateau-end-ms", type=float, default=0.8)
+    parser.add_argument("--ringing-window-ms", type=float, default=0.8)
     return parser.parse_args()
 
 
@@ -90,6 +138,14 @@ def main() -> None:
         hop_length=args.hop_length,
         target_reduction_ratio=args.mirror_target_reduction,
     )
+    ringing_metrics = _evaluate_ringing_dataset(
+        pairs=pairs,
+        sample_rate=args.sample_rate,
+        plateau_start_ms=args.ringing_plateau_start_ms,
+        plateau_end_ms=args.ringing_plateau_end_ms,
+        ringing_window_ms=args.ringing_window_ms,
+    )
+    ringing_summary = _summarize_ringing_metrics(ringing_metrics)
 
     visual_exports: list[str] = []
     if args.mirror_visual_dir is not None:
@@ -104,13 +160,23 @@ def main() -> None:
         )
 
     if args.csv is not None:
-        _write_csv(result, args.csv)
+        _write_csv(result, args.csv, ringing_metrics=ringing_metrics)
+    if args.ringing_csv is not None:
+        _write_ringing_csv(ringing_metrics, args.ringing_csv)
     if args.json is not None:
         _write_json(
             result,
             args.json,
             mirror_result=mirror_result,
             visual_exports=visual_exports,
+            ringing_metrics=ringing_metrics,
+            ringing_summary=ringing_summary,
+        )
+    if args.ringing_json is not None:
+        _write_ringing_json(
+            ringing_metrics=ringing_metrics,
+            ringing_summary=ringing_summary,
+            path=args.ringing_json,
         )
 
     if args.print_json:
@@ -120,6 +186,8 @@ def main() -> None:
                     result,
                     mirror_result=mirror_result,
                     visual_exports=visual_exports,
+                    ringing_metrics=ringing_metrics,
+                    ringing_summary=ringing_summary,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -198,6 +266,8 @@ def _to_payload(
     result: DatasetEvaluationResult,
     mirror_result: MirrorDatasetEvaluationResult | None = None,
     visual_exports: list[str] | None = None,
+    ringing_metrics: list[dict[str, Any]] | None = None,
+    ringing_summary: RingingDatasetSummary | None = None,
 ) -> dict[str, Any]:
     """Convert dataset evaluation to JSON-serializable payload.
 
@@ -217,6 +287,11 @@ def _to_payload(
         payload["mirror_metrics"] = mirror_dataset_result_to_payload(mirror_result)
     if visual_exports is not None:
         payload["mirror_visualizations"] = visual_exports
+    if ringing_metrics is not None and ringing_summary is not None:
+        payload["ringing_metrics"] = {
+            "summary": asdict(ringing_summary),
+            "samples": ringing_metrics,
+        }
     return payload
 
 
@@ -225,6 +300,8 @@ def _write_json(
     path: Path,
     mirror_result: MirrorDatasetEvaluationResult | None = None,
     visual_exports: list[str] | None = None,
+    ringing_metrics: list[dict[str, Any]] | None = None,
+    ringing_summary: RingingDatasetSummary | None = None,
 ) -> None:
     """Write evaluation payload to JSON file.
 
@@ -247,6 +324,8 @@ def _write_json(
                     result,
                     mirror_result=mirror_result,
                     visual_exports=visual_exports,
+                    ringing_metrics=ringing_metrics,
+                    ringing_summary=ringing_summary,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -312,7 +391,11 @@ def _export_mirror_visualizations(
     return exported_paths
 
 
-def _write_csv(result: DatasetEvaluationResult, path: Path) -> None:
+def _write_csv(
+    result: DatasetEvaluationResult,
+    path: Path,
+    ringing_metrics: list[dict[str, Any]] | None = None,
+) -> None:
     """Write per-sample metrics to CSV file.
 
     Args:
@@ -327,15 +410,144 @@ def _write_csv(result: DatasetEvaluationResult, path: Path) -> None:
         standard tooling.
     """
     rows = [sample_result_to_flat_dict(sample) for sample in result.samples]
-    fieldnames = list(rows[0].keys())
+    ringing_by_id = (
+        {row["sample_id"]: row for row in ringing_metrics}
+        if ringing_metrics is not None
+        else {}
+    )
+    merged_rows: list[dict[str, Any]] = []
+    for row in rows:
+        merged = dict(row)
+        ringing_row = ringing_by_id.get(str(row["sample_id"]))
+        if ringing_row is not None:
+            for key, value in ringing_row.items():
+                if key == "sample_id":
+                    continue
+                merged[key] = value
+        merged_rows.append(merged)
+    fieldnames = list(merged_rows[0].keys())
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="", encoding="utf-8") as csv_file:
             writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(merged_rows)
     except Exception as exc:
         raise RuntimeError(f"Failed to write CSV report: {exc}") from exc
+
+
+def _evaluate_ringing_dataset(
+    *,
+    pairs: list[tuple[str, np.ndarray, np.ndarray]],
+    sample_rate: int,
+    plateau_start_ms: float,
+    plateau_end_ms: float,
+    ringing_window_ms: float,
+) -> list[dict[str, Any]]:
+    """Evaluate edge-aligned ringing metrics on paired signals.
+
+    Physical Basis:
+        Comparing edge-aligned metrics against the reference SRC output catches
+        transient regressions that mirror-only metrics can miss.
+    """
+    if len(pairs) == 0:
+        raise ValueError("pairs cannot be empty")
+
+    outputs: list[dict[str, Any]] = []
+    for sample_id, input_signal, output_signal in pairs:
+        comparison = compare_edge_aligned_ringing(
+            before_signal=input_signal,
+            after_signal=output_signal,
+            sample_rate=sample_rate,
+            plateau_start_ms=plateau_start_ms,
+            plateau_end_ms=plateau_end_ms,
+            ringing_window_ms=ringing_window_ms,
+        )
+        outputs.append(_ringing_comparison_to_payload(sample_id, comparison))
+    return outputs
+
+
+def _ringing_comparison_to_payload(
+    sample_id: str,
+    comparison: RingingComparisonMetrics,
+) -> dict[str, Any]:
+    return {
+        "sample_id": sample_id,
+        "edge_index_before": comparison.before.edge_index,
+        "edge_index_after": comparison.after.edge_index,
+        "plateau_ripple_rms_before": comparison.before.plateau_ripple_rms,
+        "plateau_ripple_rms_after": comparison.after.plateau_ripple_rms,
+        "plateau_ripple_rms_ratio": comparison.plateau_ripple_rms_ratio,
+        "plateau_ripple_p2p_before": comparison.before.plateau_ripple_p2p,
+        "plateau_ripple_p2p_after": comparison.after.plateau_ripple_p2p,
+        "plateau_ripple_p2p_ratio": comparison.plateau_ripple_p2p_ratio,
+        "overshoot_abs_before": comparison.before.overshoot_abs,
+        "overshoot_abs_after": comparison.after.overshoot_abs,
+        "overshoot_abs_delta": comparison.overshoot_abs_delta,
+        "ringing_ratio_before": comparison.before.post_to_pre_ringing_energy_ratio,
+        "ringing_ratio_after": comparison.after.post_to_pre_ringing_energy_ratio,
+        "ringing_ratio_delta": comparison.ringing_ratio_delta,
+    }
+
+
+def _summarize_ringing_metrics(
+    ringing_metrics: list[dict[str, Any]],
+) -> RingingDatasetSummary:
+    """Aggregate per-sample ringing metrics into dataset summary."""
+    if len(ringing_metrics) == 0:
+        raise ValueError("ringing_metrics cannot be empty")
+
+    def _mean(field_name: str) -> float:
+        return float(np.mean([float(item[field_name]) for item in ringing_metrics]))
+
+    return RingingDatasetSummary(
+        num_samples=len(ringing_metrics),
+        mean_plateau_ripple_rms_before=_mean("plateau_ripple_rms_before"),
+        mean_plateau_ripple_rms_after=_mean("plateau_ripple_rms_after"),
+        mean_plateau_ripple_rms_ratio=_mean("plateau_ripple_rms_ratio"),
+        mean_plateau_ripple_p2p_before=_mean("plateau_ripple_p2p_before"),
+        mean_plateau_ripple_p2p_after=_mean("plateau_ripple_p2p_after"),
+        mean_plateau_ripple_p2p_ratio=_mean("plateau_ripple_p2p_ratio"),
+        mean_overshoot_abs_before=_mean("overshoot_abs_before"),
+        mean_overshoot_abs_after=_mean("overshoot_abs_after"),
+        mean_overshoot_abs_delta=_mean("overshoot_abs_delta"),
+        mean_ringing_ratio_before=_mean("ringing_ratio_before"),
+        mean_ringing_ratio_after=_mean("ringing_ratio_after"),
+        mean_ringing_ratio_delta=_mean("ringing_ratio_delta"),
+    )
+
+
+def _write_ringing_csv(ringing_metrics: list[dict[str, Any]], path: Path) -> None:
+    """Write per-sample ringing metrics to CSV."""
+    if len(ringing_metrics) == 0:
+        raise ValueError("ringing_metrics cannot be empty")
+    fieldnames = list(ringing_metrics[0].keys())
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(ringing_metrics)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to write ringing CSV report: {exc}") from exc
+
+
+def _write_ringing_json(
+    *,
+    ringing_metrics: list[dict[str, Any]],
+    ringing_summary: RingingDatasetSummary,
+    path: Path,
+) -> None:
+    """Write ringing summary + per-sample metrics to JSON."""
+    payload = {
+        "summary": asdict(ringing_summary),
+        "samples": ringing_metrics,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception as exc:
+        raise RuntimeError(f"Failed to write ringing JSON report: {exc}") from exc
 
 
 def _print_summary(

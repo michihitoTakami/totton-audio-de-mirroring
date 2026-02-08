@@ -73,11 +73,14 @@ def test_cli_writes_json_and_csv(
     assert "lb_phase_error_deg" in payload["summary"]
     assert "mirror_metrics" in payload
     assert "symmetry_reduction_ratio" in payload["mirror_metrics"]["summary"]
+    assert "ringing_metrics" in payload
+    assert "mean_plateau_ripple_rms_ratio" in payload["ringing_metrics"]["summary"]
 
     with csv_path.open(newline="", encoding="utf-8") as csv_file:
         rows = list(csv.DictReader(csv_file))
     assert len(rows) == 2
     assert "touch_metric" in rows[0]
+    assert "plateau_ripple_rms_ratio" in rows[0]
 
 
 def test_cli_strict_energy_cap_returns_exit_code_2(
@@ -191,3 +194,42 @@ def test_cli_strict_mirror_reduction_returns_exit_code_3(
         main()
 
     assert excinfo.value.code == 3
+
+
+def test_cli_writes_ringing_json_and_csv(
+    paired_npy_dirs: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should emit dedicated ringing JSON/CSV reports when requested."""
+    input_dir, output_dir = paired_npy_dirs
+    ringing_json = tmp_path / "report" / "ringing.json"
+    ringing_csv = tmp_path / "report" / "ringing.csv"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--ringing-json",
+            str(ringing_json),
+            "--ringing-csv",
+            str(ringing_csv),
+        ],
+    )
+
+    main()
+
+    ringing_payload = json.loads(ringing_json.read_text(encoding="utf-8"))
+    assert ringing_payload["summary"]["num_samples"] == 2
+    assert len(ringing_payload["samples"]) == 2
+    assert "plateau_ripple_p2p_ratio" in ringing_payload["samples"][0]
+
+    with ringing_csv.open(newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.DictReader(csv_file))
+    assert len(rows) == 2
+    assert "overshoot_abs_delta" in rows[0]

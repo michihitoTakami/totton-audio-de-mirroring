@@ -36,6 +36,67 @@ class SquareWaveMetrics:
 
 
 @dataclass(frozen=True)
+class EdgeAlignedRingingMetrics:
+    """Edge-aligned square-wave ringing metrics.
+
+    Args:
+        edge_index: Detected edge index in samples.
+        edge_time_ms: Detected edge time in milliseconds.
+        plateau_start_ms: Plateau window start after edge in milliseconds.
+        plateau_end_ms: Plateau window end after edge in milliseconds.
+        plateau_ripple_rms: RMS of plateau ripple.
+        plateau_ripple_p2p: Peak-to-peak plateau ripple.
+        overshoot_abs: Maximum positive deviation from plateau reference.
+        undershoot_abs: Maximum negative deviation from plateau reference.
+        pre_ringing_energy: Ripple energy in pre-edge window.
+        post_ringing_energy: Ripple energy in post-edge window.
+        post_to_pre_ringing_energy_ratio: Post/pre ringing-energy ratio.
+
+    Physical Basis:
+        Square-wave plateaus isolate transient-induced ripple from harmonic
+        content. Comparing pre/post edge ripple energy quantifies ringing
+        growth caused by phase or damping degradation.
+    """
+
+    edge_index: int
+    edge_time_ms: float
+    plateau_start_ms: float
+    plateau_end_ms: float
+    plateau_ripple_rms: float
+    plateau_ripple_p2p: float
+    overshoot_abs: float
+    undershoot_abs: float
+    pre_ringing_energy: float
+    post_ringing_energy: float
+    post_to_pre_ringing_energy_ratio: float
+
+
+@dataclass(frozen=True)
+class RingingComparisonMetrics:
+    """Before/after ringing comparison metrics.
+
+    Args:
+        before: Edge-aligned metrics for reference signal.
+        after: Edge-aligned metrics for processed signal.
+        plateau_ripple_rms_ratio: After/before RMS ripple ratio.
+        plateau_ripple_p2p_ratio: After/before P2P ripple ratio.
+        overshoot_abs_delta: After-before overshoot increase.
+        ringing_ratio_delta: After-before post/pre ringing ratio increase.
+
+    Physical Basis:
+        Regression gates should block models that worsen transient ringing
+        relative to the reference SRC path while preserving mirror benefits.
+    """
+
+    before: EdgeAlignedRingingMetrics
+    after: EdgeAlignedRingingMetrics
+    plateau_ripple_rms_ratio: float
+    plateau_ripple_p2p_ratio: float
+    overshoot_abs_delta: float
+    ringing_ratio_delta: float
+
+
+@dataclass(frozen=True)
 class ImpulseResponseMetrics:
     """Impulse response metrics for group delay and phase analysis.
 
@@ -82,6 +143,164 @@ class WaveformComparisonMetrics:
     output_signal: np.ndarray
     mse_input_output: float
     correlation: float
+
+
+def compute_edge_aligned_ringing_metrics(
+    signal: np.ndarray,
+    sample_rate: int,
+    plateau_start_ms: float = 0.1,
+    plateau_end_ms: float = 0.8,
+    ringing_window_ms: float = 0.8,
+) -> EdgeAlignedRingingMetrics:
+    """Compute edge-aligned ringing metrics for square-wave-like signals.
+
+    Args:
+        signal: Input waveform.
+        sample_rate: Sample rate in Hz.
+        plateau_start_ms: Plateau window start after detected edge in ms.
+        plateau_end_ms: Plateau window end after detected edge in ms.
+        ringing_window_ms: Window length used for pre/post ringing energy in ms.
+
+    Returns:
+        EdgeAlignedRingingMetrics with plateau and ringing statistics.
+
+    Raises:
+        ValueError: If inputs are invalid or edge/plateau windows are unusable.
+
+    Physical Basis:
+        Using an edge-aligned plateau window avoids metric drift from phase
+        offsets and directly targets ripple/overshoot regressions that degrade
+        transient quality.
+    """
+    if signal.ndim != 1:
+        raise ValueError(f"signal must be 1D, got {signal.ndim}D")
+    if signal.size == 0:
+        raise ValueError("signal cannot be empty")
+    if sample_rate <= 0:
+        raise ValueError(f"sample_rate must be positive, got {sample_rate}")
+    if plateau_start_ms < 0.0:
+        raise ValueError(
+            f"plateau_start_ms must be non-negative, got {plateau_start_ms}"
+        )
+    if plateau_end_ms <= plateau_start_ms:
+        raise ValueError(
+            "plateau_end_ms must be greater than plateau_start_ms, "
+            f"got start={plateau_start_ms}, end={plateau_end_ms}"
+        )
+    if ringing_window_ms <= 0.0:
+        raise ValueError(f"ringing_window_ms must be positive, got {ringing_window_ms}")
+
+    edge_index = _detect_edge_index(signal)
+    plateau_start_offset = int(round(plateau_start_ms * sample_rate / 1000.0))
+    plateau_end_offset = int(round(plateau_end_ms * sample_rate / 1000.0))
+    plateau_start_index = edge_index + plateau_start_offset
+    plateau_end_index = edge_index + plateau_end_offset
+    if plateau_start_index >= signal.size:
+        raise ValueError("plateau window starts beyond signal length")
+    plateau_end_index = min(signal.size, plateau_end_index)
+    if plateau_end_index <= plateau_start_index:
+        raise ValueError("plateau window is empty for detected edge")
+
+    plateau = signal[plateau_start_index:plateau_end_index]
+    plateau_reference = float(np.median(plateau))
+    plateau_error = plateau - plateau_reference
+    plateau_ripple_rms = float(np.sqrt(np.mean(np.square(plateau_error))))
+    plateau_ripple_p2p = float(np.max(plateau) - np.min(plateau))
+
+    post_window = signal[edge_index:plateau_end_index]
+    overshoot_abs = float(max(float(np.max(post_window) - plateau_reference), 0.0))
+    undershoot_abs = float(max(float(plateau_reference - np.min(post_window)), 0.0))
+
+    ringing_window_samples = int(round(ringing_window_ms * sample_rate / 1000.0))
+    ringing_window_samples = max(1, ringing_window_samples)
+    pre_start = max(0, edge_index - ringing_window_samples)
+    pre_window = signal[pre_start:edge_index]
+    post_end = min(signal.size, edge_index + ringing_window_samples)
+    post_ringing_window = signal[edge_index:post_end]
+    if pre_window.size == 0 or post_ringing_window.size == 0:
+        raise ValueError("ringing windows are empty around detected edge")
+
+    pre_ringing_energy = _window_ripple_energy(pre_window)
+    post_ringing_energy = _window_ripple_energy(post_ringing_window)
+    ratio = float(post_ringing_energy / max(pre_ringing_energy, EPSILON))
+
+    return EdgeAlignedRingingMetrics(
+        edge_index=edge_index,
+        edge_time_ms=float(edge_index * 1000.0 / sample_rate),
+        plateau_start_ms=plateau_start_ms,
+        plateau_end_ms=plateau_end_ms,
+        plateau_ripple_rms=plateau_ripple_rms,
+        plateau_ripple_p2p=plateau_ripple_p2p,
+        overshoot_abs=overshoot_abs,
+        undershoot_abs=undershoot_abs,
+        pre_ringing_energy=pre_ringing_energy,
+        post_ringing_energy=post_ringing_energy,
+        post_to_pre_ringing_energy_ratio=ratio,
+    )
+
+
+def compare_edge_aligned_ringing(
+    before_signal: np.ndarray,
+    after_signal: np.ndarray,
+    sample_rate: int,
+    plateau_start_ms: float = 0.1,
+    plateau_end_ms: float = 0.8,
+    ringing_window_ms: float = 0.8,
+) -> RingingComparisonMetrics:
+    """Compare edge-aligned ringing metrics between before/after signals.
+
+    Args:
+        before_signal: Reference SRC output signal.
+        after_signal: Processed Stage 1 signal.
+        sample_rate: Sample rate in Hz.
+        plateau_start_ms: Plateau window start after edge in ms.
+        plateau_end_ms: Plateau window end after edge in ms.
+        ringing_window_ms: Window length for pre/post ringing energy in ms.
+
+    Returns:
+        RingingComparisonMetrics with relative degradation indicators.
+
+    Raises:
+        ValueError: If inputs are invalid.
+
+    Physical Basis:
+        Relative regression metrics are robust against absolute level changes
+        and directly encode "worse than before" behavior for quality gates.
+    """
+    if before_signal.ndim != 1 or after_signal.ndim != 1:
+        raise ValueError("before_signal and after_signal must be 1D")
+    if before_signal.shape != after_signal.shape:
+        raise ValueError("before_signal and after_signal must have same shape")
+
+    before = compute_edge_aligned_ringing_metrics(
+        signal=before_signal,
+        sample_rate=sample_rate,
+        plateau_start_ms=plateau_start_ms,
+        plateau_end_ms=plateau_end_ms,
+        ringing_window_ms=ringing_window_ms,
+    )
+    after = compute_edge_aligned_ringing_metrics(
+        signal=after_signal,
+        sample_rate=sample_rate,
+        plateau_start_ms=plateau_start_ms,
+        plateau_end_ms=plateau_end_ms,
+        ringing_window_ms=ringing_window_ms,
+    )
+    return RingingComparisonMetrics(
+        before=before,
+        after=after,
+        plateau_ripple_rms_ratio=float(
+            after.plateau_ripple_rms / max(before.plateau_ripple_rms, EPSILON)
+        ),
+        plateau_ripple_p2p_ratio=float(
+            after.plateau_ripple_p2p / max(before.plateau_ripple_p2p, EPSILON)
+        ),
+        overshoot_abs_delta=float(after.overshoot_abs - before.overshoot_abs),
+        ringing_ratio_delta=float(
+            after.post_to_pre_ringing_energy_ratio
+            - before.post_to_pre_ringing_energy_ratio
+        ),
+    )
 
 
 def compute_square_wave_response(
@@ -512,10 +731,38 @@ def plot_waveform_comparison(
     plt.close(fig)
 
 
+def _detect_edge_index(signal: np.ndarray) -> int:
+    centered = signal - float(np.median(signal))
+    signs = np.sign(centered)
+    if signs[0] == 0.0:
+        signs[0] = 1.0
+    for idx in range(1, signs.size):
+        if signs[idx] == 0.0:
+            signs[idx] = signs[idx - 1]
+
+    transitions = np.where(np.diff(signs) != 0.0)[0] + 1
+    if transitions.size == 0:
+        raise ValueError("No sign-change edge detected in signal")
+    center_index = signal.size // 2
+    nearest = int(np.argmin(np.abs(transitions - center_index)))
+    return int(transitions[nearest])
+
+
+def _window_ripple_energy(window: np.ndarray) -> float:
+    if window.size == 0:
+        return 0.0
+    reference = float(np.median(window))
+    return float(np.mean(np.square(window - reference)))
+
+
 __all__ = [
+    "EdgeAlignedRingingMetrics",
     "SquareWaveMetrics",
+    "RingingComparisonMetrics",
     "ImpulseResponseMetrics",
     "WaveformComparisonMetrics",
+    "compare_edge_aligned_ringing",
+    "compute_edge_aligned_ringing_metrics",
     "compute_square_wave_response",
     "compute_impulse_response",
     "compute_waveform_comparison",
