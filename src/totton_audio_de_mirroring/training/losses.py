@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
@@ -459,15 +460,19 @@ def ringing_edge_loss(
     if pred.shape != target.shape:
         raise ValueError("pred and target must share shape.")
     active_config = config or RingingLossConfig()
+    working_dtype = _ringing_compute_dtype(pred.dtype)
 
-    pred_diff = torch.diff(pred, dim=-1)
-    target_diff = torch.diff(target, dim=-1)
-    weights = _edge_weights(
-        target_diff,
-        edge_weight_cap=active_config.edge_weight_cap,
-        eps=active_config.eps,
-    )
-    return torch.mean(torch.abs(pred_diff - target_diff) * weights)
+    with _autocast_disabled(pred.device.type):
+        pred_stable = pred.to(dtype=working_dtype)
+        target_stable = target.to(dtype=working_dtype)
+        pred_diff = torch.diff(pred_stable, dim=-1)
+        target_diff = torch.diff(target_stable, dim=-1)
+        weights = _edge_weights(
+            target_diff,
+            edge_weight_cap=active_config.edge_weight_cap,
+            eps=active_config.eps,
+        )
+        return torch.mean(torch.abs(pred_diff - target_diff) * weights)
 
 
 def ringing_step_loss(
@@ -495,24 +500,28 @@ def ringing_step_loss(
     if pred.shape != target.shape:
         raise ValueError("pred and target must share shape.")
     active_config = config or RingingLossConfig()
+    working_dtype = _ringing_compute_dtype(pred.dtype)
 
-    pred_diff = torch.diff(pred, dim=-1)
-    target_diff = torch.diff(target, dim=-1)
-    weights = _edge_weights(
-        target_diff,
-        edge_weight_cap=active_config.edge_weight_cap,
-        eps=active_config.eps,
-    )
-    dilated_weights = F.max_pool1d(
-        weights.unsqueeze(1),
-        kernel_size=active_config.step_window_size,
-        stride=1,
-        padding=active_config.step_window_size // 2,
-    ).squeeze(1)
+    with _autocast_disabled(pred.device.type):
+        pred_stable = pred.to(dtype=working_dtype)
+        target_stable = target.to(dtype=working_dtype)
+        pred_diff = torch.diff(pred_stable, dim=-1)
+        target_diff = torch.diff(target_stable, dim=-1)
+        weights = _edge_weights(
+            target_diff,
+            edge_weight_cap=active_config.edge_weight_cap,
+            eps=active_config.eps,
+        )
+        dilated_weights = F.max_pool1d(
+            weights.unsqueeze(1),
+            kernel_size=active_config.step_window_size,
+            stride=1,
+            padding=active_config.step_window_size // 2,
+        ).squeeze(1)
 
-    pred_step = torch.cumsum(pred_diff, dim=-1)
-    target_step = torch.cumsum(target_diff, dim=-1)
-    return torch.mean(torch.abs(pred_step - target_step) * dilated_weights)
+        pred_step = torch.cumsum(pred_diff, dim=-1)
+        target_step = torch.cumsum(target_diff, dim=-1)
+        return torch.mean(torch.abs(pred_step - target_step) * dilated_weights)
 
 
 def _stft_magnitude(signal: torch.Tensor, config: STFTLossConfig) -> torch.Tensor:
@@ -594,6 +603,45 @@ def _edge_weights(
     safe_scale = torch.clamp(scale, min=safe_min)
     normalized = magnitude / safe_scale
     return torch.clamp(normalized, min=0.0, max=edge_weight_cap)
+
+
+def _ringing_compute_dtype(input_dtype: torch.dtype) -> torch.dtype:
+    """Select stable compute dtype for ringing auxiliary losses.
+
+    Args:
+        input_dtype: Input tensor dtype.
+
+    Returns:
+        Float32 for low-precision inputs, otherwise the original dtype.
+
+    Physical Basis:
+        Derivative and cumulative operations need higher dynamic range
+        than float16/bfloat16 to avoid NaN/Inf under AMP.
+    """
+    if input_dtype in {torch.float16, torch.bfloat16}:
+        return torch.float32
+    return input_dtype
+
+
+@contextmanager
+def _autocast_disabled(device_type: str) -> Iterator[None]:
+    """Temporarily disable autocast for numerically sensitive losses.
+
+    Args:
+        device_type: Device type string (for example, "cuda" or "cpu").
+
+    Yields:
+        Context where autocast is disabled when supported.
+
+    Physical Basis:
+        Ringing losses use derivative and cumulative operations that are
+        sensitive to float16 underflow and accumulation error.
+    """
+    if device_type in {"cuda", "cpu"}:
+        with torch.amp.autocast(device_type=device_type, enabled=False):
+            yield
+        return
+    yield
 
 
 def _resize_mask(
