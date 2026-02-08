@@ -1,0 +1,24 @@
+{
+  "issue": 64,
+  "pairs": [
+    {
+      "input": "tests/fixtures/golden_samples/stage1/input/sample_a.npy",
+      "naive": "tests/fixtures/golden_samples/imd/naive/sample_a.npy",
+      "nmse": "tests/fixtures/golden_samples/imd/nmse/sample_a.npy",
+      "sample_id": "sample_a"
+    },
+    {
+      "input": "tests/fixtures/golden_samples/stage1/input/sample_b.npy",
+      "naive": "tests/fixtures/golden_samples/imd/naive/sample_b.npy",
+      "nmse": "tests/fixtures/golden_samples/imd/nmse/sample_b.npy",
+      "sample_id": "sample_b"
+    }
+  ],
+  "selected_checkpoint_name": "stage1_best.pt",
+  "selected_checkpoint_sha256": "ef9f2815e57663140eff3ff6860847148eb527c733e17e2890cba9a24ec4e025",
+  "selection_reason": {
+    "composite_score": 14.901503933471115,
+    "passes_hard_gate": true,
+    "passes_imd_gate": true
+  }
+}
