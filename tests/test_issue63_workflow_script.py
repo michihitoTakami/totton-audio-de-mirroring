@@ -47,6 +47,7 @@ def _candidate(
     name: str,
     score: float,
     pass_hard: bool = True,
+    pass_mirror: bool = True,
     pass_imd: bool = True,
     pass_ringing: bool = True,
     thdn: float = 1.0,
@@ -76,7 +77,7 @@ def _candidate(
         },
         gate_details={},
         passes_hard_gate=pass_hard,
-        passes_mirror_gate=True,
+        passes_mirror_gate=pass_mirror,
         passes_imd_gate=pass_imd,
         passes_ringing_gate=pass_ringing,
         composite_score=score,
@@ -154,6 +155,14 @@ def test_select_best_candidate_uses_highest_score_among_passing() -> None:
 def test_select_best_candidate_raises_when_nothing_passes() -> None:
     c1 = _candidate(name="a", score=1.0, pass_hard=False)
     c2 = _candidate(name="b", score=2.0, pass_imd=False, pass_ringing=False)
+
+    with pytest.raises(RuntimeError, match="No checkpoint passed"):
+        _ = _select_best_candidate([c1, c2])
+
+
+def test_select_best_candidate_rejects_mirror_gate_failure() -> None:
+    c1 = _candidate(name="a", score=1.0, pass_mirror=False)
+    c2 = _candidate(name="b", score=2.0, pass_hard=False)
 
     with pytest.raises(RuntimeError, match="No checkpoint passed"):
         _ = _select_best_candidate([c1, c2])
