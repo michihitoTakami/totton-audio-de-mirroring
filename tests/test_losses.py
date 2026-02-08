@@ -162,6 +162,20 @@ def test_ringing_aux_losses_compute_in_fp32_for_fp16_inputs() -> None:
     assert torch.isfinite(step_loss)
 
 
+def test_ringing_aux_losses_preserve_fp64_precision() -> None:
+    pred = torch.tensor([[0.0, 1.0e-6, -2.0e-6, 0.0]], dtype=torch.float64)
+    target = torch.zeros_like(pred)
+    config = RingingLossConfig(step_window_size=3, eps=1.0e-12)
+
+    edge_loss = ringing_edge_loss(pred, target, config=config)
+    step_loss = ringing_step_loss(pred, target, config=config)
+
+    assert edge_loss.dtype == torch.float64
+    assert step_loss.dtype == torch.float64
+    assert torch.isfinite(edge_loss)
+    assert torch.isfinite(step_loss)
+
+
 def test_ringing_step_loss_stays_finite_for_long_fp16_sequence() -> None:
     length = 22_050
     values = torch.zeros(1, length, dtype=torch.float16)

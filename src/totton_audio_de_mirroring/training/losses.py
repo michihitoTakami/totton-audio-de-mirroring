@@ -460,12 +460,13 @@ def ringing_edge_loss(
     if pred.shape != target.shape:
         raise ValueError("pred and target must share shape.")
     active_config = config or RingingLossConfig()
+    working_dtype = _ringing_compute_dtype(pred.dtype)
 
     with _autocast_disabled(pred.device.type):
-        pred_fp32 = pred.to(dtype=torch.float32)
-        target_fp32 = target.to(dtype=torch.float32)
-        pred_diff = torch.diff(pred_fp32, dim=-1)
-        target_diff = torch.diff(target_fp32, dim=-1)
+        pred_stable = pred.to(dtype=working_dtype)
+        target_stable = target.to(dtype=working_dtype)
+        pred_diff = torch.diff(pred_stable, dim=-1)
+        target_diff = torch.diff(target_stable, dim=-1)
         weights = _edge_weights(
             target_diff,
             edge_weight_cap=active_config.edge_weight_cap,
@@ -499,12 +500,13 @@ def ringing_step_loss(
     if pred.shape != target.shape:
         raise ValueError("pred and target must share shape.")
     active_config = config or RingingLossConfig()
+    working_dtype = _ringing_compute_dtype(pred.dtype)
 
     with _autocast_disabled(pred.device.type):
-        pred_fp32 = pred.to(dtype=torch.float32)
-        target_fp32 = target.to(dtype=torch.float32)
-        pred_diff = torch.diff(pred_fp32, dim=-1)
-        target_diff = torch.diff(target_fp32, dim=-1)
+        pred_stable = pred.to(dtype=working_dtype)
+        target_stable = target.to(dtype=working_dtype)
+        pred_diff = torch.diff(pred_stable, dim=-1)
+        target_diff = torch.diff(target_stable, dim=-1)
         weights = _edge_weights(
             target_diff,
             edge_weight_cap=active_config.edge_weight_cap,
@@ -601,6 +603,24 @@ def _edge_weights(
     safe_scale = torch.clamp(scale, min=safe_min)
     normalized = magnitude / safe_scale
     return torch.clamp(normalized, min=0.0, max=edge_weight_cap)
+
+
+def _ringing_compute_dtype(input_dtype: torch.dtype) -> torch.dtype:
+    """Select stable compute dtype for ringing auxiliary losses.
+
+    Args:
+        input_dtype: Input tensor dtype.
+
+    Returns:
+        Float32 for low-precision inputs, otherwise the original dtype.
+
+    Physical Basis:
+        Derivative and cumulative operations need higher dynamic range
+        than float16/bfloat16 to avoid NaN/Inf under AMP.
+    """
+    if input_dtype in {torch.float16, torch.bfloat16}:
+        return torch.float32
+    return input_dtype
 
 
 @contextmanager
