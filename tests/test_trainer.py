@@ -15,6 +15,7 @@ from totton_audio_de_mirroring.training.losses import STFTLossConfig
 from totton_audio_de_mirroring.training.runtime import compute_lowband_metrics
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
+    _compute_batch_metrics,
     load_training_config,
     select_device,
     train_stage1,
@@ -190,6 +191,68 @@ def test_compute_lowband_metrics_normalizes_by_lowband_bins_only() -> None:
 
     assert mag_mae == pytest.approx(expected_mag_mae, rel=1.0e-5, abs=1.0e-7)
     assert phase_mae == pytest.approx(expected_phase_mae, rel=1.0e-5, abs=1.0e-7)
+
+
+def test_compute_batch_metrics_clamps_extreme_energy_ratio_to_finite() -> None:
+    model = _DummyNMSE()
+    mask_config = STFTLossConfig(n_fft=64, hop_length=16, win_length=64)
+
+    hb_in = torch.ones(2, 256, dtype=torch.float32)
+    hb_pred = torch.zeros(2, 256, dtype=torch.float32)
+    stft = torch.stft(
+        hb_in,
+        n_fft=64,
+        hop_length=16,
+        win_length=64,
+        window=torch.hann_window(64),
+        return_complex=True,
+    )
+    mirror_mask = torch.ones(2, stft.shape[-2], stft.shape[-1], dtype=torch.float32)
+
+    metrics = _compute_batch_metrics(
+        model=model,
+        batch={},
+        hb_in=hb_in,
+        hb_pred=hb_pred,
+        mirror_mask=mirror_mask,
+        device=torch.device("cpu"),
+        mask_config=mask_config,
+        energy_cap=1.0,
+        compute_low_band=False,
+    )
+
+    assert torch.isfinite(torch.tensor(metrics["mirror_reduction_db"]))
+    assert torch.isfinite(torch.tensor(metrics["touch_l1"]))
+    assert torch.isfinite(torch.tensor(metrics["energy_cap_violation"]))
+
+
+def test_train_stage1_raises_when_non_finite_output_detected(tmp_path: Path) -> None:
+    batch = _make_batch(batch_size=2, length=256)
+    high_band = batch["high_band"].clone()
+    high_band[0, 0] = torch.nan
+    batch["high_band"] = high_band
+
+    dataset = _StaticBatchDataset([batch])
+    train_loader = DataLoader(dataset, batch_size=None)
+    config = TrainingConfig(
+        epochs=1,
+        learning_rate=1.0e-3,
+        use_amp=False,
+        log_interval=100,
+        require_cuda=False,
+        mask_config=STFTLossConfig(n_fft=64, hop_length=16, win_length=64),
+        stft_configs=(STFTLossConfig(n_fft=64, hop_length=16, win_length=64),),
+    )
+
+    with pytest.raises(RuntimeError, match="Non-finite model output detected"):
+        _ = train_stage1(
+            model=_DummyNMSE(),
+            train_dataloader=train_loader,
+            config=config,
+            checkpoint_dir=tmp_path,
+        )
+
+    assert (tmp_path / "stage1_emergency.pt").exists()
 
 
 def _make_loader(num_steps: int) -> DataLoader[dict[str, Any]]:

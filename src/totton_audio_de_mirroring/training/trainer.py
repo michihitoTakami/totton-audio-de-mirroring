@@ -446,10 +446,26 @@ def _run_epoch(
                     energy_cap=config.energy_cap,
                     mask_mode=config.mask_mode,
                 )
+            _validate_batch_finite(
+                hb_pred=hb_pred,
+                terms=terms,
+                epoch=epoch,
+                step=step,
+                split="train",
+            )
             scaler.scale(terms.total).backward()
             if config.grad_clip is not None:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    config.grad_clip,
+                )
+                if not torch.isfinite(grad_norm):
+                    optimizer.zero_grad(set_to_none=True)
+                    raise RuntimeError(
+                        f"Non-finite gradient norm detected at epoch={epoch}, "
+                        f"step={step}: grad_norm={float(grad_norm)}"
+                    )
             scaler.step(optimizer)
             scaler.update()
         else:
@@ -466,6 +482,13 @@ def _run_epoch(
                     energy_cap=config.energy_cap,
                     mask_mode=config.mask_mode,
                 )
+            _validate_batch_finite(
+                hb_pred=hb_pred,
+                terms=terms,
+                epoch=epoch,
+                step=step,
+                split="val",
+            )
 
         batch_metrics = _compute_batch_metrics(
             model=model,
@@ -536,9 +559,11 @@ def _compute_batch_metrics(
     compute_low_band: bool,
 ) -> dict[str, float | bool]:
     """Compute monitor-only batch metrics."""
-    eps = 1.0e-8
-    hb_in_mag = _stft_magnitude(hb_in, mask_config)
-    hb_pred_mag = _stft_magnitude(hb_pred, mask_config)
+    eps = 1.0e-6
+    max_ratio = 1.0e6
+    max_energy = 1.0e6
+    hb_in_mag = _stft_magnitude(hb_in, mask_config).to(dtype=torch.float32)
+    hb_pred_mag = _stft_magnitude(hb_pred, mask_config).to(dtype=torch.float32)
 
     mirror = _broadcast_mask(mirror_mask, hb_in_mag.shape).to(
         device=hb_in_mag.device,
@@ -548,13 +573,21 @@ def _compute_batch_metrics(
 
     in_energy = torch.sum((hb_in_mag**2) * mirror, dim=(-2, -1))
     out_energy = torch.sum((hb_pred_mag**2) * mirror, dim=(-2, -1))
-    mirror_reduction_db = torch.mean(
-        10.0 * torch.log10((in_energy + eps) / (out_energy + eps))
-    ).item()
+    in_energy = torch.clamp(in_energy, min=eps, max=max_energy)
+    out_energy = torch.clamp(out_energy, min=eps, max=max_energy)
+    ratio = torch.clamp(in_energy / out_energy, min=1.0 / max_ratio, max=max_ratio)
+    mirror_reduction_db = torch.mean(10.0 * torch.log10(ratio + eps)).item()
 
     touch = torch.mean(torch.abs(hb_pred_mag - hb_in_mag) * (1.0 - mirror)).item()
-    hb_energy = torch.sum(hb_pred_mag**2, dim=(-2, -1))
+    hb_energy = torch.clamp(
+        torch.sum(hb_pred_mag**2, dim=(-2, -1)),
+        min=0.0,
+        max=max_energy,
+    )
     energy_violation = torch.mean(torch.clamp(hb_energy - energy_cap, min=0.0)).item()
+    mirror_reduction_db = _safe_float(mirror_reduction_db, "mirror_reduction_db")
+    touch = _safe_float(touch, "touch_l1")
+    energy_violation = _safe_float(energy_violation, "energy_cap_violation")
 
     lb_mag_mae = 0.0
     lb_phase_mae = 0.0
@@ -748,6 +781,48 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _validate_batch_finite(
+    *,
+    hb_pred: torch.Tensor,
+    terms: LossTerms,
+    epoch: int,
+    step: int,
+    split: str,
+) -> None:
+    """Ensure model outputs and loss terms remain finite."""
+    if not torch.all(torch.isfinite(hb_pred)):
+        raise RuntimeError(
+            f"Non-finite model output detected at epoch={epoch}, "
+            f"step={step}, split={split}."
+        )
+
+    values = {
+        "total": terms.total.detach(),
+        "mask": terms.mask.detach(),
+        "stft": terms.stft.detach(),
+        "preserve": terms.preserve.detach(),
+        "energy": terms.energy.detach(),
+    }
+    for name, value in values.items():
+        if not torch.all(torch.isfinite(value)):
+            raise RuntimeError(
+                f"Non-finite loss detected at epoch={epoch}, step={step}, "
+                f"split={split}, term={name}, value={float(value)}"
+            )
+
+
+def _safe_float(value: float, metric_name: str) -> float:
+    """Replace non-finite metric values to keep epoch aggregation stable."""
+    if math.isfinite(value):
+        return float(value)
+    print(
+        f"warning: non-finite metric detected ({metric_name}={value}); "
+        "replacing with 0.0",
+        flush=True,
+    )
+    return 0.0
 
 
 def _validate_positive_int(value: int, name: str) -> None:
