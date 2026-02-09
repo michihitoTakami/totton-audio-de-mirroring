@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 import numpy as np
 import torch
@@ -25,6 +25,12 @@ from totton_audio_de_mirroring.inference.chunk_processor import (
     iterate_chunk_frames,
 )
 from totton_audio_de_mirroring.models.nmse import NMSE
+from totton_audio_de_mirroring.models.nmse_light import (
+    MODEL_TYPE_NMSE_LIGHT,
+    NMSELight,
+    NMSELightConfig,
+)
+from totton_audio_de_mirroring.models.unet import UNet2D
 from totton_audio_de_mirroring.stage2.cpp_backend import (
     CppStage2RuntimeConfig,
     CppStage2Upsampler,
@@ -341,7 +347,8 @@ def load_nmse_stage1_processor(
     energy_cap = float(
         training_config_raw.get("energy_cap", data_config.hb_target.energy_cap)
     )
-    model = NMSE(
+    model = _build_nmse_model(
+        checkpoint=checkpoint,
         sample_rate=data_config.target_sample_rate,
         cutoff_hz=data_config.band_split.cutoff_hz,
         energy_cap=energy_cap,
@@ -358,6 +365,125 @@ def load_nmse_stage1_processor(
     torch_device = torch.device(device)
     model = model.to(torch_device)
     return NMSEStage1Processor(model=model, device=torch_device)
+
+
+def _build_nmse_model(
+    *,
+    checkpoint: Mapping[str, object],
+    sample_rate: int,
+    cutoff_hz: float,
+    energy_cap: float,
+    envelope_floor: float,
+    lowpass_taps: np.ndarray,
+    highpass_taps: np.ndarray,
+) -> nn.Module:
+    """Build Stage 1 model from checkpoint metadata.
+
+    Physical Basis:
+        Restoring the exact student architecture keeps suppression behavior
+        and energy-control characteristics aligned with training.
+    """
+    raw_model_config = checkpoint.get("model_config")
+    if isinstance(raw_model_config, Mapping):
+        model_type = str(raw_model_config.get("model_type", "")).strip().lower()
+        if model_type == MODEL_TYPE_NMSE_LIGHT:
+            light_config = NMSELightConfig.from_mapping(raw_model_config)
+            return NMSELight(
+                sample_rate=sample_rate,
+                cutoff_hz=cutoff_hz,
+                energy_cap=energy_cap,
+                envelope_floor=envelope_floor,
+                lowpass_taps=lowpass_taps,
+                highpass_taps=highpass_taps,
+                model_config=light_config,
+            )
+        if model_type == "nmse":
+            unet = _build_unet_from_model_config(raw_model_config)
+            return NMSE(
+                sample_rate=sample_rate,
+                cutoff_hz=cutoff_hz,
+                unet=unet,
+                energy_cap=energy_cap,
+                envelope_floor=envelope_floor,
+                lowpass_taps=lowpass_taps,
+                highpass_taps=highpass_taps,
+            )
+    return NMSE(
+        sample_rate=sample_rate,
+        cutoff_hz=cutoff_hz,
+        energy_cap=energy_cap,
+        envelope_floor=envelope_floor,
+        lowpass_taps=lowpass_taps,
+        highpass_taps=highpass_taps,
+    )
+
+
+def _build_unet_from_model_config(model_config: Mapping[str, object]) -> UNet2D:
+    """Build UNet from checkpoint model_config metadata.
+
+    Physical Basis:
+        Restoring the exact U-Net topology is required for deterministic
+        high-band suppression behavior and checkpoint compatibility.
+    """
+    base_channels = _parse_int(model_config.get("base_channels", 32), "base_channels")
+    num_downsamples = _parse_int(
+        model_config.get("num_downsamples", 4), "num_downsamples"
+    )
+    channel_multiplier = _parse_int(
+        model_config.get("channel_multiplier", 2), "channel_multiplier"
+    )
+    activation_raw = str(model_config.get("activation", "leaky_relu")).strip().lower()
+    if activation_raw not in {"relu", "leaky_relu"}:
+        raise ValueError(f"Unsupported activation in model_config: {activation_raw}.")
+    use_batch_norm = _parse_bool(model_config.get("use_batch_norm", True))
+    output_activation_raw = (
+        str(model_config.get("output_activation", "sigmoid")).strip().lower()
+    )
+    if output_activation_raw not in {"sigmoid", "none"}:
+        raise ValueError(
+            f"Unsupported output_activation in model_config: {output_activation_raw}."
+        )
+    activation = cast(Literal["relu", "leaky_relu"], activation_raw)
+    output_activation = cast(Literal["sigmoid", "none"], output_activation_raw)
+    return UNet2D(
+        base_channels=base_channels,
+        num_downsamples=num_downsamples,
+        channel_multiplier=channel_multiplier,
+        activation=activation,
+        use_batch_norm=use_batch_norm,
+        output_activation=output_activation,
+    )
+
+
+def _parse_bool(value: object) -> bool:
+    """Parse bool-like model metadata value."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "off"}:
+            return False
+    raise ValueError(f"Expected boolean-like value, got {value!r}.")
+
+
+def _parse_int(value: object, name: str) -> int:
+    """Parse integer-like model metadata values."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be integer-like, got boolean.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"{name} must be an integer value, got {value}.")
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "":
+            raise ValueError(f"{name} cannot be empty.")
+        return int(text)
+    raise ValueError(f"{name} must be integer-like, got {value!r}.")
 
 
 def run_stage1_stage2_pipeline(

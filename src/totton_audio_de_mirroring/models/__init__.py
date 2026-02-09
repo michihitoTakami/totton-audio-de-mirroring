@@ -7,6 +7,11 @@ from totton_audio_de_mirroring.models.band_split import (
     compensate_delay,
 )
 from totton_audio_de_mirroring.models.nmse import NMSE
+from totton_audio_de_mirroring.models.nmse_light import (
+    MODEL_TYPE_NMSE_LIGHT,
+    NMSELight,
+    NMSELightConfig,
+)
 from totton_audio_de_mirroring.models.safety_constraints import (
     apply_energy_cap,
     apply_envelope_target,
@@ -24,6 +29,9 @@ __all__ = [
     "BandSplitResult",
     "compensate_delay",
     "NMSE",
+    "NMSELight",
+    "NMSELightConfig",
+    "MODEL_TYPE_NMSE_LIGHT",
     "apply_energy_cap",
     "apply_envelope_target",
     "apply_highband_mask",
