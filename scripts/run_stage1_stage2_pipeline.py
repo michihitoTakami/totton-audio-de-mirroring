@@ -16,6 +16,7 @@ from totton_audio_de_mirroring.inference import (
     PipelineConfig,
     ReferenceStage1Processor,
     load_nmse_stage1_processor,
+    load_onnx_stage1_processor,
     run_stage1_stage2_pipeline,
 )
 
@@ -145,6 +146,27 @@ def _build_stage1_processor(raw: dict[str, Any]) -> Any:
             checkpoint_path=checkpoint_path,
             data_config_path=data_config_path,
             device=device,
+        )
+    if mode == "onnx":
+        model_raw = raw.get("model_path")
+        if model_raw is None:
+            raise ValueError("stage1.mode=onnx requires model_path.")
+        model_path = Path(str(model_raw))
+        if model_path.as_posix().strip() in {"", "."}:
+            raise ValueError("stage1.mode=onnx requires model_path.")
+        data_config_path = Path(
+            str(raw.get("data_config_path", "configs/data_generation.yaml"))
+        )
+        device = str(raw.get("device", "cpu"))
+        energy_cap_raw = raw.get("energy_cap")
+        energy_cap = None if energy_cap_raw is None else float(energy_cap_raw)
+        iir_order = int(raw.get("iir_order", 6))
+        return load_onnx_stage1_processor(
+            model_path=model_path,
+            data_config_path=data_config_path,
+            device=device,
+            energy_cap=energy_cap,
+            iir_order=iir_order,
         )
     raise ValueError(f"Unsupported stage1.mode: {mode}")
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 import torch
+import torch.nn.functional as torch_f
 from torch import nn
 
 ActivationName = Literal["relu", "leaky_relu"]
@@ -204,12 +205,44 @@ class UpBlock(nn.Module):
             original local spectral patterns.
         """
         up = self.upsample(features)
-        if up.shape[-2:] != skip.shape[-2:]:
-            raise ValueError(
-                "Upsampled feature map does not match skip connection size."
-            )
+        up = _match_spatial_shape(up, skip)
         merged = torch.cat([up, skip], dim=1)
         return cast(torch.Tensor, self.conv(merged))
+
+
+def _match_spatial_shape(features: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Match feature-map spatial size to target using pad/crop.
+
+    Args:
+        features: Source feature map to resize.
+        target: Target feature map that defines output spatial shape.
+
+    Returns:
+        Feature map with the same (freq, time) shape as target.
+
+    Physical Basis:
+        Minor one-bin mismatches can occur around stride-2 transpose
+        convolutions in exported runtimes; deterministic pad/crop keeps
+        skip fusion stable without changing local mask semantics.
+    """
+    if features.ndim != 4 or target.ndim != 4:
+        raise ValueError("features and target must be 4D tensors.")
+    target_h = target.shape[-2]
+    target_w = target.shape[-1]
+    src_h = features.shape[-2]
+    src_w = features.shape[-1]
+
+    out = features
+    if src_h > target_h:
+        out = out[..., :target_h, :]
+    if src_w > target_w:
+        out = out[..., :, :target_w]
+
+    pad_h = target_h - out.shape[-2]
+    pad_w = target_w - out.shape[-1]
+    if pad_h > 0 or pad_w > 0:
+        out = torch_f.pad(out, (0, max(pad_w, 0), 0, max(pad_h, 0)))
+    return out
 
 
 class UNet2D(nn.Module):
