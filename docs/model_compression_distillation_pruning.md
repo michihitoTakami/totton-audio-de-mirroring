@@ -17,6 +17,7 @@ Stage1 NMSE を 14.2M params から 5-7M params へ削減し、推論速度/メ�
   - Teacher checkpoint を読み込み
   - Student を `nmse_light` もしくは `nmse` で構築
   - 蒸留学習 + 任意の magnitude pruning
+  - best checkpoint を `stage1_light.pt` として出力
 - `configs/training_distillation_stage1.yaml`
   - distillation 用学習設定
 

@@ -51,3 +51,18 @@ def test_nmse_light_config_rejects_invalid_channels() -> None:
     """Config should reject non-positive channels."""
     with pytest.raises(ValueError, match="base_channels"):
         _ = NMSELightConfig(base_channels=0)
+
+
+def test_nmse_light_config_parses_string_bool_metadata() -> None:
+    """Checkpoint mapping should parse string bool metadata correctly."""
+    config = NMSELightConfig.from_mapping(
+        {
+            "model_type": "nmse_light",
+            "base_channels": 40,
+            "num_downsamples": 3,
+            "channel_multiplier": 2,
+            "activation": "leaky_relu",
+            "use_batch_norm": "false",
+        }
+    )
+    assert config.use_batch_norm is False

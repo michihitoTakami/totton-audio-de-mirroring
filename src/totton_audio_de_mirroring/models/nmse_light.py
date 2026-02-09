@@ -65,12 +65,13 @@ class NMSELightConfig:
         activation = str(raw.get("activation", "leaky_relu")).strip().lower()
         if activation not in {"relu", "leaky_relu"}:
             raise ValueError(f"Unsupported activation: {activation}.")
+        use_batch_norm = _parse_bool(raw.get("use_batch_norm", True))
         return NMSELightConfig(
             base_channels=int(raw.get("base_channels", 40)),
             num_downsamples=int(raw.get("num_downsamples", 3)),
             channel_multiplier=int(raw.get("channel_multiplier", 2)),
             activation=cast(Literal["relu", "leaky_relu"], activation),
-            use_batch_norm=bool(raw.get("use_batch_norm", True)),
+            use_batch_norm=use_batch_norm,
         )
 
 
@@ -121,3 +122,16 @@ class NMSELight(NMSE):
             highpass_taps=highpass_taps,
         )
         self.model_config = config
+
+
+def _parse_bool(value: Any) -> bool:
+    """Parse bool-like metadata values from checkpoint mappings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "off"}:
+            return False
+    raise ValueError(f"Expected boolean-like value, got {value!r}.")

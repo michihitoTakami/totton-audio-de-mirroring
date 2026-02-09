@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -86,6 +87,11 @@ def main() -> None:
         print(f"last_checkpoint={result.last_checkpoint}", flush=True)
     if result.best_checkpoint is not None:
         print(f"best_checkpoint={result.best_checkpoint}", flush=True)
+        stage1_light_path = _emit_stage1_light_checkpoint(
+            best_checkpoint=result.best_checkpoint,
+            checkpoint_dir=args.checkpoint_dir,
+        )
+        print(f"stage1_light_checkpoint={stage1_light_path}", flush=True)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -140,6 +146,17 @@ def _load_data_config(path: Path) -> DataPipelineConfig:
         return load_data_config(path)
     except Exception as exc:
         raise RuntimeError(f"Failed to load data config: {exc}") from exc
+
+
+def _emit_stage1_light_checkpoint(
+    *, best_checkpoint: Path, checkpoint_dir: Path
+) -> Path:
+    """Copy best distillation checkpoint to stage1_light naming."""
+    if not best_checkpoint.exists():
+        raise FileNotFoundError(f"Best checkpoint not found: {best_checkpoint}")
+    stage1_light_path = checkpoint_dir / "stage1_light.pt"
+    shutil.copy2(best_checkpoint, stage1_light_path)
+    return stage1_light_path
 
 
 def _load_train_config(path: Path) -> DistillationConfig:
@@ -298,10 +315,15 @@ def _build_student_model(
         )
         return model, config.to_checkpoint_dict()
 
+    nmse_base_channels = base_channels if base_channels is not None else 32
+    nmse_num_downsamples = num_downsamples if num_downsamples is not None else 4
+    nmse_channel_multiplier = (
+        channel_multiplier if channel_multiplier is not None else 2
+    )
     unet = UNet2D(
-        base_channels=base_channels if base_channels is not None else 32,
-        num_downsamples=num_downsamples if num_downsamples is not None else 4,
-        channel_multiplier=channel_multiplier if channel_multiplier is not None else 2,
+        base_channels=nmse_base_channels,
+        num_downsamples=nmse_num_downsamples,
+        channel_multiplier=nmse_channel_multiplier,
     )
     model = NMSE(
         sample_rate=data_config.target_sample_rate,
@@ -313,7 +335,15 @@ def _build_student_model(
         lowpass_taps=lowpass,
         highpass_taps=highpass,
     )
-    return model, {"model_type": "nmse"}
+    return model, {
+        "model_type": "nmse",
+        "base_channels": nmse_base_channels,
+        "num_downsamples": nmse_num_downsamples,
+        "channel_multiplier": nmse_channel_multiplier,
+        "activation": "leaky_relu",
+        "use_batch_norm": True,
+        "output_activation": "sigmoid",
+    }
 
 
 if __name__ == "__main__":

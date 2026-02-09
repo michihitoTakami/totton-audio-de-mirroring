@@ -1,9 +1,10 @@
 """Tests for distillation training script helpers."""
 
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
-from scripts.train_distillation import _apply_overrides
+from scripts.train_distillation import _apply_overrides, _emit_stage1_light_checkpoint
 
 from totton_audio_de_mirroring.training.distillation import DistillationConfig
 
@@ -51,3 +52,14 @@ def test_apply_overrides_updates_learning_rate() -> None:
     )
     updated = _apply_overrides(DistillationConfig(require_cuda=False), args)
     assert updated.learning_rate == pytest.approx(3.0e-4)
+
+
+def test_emit_stage1_light_checkpoint_copies_best(tmp_path: Path) -> None:
+    best = tmp_path / "stage1_distill_best.pt"
+    best.write_bytes(b"checkpoint")
+    emitted = _emit_stage1_light_checkpoint(
+        best_checkpoint=best,
+        checkpoint_dir=tmp_path,
+    )
+    assert emitted == tmp_path / "stage1_light.pt"
+    assert emitted.read_bytes() == b"checkpoint"

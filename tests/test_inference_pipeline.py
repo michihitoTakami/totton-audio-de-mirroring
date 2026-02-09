@@ -16,6 +16,7 @@ from totton_audio_de_mirroring.inference.chunk_processor import (
 from totton_audio_de_mirroring.inference.pipeline import (
     PipelineConfig,
     ReferenceStage1Processor,
+    _build_unet_from_model_config,
     run_stage1_stage2_pipeline,
 )
 
@@ -153,3 +154,20 @@ def test_chunk_processing_config_matches_issue_defaults() -> None:
     assert config.chunk_samples == 11_025
     assert config.overlap_samples in {5_512, 5_513}
     assert config.hop_samples == config.chunk_samples - config.overlap_samples
+
+
+def test_build_unet_from_model_config_restores_custom_shape() -> None:
+    """Inference loader should restore U-Net topology from checkpoint metadata."""
+    model = _build_unet_from_model_config(
+        {
+            "model_type": "nmse",
+            "base_channels": 24,
+            "num_downsamples": 3,
+            "channel_multiplier": 2,
+            "activation": "relu",
+            "use_batch_norm": "false",
+            "output_activation": "sigmoid",
+        }
+    )
+    assert len(model.down_blocks) == 3
+    assert model.input_conv.net[0].out_channels == 24
