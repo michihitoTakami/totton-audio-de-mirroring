@@ -71,12 +71,14 @@ def test_run_pipeline_reference_mode_outputs_16x_rate(tmp_path: Path) -> None:
     )
 
     assert result.output_signal.ndim == 1
-    assert result.output_signal.shape[0] > signal.shape[0] * 12
+    assert result.output_signal.shape[0] == signal.shape[0] * 16
     assert result.stage1_signal is not None
     assert result.stage1_reference is not None
     assert result.stage1_metrics is not None
     assert result.performance.latency_sec >= 0.0
     assert result.performance.throughput_x_realtime > 0.0
+    assert result.performance.num_chunks >= 1
+    assert result.performance.chunk_latency_ms >= 0.0
 
 
 def test_pipeline_stage1_energy_cap_violation_detectable(tmp_path: Path) -> None:
@@ -129,10 +131,12 @@ def test_run_pipeline_cpp_backend_outputs_16x_rate(tmp_path: Path) -> None:
     )
 
     assert result.output_signal.ndim == 1
-    assert result.output_signal.shape[0] > signal.shape[0] * 12
+    assert result.output_signal.shape[0] == signal.shape[0] * 16
     assert result.stage1_signal is None
     assert result.stage1_reference is None
     assert result.stage1_metrics is None
+    assert result.performance.num_chunks >= 1
+    assert result.performance.chunk_latency_ms >= 0.0
 
 
 def test_pipeline_config_rejects_non_hann_or_non_50_percent_overlap() -> None:
