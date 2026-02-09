@@ -369,8 +369,8 @@ uv run python scripts/visualize_audio_quality.py \
 
 ### 8.2 Inference / Deployment Notes
 
-* **Chunk Processing**：数秒遅延許容のため、1–4秒程度のチャンク推論を採用可
-* **Boundary Handling**：overlap-add / crossfade（HB側で実施）
+* **Chunk Processing**：長時間音声はチャンク推論で処理（デフォルト `0.25秒/chunk`）
+* **Boundary Handling**：**Hann窓 + 50% Overlap-Add**（Issue #33仕様）
 * **Optimization**：TensorRT（FP16推奨）
 * Stage 2は軽量のためCPU/GPUいずれでも可（全体最適で選択）
 

@@ -8,7 +8,8 @@ pipeline:
   stage2_cpp_project_dir: cpp
   stage2_cpp_build_dir: cpp/build
   chunk_duration_sec: 0.25
-  crossfade_duration_sec: 0.05
+  overlap_ratio: 0.5
+  chunk_window: hann
   stage1_energy_cap: 0.001
   evaluate_stage1_metrics: true
 

@@ -34,7 +34,8 @@ def test_cli_json_e2e_with_reference_stage1(
                 "  stage2_num_stages: 3",
                 "  stage2_backend: python",
                 "  chunk_duration_sec: 0.02",
-                "  crossfade_duration_sec: 0.005",
+                "  overlap_ratio: 0.5",
+                "  chunk_window: hann",
                 "  stage1_energy_cap: 0.001",
                 "  evaluate_stage1_metrics: true",
                 "stage1:",
@@ -70,6 +71,8 @@ def test_cli_json_e2e_with_reference_stage1(
     assert payload["stage2_num_stages"] == 3
     assert payload["stage2_backend"] == "python"
     assert payload["performance"]["throughput_x_realtime"] > 0.0
+    assert payload["performance"]["num_chunks"] >= 1
+    assert payload["performance"]["chunk_latency_ms"] >= 0.0
     assert payload["num_output_samples"] > input_signal.shape[0] * 10
     assert "stage1_metrics" in payload
 
