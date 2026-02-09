@@ -119,7 +119,11 @@ def _build_pipeline_config(raw: dict[str, Any]) -> PipelineConfig:
         stage2_cpp_project_dir=Path(raw.get("stage2_cpp_project_dir", "cpp")),
         stage2_cpp_build_dir=Path(raw.get("stage2_cpp_build_dir", "cpp/build")),
         chunk_duration_sec=float(raw.get("chunk_duration_sec", 0.25)),
-        crossfade_duration_sec=float(raw.get("crossfade_duration_sec", 0.05)),
+        overlap_ratio=float(raw.get("overlap_ratio", 0.5)),
+        chunk_window=str(raw.get("chunk_window", "hann")),
+        crossfade_duration_sec=_coerce_optional_float(
+            raw.get("crossfade_duration_sec")
+        ),
         stage1_energy_cap=float(raw.get("stage1_energy_cap", 1.0e-3)),
         evaluate_stage1_metrics=bool(raw.get("evaluate_stage1_metrics", True)),
     )
@@ -257,7 +261,8 @@ def _build_payload(
         "stage2_num_stages": config.stage2_num_stages,
         "stage2_backend": config.stage2_backend,
         "chunk_duration_sec": config.chunk_duration_sec,
-        "crossfade_duration_sec": config.crossfade_duration_sec,
+        "overlap_ratio": config.overlap_ratio,
+        "chunk_window": config.chunk_window,
         "num_output_samples": int(result.output_signal.shape[0]),
         "performance": asdict(result.performance),
         "output_npy": str(args.output_npy) if args.output_npy is not None else None,
@@ -278,6 +283,7 @@ def _print_summary(payload: dict[str, Any]) -> None:
     print(
         f"Latency={perf['latency_sec']:.3f}s, "
         f"Throughput={perf['throughput_x_realtime']:.2f}x realtime, "
+        f"ChunkLatency={perf['chunk_latency_ms']:.2f}ms ({perf['num_chunks']} chunks), "
         f"PeakMemory={perf['peak_memory_mb']:.1f}MB"
     )
     if "stage1_metrics" in payload:
@@ -296,6 +302,12 @@ def _validate_mono_signal(signal: np.ndarray) -> None:
         raise ValueError("Input signal is empty.")
     if not np.all(np.isfinite(signal)):
         raise ValueError("Input signal contains non-finite values.")
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 if __name__ == "__main__":

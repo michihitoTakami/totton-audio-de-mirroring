@@ -19,6 +19,11 @@ from totton_audio_de_mirroring.evaluation.metrics import (
     Stage1HardMetrics,
     evaluate_stage1_hard_metrics,
 )
+from totton_audio_de_mirroring.inference.chunk_processor import (
+    ChunkProcessingConfig,
+    HannOverlapAddStreamer,
+    iterate_chunk_frames,
+)
 from totton_audio_de_mirroring.models.nmse import NMSE
 from totton_audio_de_mirroring.stage2.cpp_backend import (
     CppStage2RuntimeConfig,
@@ -41,12 +46,14 @@ class PipelineConfig:
         stage2_cpp_project_dir: C++ project directory used for C API build.
         stage2_cpp_build_dir: C++ build output directory.
         chunk_duration_sec: Input chunk duration for long audio processing.
-        crossfade_duration_sec: Input-domain crossfade duration between chunks.
+        overlap_ratio: Chunk overlap ratio (fixed to 0.5).
+        chunk_window: Stitching window type (fixed to "hann").
+        crossfade_duration_sec: Legacy option converted to overlap_ratio.
         stage1_energy_cap: Energy cap used for Stage 1 hard-metric checks.
         evaluate_stage1_metrics: Whether to compute Stage 1 hard metrics.
 
     Physical Basis:
-        Chunked processing with overlap/crossfade prevents boundary artifacts
+        Chunked processing with Hann-window overlap-add prevents boundary artifacts
         when Stage 1 and Stage 2 are evaluated as a single long-form pipeline.
     """
 
@@ -59,7 +66,9 @@ class PipelineConfig:
     stage2_cpp_project_dir: Path = Path("cpp")
     stage2_cpp_build_dir: Path = Path("cpp/build")
     chunk_duration_sec: float = 0.25
-    crossfade_duration_sec: float = 0.05
+    overlap_ratio: float = 0.5
+    chunk_window: str = "hann"
+    crossfade_duration_sec: float | None = None
     stage1_energy_cap: float = 1.0e-3
     evaluate_stage1_metrics: bool = True
 
@@ -77,10 +86,20 @@ class PipelineConfig:
             raise ValueError("stage2_backend must be either 'cpp' or 'python'.")
         if self.chunk_duration_sec <= 0.0:
             raise ValueError("chunk_duration_sec must be positive.")
-        if self.crossfade_duration_sec < 0.0:
-            raise ValueError("crossfade_duration_sec must be non-negative.")
-        if self.crossfade_duration_sec >= self.chunk_duration_sec:
-            raise ValueError("crossfade_duration_sec must be smaller than chunk size.")
+        if self.crossfade_duration_sec is not None:
+            if self.crossfade_duration_sec <= 0.0:
+                raise ValueError("crossfade_duration_sec must be positive when set.")
+            if self.crossfade_duration_sec >= self.chunk_duration_sec:
+                raise ValueError(
+                    "crossfade_duration_sec must be smaller than chunk size."
+                )
+            overlap_ratio = self.crossfade_duration_sec / self.chunk_duration_sec
+            object.__setattr__(self, "overlap_ratio", float(overlap_ratio))
+        if not np.isclose(self.overlap_ratio, 0.5, atol=1.0e-9):
+            raise ValueError("overlap_ratio must be exactly 0.5 for Issue #33.")
+        window = self.chunk_window.strip().lower()
+        if window != "hann":
+            raise ValueError("chunk_window must be 'hann'.")
         if self.stage1_energy_cap <= 0.0:
             raise ValueError("stage1_energy_cap must be positive.")
 
@@ -93,6 +112,7 @@ class PipelineConfig:
                 "stage1_sample_rate * (2**stage2_num_stages)."
             )
         object.__setattr__(self, "stage2_backend", backend)
+        object.__setattr__(self, "chunk_window", window)
 
 
 @dataclass(frozen=True)
@@ -103,6 +123,8 @@ class PipelinePerformance:
         latency_sec: Total processing latency.
         input_duration_sec: Input audio duration in seconds.
         throughput_x_realtime: Input-duration normalized throughput.
+        num_chunks: Number of processed input chunks.
+        chunk_latency_ms: Mean latency per input chunk in milliseconds.
         peak_memory_mb: Peak resident memory (best-effort process-level).
 
     Physical Basis:
@@ -113,6 +135,8 @@ class PipelinePerformance:
     latency_sec: float
     input_duration_sec: float
     throughput_x_realtime: float
+    num_chunks: int
+    chunk_latency_ms: float
     peak_memory_mb: float
 
 
@@ -354,39 +378,70 @@ def run_stage1_stage2_pipeline(
 
     Physical Basis:
         Processing follows 44.1kHz -> 88.2kHz(Stage 1) -> 705.6kHz(Stage 2)
-        while using crossfaded chunk stitching to control boundary artifacts.
+        while using Hann-window 50% overlap-add to control boundary artifacts.
     """
     _validate_input_signal(signal)
     stage2_processor = _build_stage2_processor(config)
 
     input_signal = np.asarray(signal, dtype=np.float64)
-    chunk_samples = int(round(config.chunk_duration_sec * config.source_sample_rate))
-    crossfade_in = int(round(config.crossfade_duration_sec * config.source_sample_rate))
+    chunking = ChunkProcessingConfig(
+        sample_rate=config.source_sample_rate,
+        chunk_duration_sec=config.chunk_duration_sec,
+        overlap_ratio=config.overlap_ratio,
+        window=config.chunk_window,
+    )
     output_ratio = config.output_sample_rate // config.source_sample_rate
     stage1_ratio = config.stage1_sample_rate // config.source_sample_rate
 
-    if chunk_samples <= 0:
-        raise ValueError("chunk_duration_sec produced zero chunk length.")
-    crossfade_stage1 = crossfade_in * stage1_ratio
-    crossfade_output = crossfade_in * output_ratio
+    stage1_chunk_samples = chunking.chunk_samples * stage1_ratio
+    stage1_overlap_samples = chunking.overlap_samples * stage1_ratio
+    output_chunk_samples = chunking.chunk_samples * output_ratio
+    output_overlap_samples = chunking.overlap_samples * output_ratio
 
     start_time = time.perf_counter()
-    output_assembled = np.zeros(0, dtype=np.float64)
-    stage1_assembled = np.zeros(0, dtype=np.float64)
-    stage1_ref_assembled = np.zeros(0, dtype=np.float64)
+    processed_chunks = 0
+    output_segments: list[np.ndarray] = []
+    output_streamer = HannOverlapAddStreamer(
+        chunk_samples=output_chunk_samples,
+        overlap_samples=output_overlap_samples,
+        window=config.chunk_window,
+    )
+
+    stage1_segments: list[np.ndarray] = []
+    stage1_ref_segments: list[np.ndarray] = []
+    stage1_streamer: HannOverlapAddStreamer | None = None
+    stage1_ref_streamer: HannOverlapAddStreamer | None = None
+    if config.evaluate_stage1_metrics:
+        stage1_streamer = HannOverlapAddStreamer(
+            chunk_samples=stage1_chunk_samples,
+            overlap_samples=stage1_overlap_samples,
+            window=config.chunk_window,
+        )
+        stage1_ref_streamer = HannOverlapAddStreamer(
+            chunk_samples=stage1_chunk_samples,
+            overlap_samples=stage1_overlap_samples,
+            window=config.chunk_window,
+        )
+
     try:
-        for chunk in _iterate_chunks(input_signal, chunk_samples, crossfade_in):
+        for frame in iterate_chunk_frames(
+            input_signal,
+            chunk_samples=chunking.chunk_samples,
+            overlap_samples=chunking.overlap_samples,
+        ):
+            processed_chunks += 1
+            chunk = frame.samples
             stage1_chunk = stage1_processor.process(
                 chunk,
                 source_sample_rate=config.source_sample_rate,
                 target_sample_rate=config.stage1_sample_rate,
             )
             stage2_chunk = stage2_processor.process(stage1_chunk)
-            output_assembled = _crossfade_append(
-                output_assembled,
-                np.asarray(stage2_chunk, dtype=np.float64),
-                crossfade_output,
+            output_piece = output_streamer.process_chunk(
+                np.asarray(stage2_chunk, dtype=np.float64)
             )
+            if output_piece.size > 0:
+                output_segments.append(np.asarray(output_piece, dtype=np.float64))
             if config.evaluate_stage1_metrics:
                 reference_chunk = upsample_bessel_reference(
                     signal=np.asarray(chunk, dtype=np.float64),
@@ -395,18 +450,42 @@ def run_stage1_stage2_pipeline(
                     cutoff_hz=20_000.0,
                     order=6,
                 )
-                stage1_assembled = _crossfade_append(
-                    stage1_assembled,
-                    np.asarray(stage1_chunk, dtype=np.float64),
-                    crossfade_stage1,
+                if stage1_streamer is None or stage1_ref_streamer is None:
+                    raise RuntimeError("Stage1 streamers must be initialized.")
+
+                stage1_piece = stage1_streamer.process_chunk(
+                    np.asarray(stage1_chunk, dtype=np.float64)
                 )
-                stage1_ref_assembled = _crossfade_append(
-                    stage1_ref_assembled,
-                    np.asarray(reference_chunk, dtype=np.float64),
-                    crossfade_stage1,
+                if stage1_piece.size > 0:
+                    stage1_segments.append(np.asarray(stage1_piece, dtype=np.float64))
+                stage1_ref_piece = stage1_ref_streamer.process_chunk(
+                    np.asarray(reference_chunk, dtype=np.float64)
                 )
+                if stage1_ref_piece.size > 0:
+                    stage1_ref_segments.append(
+                        np.asarray(stage1_ref_piece, dtype=np.float64)
+                    )
     finally:
         stage2_processor.close()
+
+    output_tail = output_streamer.finalize()
+    if output_tail.size > 0:
+        output_segments.append(np.asarray(output_tail, dtype=np.float64))
+    output_assembled = _concat_segments(output_segments)
+
+    stage1_assembled = np.zeros(0, dtype=np.float64)
+    stage1_ref_assembled = np.zeros(0, dtype=np.float64)
+    if config.evaluate_stage1_metrics:
+        if stage1_streamer is None or stage1_ref_streamer is None:
+            raise RuntimeError("Stage1 streamers must be initialized.")
+        stage1_tail = stage1_streamer.finalize()
+        stage1_ref_tail = stage1_ref_streamer.finalize()
+        if stage1_tail.size > 0:
+            stage1_segments.append(np.asarray(stage1_tail, dtype=np.float64))
+        if stage1_ref_tail.size > 0:
+            stage1_ref_segments.append(np.asarray(stage1_ref_tail, dtype=np.float64))
+        stage1_assembled = _concat_segments(stage1_segments)
+        stage1_ref_assembled = _concat_segments(stage1_ref_segments)
 
     latency = time.perf_counter() - start_time
     duration_sec = input_signal.shape[0] / float(config.source_sample_rate)
@@ -415,6 +494,8 @@ def run_stage1_stage2_pipeline(
         latency_sec=float(latency),
         input_duration_sec=float(duration_sec),
         throughput_x_realtime=float(throughput),
+        num_chunks=int(processed_chunks),
+        chunk_latency_ms=float((latency / max(processed_chunks, 1)) * 1_000.0),
         peak_memory_mb=float(_get_peak_memory_mb()),
     )
 
@@ -458,48 +539,12 @@ def _build_stage2_processor(config: PipelineConfig) -> Stage2Processor:
     return CppStage2Processor(upsampler=CppStage2Upsampler(cpp_config))
 
 
-def _iterate_chunks(
-    signal: np.ndarray, chunk_samples: int, crossfade_samples: int
-) -> tuple[np.ndarray, ...]:
-    """Split a signal into overlap chunks."""
-    if chunk_samples <= 0:
-        raise ValueError("chunk_samples must be positive.")
-    if crossfade_samples < 0:
-        raise ValueError("crossfade_samples must be non-negative.")
-    if crossfade_samples >= chunk_samples:
-        raise ValueError("crossfade_samples must be smaller than chunk_samples.")
-    if signal.shape[0] <= chunk_samples:
-        return (np.asarray(signal, dtype=np.float64),)
-
-    hop = chunk_samples - crossfade_samples
-    chunks: list[np.ndarray] = []
-    start = 0
-    while start < signal.shape[0]:
-        end = min(start + chunk_samples, signal.shape[0])
-        chunks.append(np.asarray(signal[start:end], dtype=np.float64))
-        if end >= signal.shape[0]:
-            break
-        start += hop
-    return tuple(chunks)
-
-
-def _crossfade_append(
-    left: np.ndarray, right: np.ndarray, crossfade_samples: int
-) -> np.ndarray:
-    """Append two signals with optional linear crossfade overlap."""
-    if left.size == 0:
-        return np.asarray(right, dtype=np.float64)
-    if crossfade_samples <= 0:
-        return np.concatenate([left, right])
-
-    overlap = min(crossfade_samples, left.shape[0], right.shape[0])
-    if overlap <= 0:
-        return np.concatenate([left, right])
-
-    fade_in = np.linspace(0.0, 1.0, overlap, endpoint=False, dtype=np.float64)
-    fade_out = 1.0 - fade_in
-    blended = left[-overlap:] * fade_out + right[:overlap] * fade_in
-    return np.concatenate([left[:-overlap], blended, right[overlap:]])
+def _concat_segments(segments: Sequence[np.ndarray]) -> np.ndarray:
+    if not segments:
+        return np.zeros(0, dtype=np.float64)
+    return np.concatenate(
+        [np.asarray(segment, dtype=np.float64) for segment in segments]
+    )
 
 
 def _validate_input_signal(signal: np.ndarray) -> None:

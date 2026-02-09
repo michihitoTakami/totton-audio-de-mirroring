@@ -44,8 +44,9 @@ while routing Stage2 through the **C++ core API** defined in EPIC #22 / Issue #4
 
 ## Boundary Handling
 
-Long audio is processed in input-domain chunks (`chunk_duration_sec`) with overlap (`crossfade_duration_sec`).
-Each chunk passes through Stage1 and Stage2, then stitched with linear crossfade in:
+Long audio is processed in input-domain chunks (`chunk_duration_sec`) with
+**Hann window + 50% overlap-add** (`overlap_ratio: 0.5`, `chunk_window: hann`).
+Each chunk passes through Stage1 and Stage2, then stitched in:
 
 - Stage1 domain (for metric assembly)
 - Final 705.6kHz output domain
@@ -80,13 +81,21 @@ Measured on this implementation (2026-02-06):
 - Stage1 energy cap violated: `false` (`cap=0.001`)
 - Stage2 backend: `cpp`
 
+`performance` payload now also reports:
+
+- `num_chunks`
+- `chunk_latency_ms` (mean per-input-chunk latency)
+
 ## End-to-End Test Coverage
 
 - `tests/test_inference_pipeline.py`
   - chunk splitting
-  - crossfade stitching
+  - Hann-window overlap-add stitching
   - end-to-end output generation
   - energy cap violation detectability
+- `tests/test_chunk_processor.py`
+  - overlap-add reconstruction
+  - long-duration streaming (10min, `@pytest.mark.slow`)
 - `tests/test_run_stage1_stage2_pipeline_script.py`
   - YAML-driven CLI and JSON payload validation
 - `tests/test_stage2_cpp_backend.py`

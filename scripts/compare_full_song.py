@@ -182,7 +182,11 @@ def _build_pipeline_config(raw: dict[str, Any]) -> PipelineConfig:
         stage2_cpp_project_dir=Path(raw.get("stage2_cpp_project_dir", "cpp")),
         stage2_cpp_build_dir=Path(raw.get("stage2_cpp_build_dir", "cpp/build")),
         chunk_duration_sec=float(raw.get("chunk_duration_sec", 0.25)),
-        crossfade_duration_sec=float(raw.get("crossfade_duration_sec", 0.05)),
+        overlap_ratio=float(raw.get("overlap_ratio", 0.5)),
+        chunk_window=str(raw.get("chunk_window", "hann")),
+        crossfade_duration_sec=_coerce_optional_float(
+            raw.get("crossfade_duration_sec")
+        ),
         stage1_energy_cap=float(raw.get("stage1_energy_cap", 1.0e-3)),
         evaluate_stage1_metrics=bool(raw.get("evaluate_stage1_metrics", True)),
     )
@@ -216,6 +220,12 @@ def _summarize_result(result: Any, output_path: Path) -> dict[str, Any]:
     if result.stage1_metrics is not None:
         payload["stage1_metrics"] = asdict(result.stage1_metrics)
     return payload
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 if __name__ == "__main__":
