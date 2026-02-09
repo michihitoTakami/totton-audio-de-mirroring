@@ -30,3 +30,18 @@ def test_unet_invalid_input_dim() -> None:
 
     with pytest.raises(ValueError, match="features must be 4D"):
         _ = model(bad_input)
+
+
+def test_unet_accepts_odd_spatial_shapes() -> None:
+    """Model should keep output shape for odd-sized inputs."""
+    model = UNet2D(
+        in_channels=1,
+        out_channels=1,
+        base_channels=8,
+        num_downsamples=3,
+    )
+    inputs = torch.rand(1, 1, 513, 87)
+    with torch.no_grad():
+        outputs = model(inputs)
+
+    assert outputs.shape == inputs.shape

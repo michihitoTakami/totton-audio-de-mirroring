@@ -78,3 +78,9 @@ def test_build_stage1_processor_nmse_requires_checkpoint_path() -> None:
     """NMSE mode should reject missing checkpoint path explicitly."""
     with pytest.raises(ValueError, match="requires checkpoint_path"):
         _ = _build_stage1_processor({"mode": "nmse"})
+
+
+def test_build_stage1_processor_onnx_requires_model_path() -> None:
+    """ONNX mode should reject missing model path explicitly."""
+    with pytest.raises(ValueError, match="requires model_path"):
+        _ = _build_stage1_processor({"mode": "onnx"})

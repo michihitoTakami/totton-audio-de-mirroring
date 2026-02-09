@@ -385,6 +385,37 @@ uv run python scripts/run_stage1_stage2_pipeline.py \
 
 ベンチマーク/仕様詳細は `docs/stage1_stage2_pipeline_integration.md` を参照。
 
+### 8.4 ONNX Runtime Stage1
+
+Stage1 NMSEのU-Net部分をONNX化し、ONNX Runtime推論を利用できる。
+
+```bash
+uv run --with onnx --with onnxruntime python scripts/export_to_onnx.py \
+  --checkpoint-path data/checkpoints/stage1_best.pt \
+  --data-config-path configs/data_generation.yaml \
+  --output-path data/checkpoints/stage1_best.onnx \
+  --opset-version 17 \
+  --check-model \
+  --verify-ort \
+  --tolerance 1e-5
+```
+
+`configs/stage1_stage2_pipeline.yaml` の `stage1.mode=onnx` 例:
+
+```yaml
+stage1:
+  mode: onnx
+  model_path: data/checkpoints/stage1_best.onnx
+  data_config_path: configs/data_generation.yaml
+  device: cuda
+  allow_cpu_fallback: false
+```
+
+`device: cuda` 時は、CUDA providerが無ければデフォルトでエラー終了する
+（意図しないCPU推論へのフォールバックを防止）。
+
+GPU前提のベンチマーク手順は `docs/onnx_runtime_benchmark.md` を参照。
+
 ---
 
 ## 9. Implementation Roadmap
