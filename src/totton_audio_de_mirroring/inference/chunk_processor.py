@@ -253,7 +253,9 @@ def _safe_normalize(
         np.maximum(raw_count, 1.0),
         dtype=np.float64,
     )
-    return np.where(weight_sum > eps, normalized, fallback)
+    return np.asarray(
+        np.where(weight_sum > eps, normalized, fallback), dtype=np.float64
+    )
 
 
 def _hann_window_nonzero_edges(length: int) -> np.ndarray:
