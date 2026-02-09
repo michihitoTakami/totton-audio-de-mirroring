@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -25,6 +25,11 @@ from totton_audio_de_mirroring.inference.chunk_processor import (
     iterate_chunk_frames,
 )
 from totton_audio_de_mirroring.models.nmse import NMSE
+from totton_audio_de_mirroring.models.nmse_light import (
+    MODEL_TYPE_NMSE_LIGHT,
+    NMSELight,
+    NMSELightConfig,
+)
 from totton_audio_de_mirroring.stage2.cpp_backend import (
     CppStage2RuntimeConfig,
     CppStage2Upsampler,
@@ -341,7 +346,8 @@ def load_nmse_stage1_processor(
     energy_cap = float(
         training_config_raw.get("energy_cap", data_config.hb_target.energy_cap)
     )
-    model = NMSE(
+    model = _build_nmse_model(
+        checkpoint=checkpoint,
         sample_rate=data_config.target_sample_rate,
         cutoff_hz=data_config.band_split.cutoff_hz,
         energy_cap=energy_cap,
@@ -358,6 +364,46 @@ def load_nmse_stage1_processor(
     torch_device = torch.device(device)
     model = model.to(torch_device)
     return NMSEStage1Processor(model=model, device=torch_device)
+
+
+def _build_nmse_model(
+    *,
+    checkpoint: Mapping[str, object],
+    sample_rate: int,
+    cutoff_hz: float,
+    energy_cap: float,
+    envelope_floor: float,
+    lowpass_taps: np.ndarray,
+    highpass_taps: np.ndarray,
+) -> nn.Module:
+    """Build Stage 1 model from checkpoint metadata.
+
+    Physical Basis:
+        Restoring the exact student architecture keeps suppression behavior
+        and energy-control characteristics aligned with training.
+    """
+    raw_model_config = checkpoint.get("model_config")
+    if isinstance(raw_model_config, Mapping):
+        model_type = str(raw_model_config.get("model_type", "")).strip().lower()
+        if model_type == MODEL_TYPE_NMSE_LIGHT:
+            light_config = NMSELightConfig.from_mapping(raw_model_config)
+            return NMSELight(
+                sample_rate=sample_rate,
+                cutoff_hz=cutoff_hz,
+                energy_cap=energy_cap,
+                envelope_floor=envelope_floor,
+                lowpass_taps=lowpass_taps,
+                highpass_taps=highpass_taps,
+                model_config=light_config,
+            )
+    return NMSE(
+        sample_rate=sample_rate,
+        cutoff_hz=cutoff_hz,
+        energy_cap=energy_cap,
+        envelope_floor=envelope_floor,
+        lowpass_taps=lowpass_taps,
+        highpass_taps=highpass_taps,
+    )
 
 
 def run_stage1_stage2_pipeline(
