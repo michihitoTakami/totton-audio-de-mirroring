@@ -21,5 +21,6 @@ stage1:
   # mode=onnx example:
   # model_path: data/checkpoints/stage1_best.onnx
   # data_config_path: configs/data_generation.yaml
-  # device: cpu
+  # device: cuda
+  # allow_cpu_fallback: false
   # energy_cap: 0.001

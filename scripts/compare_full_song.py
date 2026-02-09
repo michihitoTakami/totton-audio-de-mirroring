@@ -64,8 +64,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--onnx-device",
         type=str,
-        default="cpu",
+        default="cuda",
         help="ONNX Runtime device (cpu/cuda).",
+    )
+    parser.add_argument(
+        "--allow-onnx-cpu-fallback",
+        action="store_true",
+        help="Allow CPU fallback when --onnx-device=cuda is unavailable.",
     )
     return parser.parse_args()
 
@@ -127,6 +132,7 @@ def main() -> None:
             model_path=args.onnx_model_path,
             data_config_path=Path("configs/data_generation.yaml"),
             device=args.onnx_device,
+            allow_cpu_fallback=bool(args.allow_onnx_cpu_fallback),
         )
         onnx_result = run_stage1_stage2_pipeline(
             signal=signal,

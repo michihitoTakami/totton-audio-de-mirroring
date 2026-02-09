@@ -200,6 +200,7 @@ def load_onnx_stage1_processor(
     device: str = "cpu",
     energy_cap: float | None = None,
     iir_order: int = 6,
+    allow_cpu_fallback: bool = False,
 ) -> OnnxStage1Processor:
     """Build ONNX Runtime Stage 1 processor from exported NMSE model.
 
@@ -209,6 +210,7 @@ def load_onnx_stage1_processor(
         device: Runtime device string (`cpu` or `cuda`).
         energy_cap: Optional override for high-band energy cap.
         iir_order: Bessel filter order for preprocessing.
+        allow_cpu_fallback: Allow CPU fallback when `device='cuda'` is unavailable.
 
     Returns:
         Initialized ONNX-based Stage 1 processor.
@@ -242,6 +244,13 @@ def load_onnx_stage1_processor(
     available_providers = set(ort.get_available_providers())
     if runtime_device == "cuda" and "CUDAExecutionProvider" in available_providers:
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    elif runtime_device == "cuda" and not allow_cpu_fallback:
+        available = ", ".join(sorted(available_providers))
+        raise RuntimeError(
+            "CUDAExecutionProvider is not available while device='cuda'. "
+            f"Available providers: [{available}]. "
+            "Set allow_cpu_fallback=True only when CPU fallback is intentional."
+        )
     else:
         providers = ["CPUExecutionProvider"]
 

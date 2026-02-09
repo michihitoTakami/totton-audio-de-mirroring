@@ -42,6 +42,11 @@ uv run --with onnxruntime-gpu python scripts/compare_full_song.py \
   --onnx-device cuda
 ```
 
+Default behavior:
+
+- `--onnx-device cuda` で CUDA provider が無い場合はエラー終了
+- CPU fallback は `--allow-onnx-cpu-fallback` を明示した場合のみ許可
+
 Generated artifact:
 
 - `reports/compare_full_song_gpu/summary.json`

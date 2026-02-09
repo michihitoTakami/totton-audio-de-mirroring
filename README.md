@@ -408,7 +408,11 @@ stage1:
   model_path: data/checkpoints/stage1_best.onnx
   data_config_path: configs/data_generation.yaml
   device: cuda
+  allow_cpu_fallback: false
 ```
+
+`device: cuda` 時は、CUDA providerが無ければデフォルトでエラー終了する
+（意図しないCPU推論へのフォールバックを防止）。
 
 GPU前提のベンチマーク手順は `docs/onnx_runtime_benchmark.md` を参照。
 

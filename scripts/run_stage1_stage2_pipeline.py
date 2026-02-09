@@ -157,7 +157,8 @@ def _build_stage1_processor(raw: dict[str, Any]) -> Any:
         data_config_path = Path(
             str(raw.get("data_config_path", "configs/data_generation.yaml"))
         )
-        device = str(raw.get("device", "cpu"))
+        device = str(raw.get("device", "cuda"))
+        allow_cpu_fallback = bool(raw.get("allow_cpu_fallback", False))
         energy_cap_raw = raw.get("energy_cap")
         energy_cap = None if energy_cap_raw is None else float(energy_cap_raw)
         iir_order = int(raw.get("iir_order", 6))
@@ -167,6 +168,7 @@ def _build_stage1_processor(raw: dict[str, Any]) -> Any:
             device=device,
             energy_cap=energy_cap,
             iir_order=iir_order,
+            allow_cpu_fallback=allow_cpu_fallback,
         )
     raise ValueError(f"Unsupported stage1.mode: {mode}")
 
