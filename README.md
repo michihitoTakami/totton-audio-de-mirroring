@@ -385,6 +385,25 @@ uv run python scripts/run_stage1_stage2_pipeline.py \
 
 ベンチマーク/仕様詳細は `docs/stage1_stage2_pipeline_integration.md` を参照。
 
+### 8.3.1 End-user Batch CLI (`totton-upsample`)
+
+```bash
+# 単一ファイル処理
+uv run totton-upsample input.wav -o output.wav
+
+# 設定ファイル指定
+uv run totton-upsample input.wav -o output.wav -c configs/stage1_stage2_pipeline.yaml
+
+# バッチ処理 + WAV/FLAC/metadata 同時出力
+uv run totton-upsample \"audio_dir/*.wav\" -o reports/batch_out \
+  --output-format wav \
+  --output-format flac \
+  --output-format metadata
+
+# デバイス上書き
+uv run totton-upsample input.wav -o output.wav --device cuda
+```
+
 ### 8.4 ONNX Runtime Stage1
 
 Stage1 NMSEのU-Net部分をONNX化し、ONNX Runtime推論を利用できる。
