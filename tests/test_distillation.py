@@ -139,12 +139,70 @@ def test_train_stage1_distillation_runs_one_epoch(tmp_path: Path) -> None:
         checkpoint_dir=tmp_path,
         model_config={"model_type": "nmse_light"},
     )
-    assert result.last_checkpoint == tmp_path / "stage1_distill_last.pt"
-    assert result.best_checkpoint == tmp_path / "stage1_distill_best.pt"
+    assert result.last_checkpoint == tmp_path / "stage1_distill_raw88_last.pt"
+    assert result.best_checkpoint == tmp_path / "stage1_distill_raw88_best.pt"
     assert result.last_checkpoint.exists()
     assert result.best_checkpoint.exists()
     assert len(result.train_history) == 1
     assert len(result.val_history) == 1
+
+
+def test_train_stage1_distillation_respects_checkpoint_prefix(tmp_path: Path) -> None:
+    """Distillation checkpoint names should follow teacher-aware prefixes."""
+    batch = _make_batch(batch_size=2, length=256)
+    loader = DataLoader(_SingleBatchDataset(batch, repeats=2), batch_size=None)
+    config = DistillationConfig(
+        epochs=1,
+        learning_rate=1.0e-3,
+        use_amp=False,
+        require_cuda=False,
+        log_interval=1,
+        mask_config=_small_stft_config(),
+        stft_configs=(_small_stft_config(),),
+    )
+    result = train_stage1_distillation(
+        teacher=_IdentityTeacher(),
+        student=_TinyStudent(),
+        train_dataloader=loader,
+        val_dataloader=loader,
+        config=config,
+        checkpoint_dir=tmp_path,
+        checkpoint_prefix="stage1_distill_raw88",
+    )
+    assert result.last_checkpoint == tmp_path / "stage1_distill_raw88_last.pt"
+    assert result.best_checkpoint == tmp_path / "stage1_distill_raw88_best.pt"
+    assert result.last_checkpoint.exists()
+    assert result.best_checkpoint.exists()
+
+
+def test_train_stage1_distillation_default_prefix_uses_teacher_tag(
+    tmp_path: Path,
+) -> None:
+    """Default checkpoint prefix should include teacher tag."""
+    batch = _make_batch(batch_size=2, length=256)
+    loader = DataLoader(_SingleBatchDataset(batch, repeats=2), batch_size=None)
+    config = DistillationConfig(
+        epochs=1,
+        learning_rate=1.0e-3,
+        use_amp=False,
+        require_cuda=False,
+        log_interval=1,
+        teacher_type="bessel_88k2",
+        mask_config=_small_stft_config(),
+        stft_configs=(_small_stft_config(),),
+    )
+    result = train_stage1_distillation(
+        teacher=_IdentityTeacher(),
+        student=_TinyStudent(),
+        train_dataloader=loader,
+        val_dataloader=loader,
+        config=config,
+        checkpoint_dir=tmp_path,
+    )
+    assert result.last_checkpoint == tmp_path / "stage1_distill_bessel_last.pt"
+    assert result.best_checkpoint == tmp_path / "stage1_distill_bessel_best.pt"
+    assert result.last_checkpoint.exists()
+    assert result.best_checkpoint.exists()
 
 
 def _small_stft_config() -> Any:

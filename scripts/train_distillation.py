@@ -50,6 +50,12 @@ def main() -> None:
         data_config=data_config,
         train_config=train_config,
     )
+    _validate_teacher_checkpoint_teacher_type(
+        checkpoint_path=args.teacher_checkpoint,
+        expected_teacher_type=train_config.teacher_type,
+    )
+    teacher_tag = _teacher_tag(train_config.teacher_type)
+    checkpoint_prefix = f"stage1_distill_{teacher_tag}"
 
     train_loader, val_loader = _create_train_val_loaders(
         data_config=data_config,
@@ -88,6 +94,7 @@ def main() -> None:
         config=train_config,
         checkpoint_dir=args.checkpoint_dir,
         model_config=model_config,
+        checkpoint_prefix=checkpoint_prefix,
     )
     print(f"training_completed device={result.device}", flush=True)
     if result.last_checkpoint is not None:
@@ -97,6 +104,7 @@ def main() -> None:
         stage1_light_path = _emit_stage1_light_checkpoint(
             best_checkpoint=result.best_checkpoint,
             checkpoint_dir=args.checkpoint_dir,
+            teacher_type=train_config.teacher_type,
         )
         print(f"stage1_light_checkpoint={stage1_light_path}", flush=True)
 
@@ -164,13 +172,24 @@ def _load_data_config(path: Path) -> DataPipelineConfig:
 
 
 def _emit_stage1_light_checkpoint(
-    *, best_checkpoint: Path, checkpoint_dir: Path
+    *,
+    best_checkpoint: Path,
+    checkpoint_dir: Path,
+    teacher_type: str,
 ) -> Path:
-    """Copy best distillation checkpoint to stage1_light naming."""
+    """Copy best distillation checkpoint to teacher-aware stage1_light naming.
+
+    Physical Basis:
+        Teacher-scoped naming prevents accidental mixing of raw/bessel
+        distillation artifacts in A/B evaluations.
+    """
     if not best_checkpoint.exists():
         raise FileNotFoundError(f"Best checkpoint not found: {best_checkpoint}")
-    stage1_light_path = checkpoint_dir / "stage1_light.pt"
+    teacher_tag = _teacher_tag(teacher_type)
+    stage1_light_path = checkpoint_dir / f"stage1_light_{teacher_tag}.pt"
     shutil.copy2(best_checkpoint, stage1_light_path)
+    # Keep legacy alias for backward compatibility with existing scripts.
+    shutil.copy2(best_checkpoint, checkpoint_dir / "stage1_light.pt")
     return stage1_light_path
 
 
@@ -326,6 +345,72 @@ def _load_teacher_model(
     model = processor.model
     model.eval()
     return model
+
+
+def _validate_teacher_checkpoint_teacher_type(
+    *,
+    checkpoint_path: Path,
+    expected_teacher_type: str,
+) -> None:
+    """Validate teacher checkpoint policy metadata against training policy.
+
+    Physical Basis:
+        Distillation requires teacher policy consistency; mixing raw and
+        bessel teachers invalidates matched-condition comparisons.
+    """
+    checkpoint_teacher_type = _load_teacher_type_from_checkpoint(checkpoint_path)
+    if checkpoint_teacher_type != expected_teacher_type:
+        raise RuntimeError(
+            "Teacher checkpoint type mismatch: "
+            f"expected {expected_teacher_type!r}, got {checkpoint_teacher_type!r} "
+            f"from {checkpoint_path}."
+        )
+
+
+def _load_teacher_type_from_checkpoint(checkpoint_path: Path) -> str:
+    """Load teacher_type metadata from teacher checkpoint.
+
+    Physical Basis:
+        Training config metadata encodes the teacher policy used for
+        high-band suppression targets and must be preserved for provenance.
+    """
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Teacher checkpoint not found: {checkpoint_path}")
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load teacher checkpoint metadata: {checkpoint_path}: {exc}"
+        ) from exc
+    if not isinstance(checkpoint, dict):
+        raise RuntimeError(
+            f"Invalid teacher checkpoint root type: {checkpoint_path}: {type(checkpoint)!r}."
+        )
+    training_config = checkpoint.get("training_config")
+    if not isinstance(training_config, dict):
+        raise RuntimeError(
+            f"Missing training_config in teacher checkpoint: {checkpoint_path}."
+        )
+    teacher_type = training_config.get("teacher_type")
+    if not isinstance(teacher_type, str):
+        raise RuntimeError(
+            f"Missing training_config.teacher_type in teacher checkpoint: {checkpoint_path}."
+        )
+    return teacher_type
+
+
+def _teacher_tag(teacher_type: str) -> str:
+    """Convert teacher type into artifact-friendly short tag.
+
+    Physical Basis:
+        Stable short tags prevent naming collisions between teacher policies
+        across baseline/distillation runs.
+    """
+    if teacher_type == "raw_88k2":
+        return "raw88"
+    if teacher_type == "bessel_88k2":
+        return "bessel"
+    raise ValueError(f"Unsupported teacher_type: {teacher_type!r}.")
 
 
 def _build_student_model(
