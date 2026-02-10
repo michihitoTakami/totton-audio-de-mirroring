@@ -6,7 +6,10 @@ use_amp: true
 require_cuda: true
 log_memory: true
 log_interval: 20
-energy_cap: 1.0
+teacher_type: raw_88k2
+energy_cap: 0.001
+hb_loss_weight: 1.0
+preserve_lb_weight: 1.0
 mask_mode: l1
 
 loss_weights:

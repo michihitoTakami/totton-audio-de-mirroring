@@ -41,8 +41,15 @@ def main() -> None:
     """
     args = _parse_args()
     data_config = _load_data_config(args.data_config)
-    train_config = _load_train_config(args.train_config)
+    train_config = _load_train_config(
+        args.train_config,
+        default_teacher_type=data_config.teacher_type,
+    )
     train_config = _apply_overrides(train_config, args)
+    data_config, train_config = _synchronize_teacher_type(
+        data_config=data_config,
+        train_config=train_config,
+    )
 
     train_loader, val_loader = _create_train_val_loaders(
         data_config=data_config,
@@ -129,6 +136,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--energy-cap", type=float, default=None)
+    parser.add_argument(
+        "--teacher-type",
+        type=str,
+        choices=["raw_88k2", "bessel_88k2"],
+        default=None,
+    )
+    parser.add_argument("--hb-loss-weight", type=float, default=None)
+    parser.add_argument("--preserve-lb-weight", type=float, default=None)
     parser.add_argument("--require-cuda", action="store_true")
     parser.add_argument("--allow-cpu", action="store_true")
     parser.add_argument(
@@ -159,11 +174,18 @@ def _emit_stage1_light_checkpoint(
     return stage1_light_path
 
 
-def _load_train_config(path: Path) -> DistillationConfig:
+def _load_train_config(
+    path: Path,
+    *,
+    default_teacher_type: str,
+) -> DistillationConfig:
     if not isinstance(path, Path):
         raise ValueError("train_config must be a pathlib.Path.")
     try:
-        return load_distillation_config(path)
+        return load_distillation_config(
+            path,
+            default_teacher_type=default_teacher_type,
+        )
     except Exception as exc:
         raise RuntimeError(f"Failed to load distillation config: {exc}") from exc
 
@@ -187,11 +209,36 @@ def _apply_overrides(
         updated = replace(updated, device=args.device)
     if args.energy_cap is not None:
         updated = replace(updated, energy_cap=args.energy_cap)
+    if args.teacher_type is not None:
+        updated = replace(updated, teacher_type=args.teacher_type)
+    if args.hb_loss_weight is not None:
+        updated = replace(updated, hb_loss_weight=args.hb_loss_weight)
+    if args.preserve_lb_weight is not None:
+        updated = replace(updated, preserve_lb_weight=args.preserve_lb_weight)
     if args.require_cuda:
         updated = replace(updated, require_cuda=True)
     if args.allow_cpu:
         updated = replace(updated, require_cuda=False)
     return updated
+
+
+def _synchronize_teacher_type(
+    *,
+    data_config: DataPipelineConfig,
+    train_config: DistillationConfig,
+) -> tuple[DataPipelineConfig, DistillationConfig]:
+    """Synchronize teacher policy between data and distillation configs.
+
+    Physical Basis:
+        Teacher reference generation and distillation policy defaults
+        must stay aligned to avoid mixed-target optimization.
+    """
+    if train_config.teacher_type == data_config.teacher_type:
+        return data_config, train_config
+    return (
+        replace(data_config, teacher_type=train_config.teacher_type),
+        train_config,
+    )
 
 
 def _create_train_val_loaders(

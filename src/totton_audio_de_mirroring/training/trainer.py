@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import torch
 from torch import nn
@@ -37,6 +37,9 @@ from totton_audio_de_mirroring.training.runtime import (
     save_checkpoint,
 )
 
+TeacherType = Literal["raw_88k2", "bessel_88k2"]
+ALLOWED_TEACHER_TYPES: tuple[TeacherType, ...] = ("raw_88k2", "bessel_88k2")
+
 
 @dataclass(frozen=True)
 class TrainingConfig:
@@ -54,6 +57,9 @@ class TrainingConfig:
         loss_weights: Composite loss weights.
         energy_cap: Energy cap used for loss penalty.
         ringing_loss_config: Ringing auxiliary loss configuration.
+        teacher_type: Stage1 teacher policy (`raw_88k2` or `bessel_88k2`).
+        hb_loss_weight: Default weight for high-band objective terms.
+        preserve_lb_weight: Default weight for low-band preservation term.
         mask_mode: Loss mode for mask loss.
         device: Optional device override (e.g., "cuda", "cpu").
         seed: Optional random seed.
@@ -80,8 +86,11 @@ class TrainingConfig:
         STFTLossConfig(n_fft=2048, hop_length=512, win_length=2048),
     )
     loss_weights: LossWeights = LossWeights()
-    energy_cap: float = 1.0
+    energy_cap: float = 1.0e-3
     ringing_loss_config: RingingLossConfig = RingingLossConfig()
+    teacher_type: TeacherType = "raw_88k2"
+    hb_loss_weight: float = 1.0
+    preserve_lb_weight: float = 1.0
     mask_mode: LossMode = "l1"
     device: str | None = None
     seed: int | None = None
@@ -100,13 +109,24 @@ class TrainingConfig:
         if not self.stft_configs:
             raise ValueError("stft_configs must be non-empty.")
         _validate_positive_float(self.energy_cap, "energy_cap")
+        if self.teacher_type not in ALLOWED_TEACHER_TYPES:
+            raise ValueError(
+                "teacher_type must be one of "
+                f"{ALLOWED_TEACHER_TYPES}, got {self.teacher_type!r}."
+            )
+        _validate_positive_float(self.hb_loss_weight, "hb_loss_weight")
+        _validate_positive_float(self.preserve_lb_weight, "preserve_lb_weight")
         if self.scheduler_gamma is not None:
             _validate_positive_float(self.scheduler_gamma, "scheduler_gamma")
             if self.scheduler_gamma > 1.0:
                 raise ValueError("scheduler_gamma must be <= 1.0.")
 
     @staticmethod
-    def from_dict(raw: Mapping[str, Any]) -> TrainingConfig:
+    def from_dict(
+        raw: Mapping[str, Any],
+        *,
+        default_teacher_type: str | None = None,
+    ) -> TrainingConfig:
         """Build TrainingConfig from a mapping.
 
         Args:
@@ -122,6 +142,21 @@ class TrainingConfig:
         if not isinstance(raw, Mapping):
             raise ValueError("raw must be a mapping.")
 
+        teacher_type = _parse_teacher_type(
+            raw.get("teacher_type", default_teacher_type or "raw_88k2")
+        )
+        hb_loss_weight = float(
+            raw.get(
+                "hb_loss_weight",
+                _default_hb_loss_weight_for_teacher(teacher_type),
+            )
+        )
+        preserve_lb_weight = float(
+            raw.get(
+                "preserve_lb_weight",
+                _default_preserve_lb_weight_for_teacher(teacher_type),
+            )
+        )
         mask_cfg = _parse_stft_config(raw.get("mask_config", {}))
         stft_list = raw.get("stft_configs")
         stft_cfgs = (
@@ -132,7 +167,11 @@ class TrainingConfig:
                 STFTLossConfig(n_fft=2048, hop_length=512, win_length=2048),
             )
         )
-        weights = _parse_loss_weights(raw.get("loss_weights", {}))
+        weights = _parse_loss_weights(
+            raw.get("loss_weights", {}),
+            hb_loss_weight=hb_loss_weight,
+            preserve_lb_weight=preserve_lb_weight,
+        )
         ringing_cfg = _parse_ringing_loss_config(raw.get("ringing_loss_config", {}))
 
         return TrainingConfig(
@@ -145,8 +184,16 @@ class TrainingConfig:
             mask_config=mask_cfg,
             stft_configs=stft_cfgs,
             loss_weights=weights,
-            energy_cap=float(raw.get("energy_cap", 1.0)),
+            energy_cap=float(
+                raw.get(
+                    "energy_cap",
+                    _default_energy_cap_for_teacher(teacher_type),
+                )
+            ),
             ringing_loss_config=ringing_cfg,
+            teacher_type=teacher_type,
+            hb_loss_weight=hb_loss_weight,
+            preserve_lb_weight=preserve_lb_weight,
             mask_mode=_parse_mask_mode(raw.get("mask_mode", "l1")),
             device=raw.get("device"),
             seed=_optional_int(raw.get("seed")),
@@ -156,7 +203,11 @@ class TrainingConfig:
         )
 
 
-def load_training_config(path: Path) -> TrainingConfig:
+def load_training_config(
+    path: Path,
+    *,
+    default_teacher_type: str | None = None,
+) -> TrainingConfig:
     """Load TrainingConfig from JSON or YAML.
 
     Args:
@@ -186,7 +237,10 @@ def load_training_config(path: Path) -> TrainingConfig:
     except Exception as exc:
         raise RuntimeError(f"Failed to load training config: {exc}") from exc
 
-    return TrainingConfig.from_dict(data or {})
+    return TrainingConfig.from_dict(
+        data or {},
+        default_teacher_type=default_teacher_type,
+    )
 
 
 def select_device(
@@ -774,13 +828,18 @@ def _parse_stft_config(raw: Mapping[str, Any]) -> STFTLossConfig:
     )
 
 
-def _parse_loss_weights(raw: Mapping[str, Any]) -> LossWeights:
+def _parse_loss_weights(
+    raw: Mapping[str, Any],
+    *,
+    hb_loss_weight: float,
+    preserve_lb_weight: float,
+) -> LossWeights:
     if not isinstance(raw, Mapping):
         raise ValueError("loss_weights must be a mapping.")
     return LossWeights(
-        mask=float(raw.get("mask", 1.0)),
-        stft=float(raw.get("stft", 1.0)),
-        preserve=float(raw.get("preserve", 1.0)),
+        mask=float(raw.get("mask", hb_loss_weight)),
+        stft=float(raw.get("stft", hb_loss_weight)),
+        preserve=float(raw.get("preserve", preserve_lb_weight)),
         energy=float(raw.get("energy", 1.0)),
         edge=float(raw.get("edge", 0.0)),
         step=float(raw.get("step", 0.0)),
@@ -847,6 +906,37 @@ def _parse_bool(value: Any) -> bool:
             return bool(value)
         raise ValueError(f"Invalid bool integer: {value}")
     raise ValueError(f"Invalid bool value type: {type(value).__name__}")
+
+
+def _parse_teacher_type(value: Any) -> TeacherType:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
+        )
+    normalized = value.strip().lower()
+    if normalized == "raw_88k2":
+        return "raw_88k2"
+    if normalized == "bessel_88k2":
+        return "bessel_88k2"
+    raise ValueError(
+        f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
+    )
+
+
+def _default_energy_cap_for_teacher(teacher_type: TeacherType) -> float:
+    if teacher_type == "raw_88k2":
+        return 1.0e-3
+    return 1.0
+
+
+def _default_hb_loss_weight_for_teacher(teacher_type: TeacherType) -> float:
+    del teacher_type
+    return 1.0
+
+
+def _default_preserve_lb_weight_for_teacher(teacher_type: TeacherType) -> float:
+    del teacher_type
+    return 1.0
 
 
 def _optional_float(value: Any) -> float | None:

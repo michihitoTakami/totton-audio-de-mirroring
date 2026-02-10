@@ -38,8 +38,15 @@ def main() -> None:
     """
     args = _parse_args()
     data_config = _load_data_config(args.data_config)
-    training_config = _load_training_config(_resolve_train_config_path(args))
+    training_config = _load_training_config(
+        _resolve_train_config_path(args),
+        default_teacher_type=data_config.teacher_type,
+    )
     training_config = _apply_overrides(training_config, args)
+    data_config, training_config = _synchronize_teacher_type(
+        data_config=data_config,
+        training_config=training_config,
+    )
 
     train_loader, val_loader = _create_train_val_loaders(
         data_config=data_config,
@@ -104,6 +111,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--energy-cap", type=float, default=None)
+    parser.add_argument(
+        "--teacher-type",
+        type=str,
+        choices=["raw_88k2", "bessel_88k2"],
+        default=None,
+    )
+    parser.add_argument("--hb-loss-weight", type=float, default=None)
+    parser.add_argument("--preserve-lb-weight", type=float, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--require-cuda", action="store_true")
     parser.add_argument("--allow-cpu", action="store_true")
@@ -159,7 +174,11 @@ def _load_data_config(path: Path) -> DataPipelineConfig:
         raise RuntimeError(f"Failed to load data config: {exc}") from exc
 
 
-def _load_training_config(path: Path | None) -> TrainingConfig:
+def _load_training_config(
+    path: Path | None,
+    *,
+    default_teacher_type: str,
+) -> TrainingConfig:
     """Load training configuration from disk.
 
     Args:
@@ -172,9 +191,9 @@ def _load_training_config(path: Path | None) -> TrainingConfig:
         Training config governs loss balance and optimization stability.
     """
     if path is None:
-        return TrainingConfig()
+        return TrainingConfig.from_dict({}, default_teacher_type=default_teacher_type)
     try:
-        return load_training_config(path)
+        return load_training_config(path, default_teacher_type=default_teacher_type)
     except Exception as exc:
         raise RuntimeError(f"Failed to load training config: {exc}") from exc
 
@@ -208,6 +227,12 @@ def _apply_overrides(
         updated = replace(updated, learning_rate=args.learning_rate)
     if args.energy_cap is not None:
         updated = replace(updated, energy_cap=args.energy_cap)
+    if args.teacher_type is not None:
+        updated = replace(updated, teacher_type=args.teacher_type)
+    if args.hb_loss_weight is not None:
+        updated = replace(updated, hb_loss_weight=args.hb_loss_weight)
+    if args.preserve_lb_weight is not None:
+        updated = replace(updated, preserve_lb_weight=args.preserve_lb_weight)
     if args.device is not None:
         updated = replace(updated, device=args.device)
     if args.no_amp:
@@ -217,6 +242,25 @@ def _apply_overrides(
     if args.allow_cpu:
         updated = replace(updated, require_cuda=False)
     return updated
+
+
+def _synchronize_teacher_type(
+    *,
+    data_config: DataPipelineConfig,
+    training_config: TrainingConfig,
+) -> tuple[DataPipelineConfig, TrainingConfig]:
+    """Synchronize teacher policy between data and training configs.
+
+    Physical Basis:
+        Dataset target generation and loss-policy defaults must share
+        the same teacher definition to avoid mixed-policy training runs.
+    """
+    if training_config.teacher_type == data_config.teacher_type:
+        return data_config, training_config
+    return (
+        replace(data_config, teacher_type=training_config.teacher_type),
+        training_config,
+    )
 
 
 def _create_train_val_loaders(
