@@ -104,6 +104,27 @@ class GateConfig:
     require_nonpositive_ringing_ratio_delta: bool
 
 
+@dataclass(frozen=True)
+class RunContext:
+    """Resolved Stage1 run identity and artifact directories.
+
+    Args:
+        teacher_tag: Teacher label for artifact scoping (`raw88` or `bessel`).
+        run_id: Canonical experiment identifier.
+        report_dir: Root report directory for this run.
+        checkpoint_dir: Root checkpoint directory for this run.
+
+    Physical Basis:
+        Teacher-scoped run identity prevents accidental mixing between raw88
+        and bessel baselines, preserving reproducible A/B comparisons.
+    """
+
+    teacher_tag: str
+    run_id: str
+    report_dir: Path
+    checkpoint_dir: Path
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for the Issue #63 workflow.
 
@@ -120,9 +141,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--eval-input-dir", type=Path, required=True)
     parser.add_argument("--imd-naive-dir", type=Path, required=True)
-    parser.add_argument("--report-dir", type=Path, default=Path("reports/issue63"))
+    parser.add_argument("--report-dir", type=Path, default=None)
+    parser.add_argument("--checkpoint-dir", type=Path, default=None)
+    parser.add_argument("--report-root-dir", type=Path, default=Path("reports/stage1"))
     parser.add_argument(
-        "--checkpoint-dir", type=Path, default=Path("data/checkpoints/issue63")
+        "--checkpoint-root-dir", type=Path, default=Path("data/checkpoints/stage1")
+    )
+    parser.add_argument(
+        "--teacher-tag",
+        type=str,
+        default=None,
+        choices=("raw88", "bessel"),
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Optional run id. Defaults to stage1_<teacher>_nmse_<yyyymmdd>_s<seed>.",
     )
     parser.add_argument("--eval-glob", type=str, default="*.npy")
     parser.add_argument("--seed", type=int, default=1234)
@@ -184,6 +219,9 @@ def main() -> None:
         device=args.device,
         energy_cap=args.energy_cap,
     )
+    run_context = _resolve_run_context(args=args, teacher_type=data_config.teacher_type)
+    args.report_dir = run_context.report_dir
+    args.checkpoint_dir = run_context.checkpoint_dir
     gate_config = GateConfig(
         max_lb_phase_error_deg=args.max_lb_phase_error_deg,
         max_lb_group_delay_error_samples=args.max_lb_group_delay_error_samples,
@@ -203,6 +241,8 @@ def main() -> None:
         args=args,
         training_config=training_config,
         gate_config=gate_config,
+        run_context=run_context,
+        teacher_type=data_config.teacher_type,
     )
 
     if not args.skip_training:
@@ -322,6 +362,73 @@ def main() -> None:
     print(f"selected_checkpoint={selected.checkpoint_path}")
     print(f"selected_checkpoint_copy={selected_checkpoint_path}")
     print(f"selection_report={selected_dir / 'selection_report.json'}")
+
+
+def _resolve_run_context(*, args: argparse.Namespace, teacher_type: str) -> RunContext:
+    """Resolve teacher tag, run id, and artifact directories.
+
+    Args:
+        args: Parsed CLI arguments.
+        teacher_type: Stage1 teacher type from data config.
+
+    Returns:
+        Resolved run context with scoped output paths.
+
+    Raises:
+        ValueError: If teacher type or run id is invalid.
+
+    Physical Basis:
+        Consistent run identity keeps raw88/bessel experiment outputs
+        separated and traceable for controlled comparisons.
+    """
+    expected_teacher_tag = _teacher_tag(teacher_type)
+    teacher_tag = (
+        str(args.teacher_tag) if args.teacher_tag is not None else expected_teacher_tag
+    )
+    if teacher_tag != expected_teacher_tag:
+        raise ValueError(
+            "teacher_tag does not match data_config teacher_type: "
+            f"teacher_tag={teacher_tag!r}, teacher_type={teacher_type!r}."
+        )
+    run_id = (
+        str(args.run_id)
+        if args.run_id is not None
+        else _default_run_id(teacher_tag=teacher_tag, seed=int(args.seed))
+    )
+    if "/" in run_id or "\\" in run_id:
+        raise ValueError(f"run_id must not contain path separators: {run_id!r}")
+
+    report_dir = (
+        Path(args.report_dir)
+        if args.report_dir is not None
+        else Path(args.report_root_dir) / teacher_tag / run_id
+    )
+    checkpoint_dir = (
+        Path(args.checkpoint_dir)
+        if args.checkpoint_dir is not None
+        else Path(args.checkpoint_root_dir) / teacher_tag / run_id
+    )
+    return RunContext(
+        teacher_tag=teacher_tag,
+        run_id=run_id,
+        report_dir=report_dir,
+        checkpoint_dir=checkpoint_dir,
+    )
+
+
+def _teacher_tag(teacher_type: str) -> str:
+    """Convert data-config teacher type into artifact teacher tag."""
+    if teacher_type == "raw_88k2":
+        return "raw88"
+    if teacher_type == "bessel_88k2":
+        return "bessel"
+    raise ValueError(f"Unsupported teacher_type in data config: {teacher_type!r}")
+
+
+def _default_run_id(*, teacher_tag: str, seed: int) -> str:
+    """Build canonical Stage1 run id."""
+    yyyymmdd = datetime.now(UTC).strftime("%Y%m%d")
+    return f"stage1_{teacher_tag}_nmse_{yyyymmdd}_s{seed}"
 
 
 def _load_and_fix_training_config(
@@ -1220,6 +1327,8 @@ def _write_run_manifest(
     args: argparse.Namespace,
     training_config: TrainingConfig,
     gate_config: GateConfig,
+    run_context: RunContext,
+    teacher_type: str,
 ) -> None:
     """Persist immutable run manifest for reproducibility.
 
@@ -1227,8 +1336,18 @@ def _write_run_manifest(
         Fixing and hashing configs prevents accidental drift across
         retraining attempts and supports checkpoint provenance tracking.
     """
+    data_config_sha = _sha256_file(args.data_config)
+    train_config_sha = _sha256_file(args.train_config)
+    candidate_paths = [
+        str(Path(args.checkpoint_dir) / name) for name in args.candidate_checkpoints
+    ]
     manifest = {
         "timestamp_utc": datetime.now(UTC).isoformat(),
+        "teacher_type": teacher_type,
+        "teacher_tag": run_context.teacher_tag,
+        "run_id": run_context.run_id,
+        "report_dir": str(run_context.report_dir),
+        "checkpoint_dir": str(run_context.checkpoint_dir),
         "python": sys.version,
         "argv": sys.argv,
         "args": {
@@ -1236,8 +1355,16 @@ def _write_run_manifest(
         },
         "training_config": asdict(training_config),
         "gate_config": asdict(gate_config),
-        "data_config_sha256": _sha256_file(args.data_config),
-        "train_config_sha256": _sha256_file(args.train_config),
+        "data_config_sha256": data_config_sha,
+        "train_config_sha256": train_config_sha,
+        "config_hash": hashlib.sha256(
+            f"{data_config_sha}:{train_config_sha}".encode()
+        ).hexdigest(),
+        "checkpoint_paths": {
+            "candidates": candidate_paths,
+            "selected_copy": str(report_dir / "selected" / "stage1_best_selected.pt"),
+        },
+        "gate_thresholds": asdict(gate_config),
         "git_commit": _git_commit_or_unknown(),
     }
     (report_dir / "run_manifest.json").write_text(

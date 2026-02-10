@@ -499,9 +499,22 @@ uv run python scripts/run_issue63_stage1_workflow.py \
   --train-config configs/training_stage1.yaml \
   --eval-input-dir tests/fixtures/golden_samples/stage1/input \
   --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
-  --checkpoint-dir data/checkpoints/stage1/raw88/stage1_raw88_nmse_20260210_s1234 \
-  --report-dir reports/stage1/raw88/stage1_raw88_nmse_20260210_s1234 \
+  --run-id stage1_raw88_nmse_20260210_s1234 \
   --seed 1234
+```
+
+`--checkpoint-dir` / `--report-dir` を省略した場合は、
+`data/checkpoints/stage1/<teacher>/<run_id>/` と
+`reports/stage1/<teacher>/<run_id>/` が自動で使用される。
+
+同条件比較レポート（raw88 vs bessel）の生成例:
+
+```bash
+uv run python scripts/report_raw_teacher_comparison.py \
+  --raw-run-dir reports/stage1/raw88/stage1_raw88_nmse_20260210_s1234 \
+  --bessel-run-dir reports/stage1/bessel/stage1_bessel_nmse_20260210_s1234 \
+  --output-md reports/stage1/comparison/raw88_vs_bessel_20260210.md \
+  --output-csv reports/stage1/comparison/raw88_vs_bessel_20260210.csv
 ```
 
 ### 10.3 raw教師移行チェックリスト

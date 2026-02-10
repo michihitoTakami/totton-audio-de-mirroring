@@ -44,10 +44,17 @@ Store artifacts under teacher-scoped directories:
 Recommended minimum metadata in `run_manifest.json` (or equivalent):
 
 - `teacher_type`
+- `teacher_tag`
+- `run_id`
 - `seed`
 - `config_hash`
 - `checkpoint_paths`
 - `gate_thresholds`
+
+Reference workflow:
+
+- Training/eval run: `scripts/run_issue63_stage1_workflow.py`
+- Matched-condition comparison report: `scripts/report_raw_teacher_comparison.py`
 
 ## Migration Checklist
 

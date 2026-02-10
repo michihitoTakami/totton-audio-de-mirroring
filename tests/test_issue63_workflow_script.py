@@ -14,6 +14,7 @@ from scripts.run_issue63_stage1_workflow import (
     CandidateEvaluation,
     GateConfig,
     _build_gate_details,
+    _default_run_id,
     _evaluate_square_probe_ringing,
     _generate_square_probe_signal,
     _load_ringing_summary,
@@ -21,9 +22,11 @@ from scripts.run_issue63_stage1_workflow import (
     _passes_imd_gate,
     _passes_mirror_gate,
     _passes_ringing_gate,
+    _resolve_run_context,
     _run_command_with_live_log,
     _select_best_candidate,
     _summarize_square_probe_ringing,
+    _teacher_tag,
 )
 
 
@@ -326,6 +329,42 @@ def test_load_ringing_summary_prefers_ringing_metrics_over_top_summary() -> None
     }
     summary = _load_ringing_summary(payload)
     assert summary["mean_plateau_ripple_rms_ratio"] == pytest.approx(1.02)
+
+
+def test_teacher_tag_maps_supported_teacher_types() -> None:
+    assert _teacher_tag("raw_88k2") == "raw88"
+    assert _teacher_tag("bessel_88k2") == "bessel"
+
+
+def test_default_run_id_embeds_teacher_and_seed() -> None:
+    run_id = _default_run_id(teacher_tag="raw88", seed=1234)
+    assert run_id.startswith("stage1_raw88_nmse_")
+    assert run_id.endswith("_s1234")
+
+
+def test_resolve_run_context_scopes_dirs_by_teacher_and_run_id() -> None:
+    args = type(
+        "Args",
+        (),
+        {
+            "teacher_tag": None,
+            "run_id": "stage1_raw88_nmse_20260210_s1234",
+            "seed": 1234,
+            "report_dir": None,
+            "checkpoint_dir": None,
+            "report_root_dir": Path("reports/stage1"),
+            "checkpoint_root_dir": Path("data/checkpoints/stage1"),
+        },
+    )()
+    context = _resolve_run_context(args=args, teacher_type="raw_88k2")
+    assert context.teacher_tag == "raw88"
+    assert context.run_id == "stage1_raw88_nmse_20260210_s1234"
+    assert context.report_dir == Path(
+        "reports/stage1/raw88/stage1_raw88_nmse_20260210_s1234"
+    )
+    assert context.checkpoint_dir == Path(
+        "data/checkpoints/stage1/raw88/stage1_raw88_nmse_20260210_s1234"
+    )
 
 
 def test_build_gate_details_contains_traceable_thresholds() -> None:
