@@ -782,7 +782,8 @@ def _run_train_step_with_amp_fallback(
         step: Current step index.
 
     Returns:
-        Tuple of prediction and computed loss terms.
+        Tuple of prediction, computed loss terms, and AMP-enabled flag for
+        the next step.
 
     Raises:
         RuntimeError: If non-finite gradient norm persists after fallback.
@@ -813,7 +814,7 @@ def _run_train_step_with_amp_fallback(
         )
         _backward_total(terms=terms, scaler=scaler, use_amp=use_amp_attempt)
 
-        grad_norm = _clip_gradients(
+        grad_norm = _measure_and_clip_gradients(
             model=model,
             optimizer=optimizer,
             scaler=scaler,
@@ -879,22 +880,21 @@ def _backward_total(
     terms.total.backward()
 
 
-def _clip_gradients(
+def _measure_and_clip_gradients(
     *,
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     scaler: torch.amp.GradScaler,
     grad_clip: float | None,
     use_amp: bool,
-) -> torch.Tensor | None:
-    """Clip gradients and return resulting norm when enabled."""
-    if grad_clip is None:
-        return None
+) -> torch.Tensor:
+    """Measure gradient norm and clip when configured."""
     if use_amp:
         scaler.unscale_(optimizer)
+    max_norm = grad_clip if grad_clip is not None else float("inf")
     return torch.nn.utils.clip_grad_norm_(
         model.parameters(),
-        grad_clip,
+        max_norm,
     )
 
 

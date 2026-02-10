@@ -456,7 +456,7 @@ def test_run_train_step_with_amp_fallback_retries_in_fp32(
         learning_rate=1.0e-3,
         use_amp=True,
         require_cuda=False,
-        grad_clip=1.0,
+        grad_clip=None,
         mask_config=STFTLossConfig(n_fft=64, hop_length=16, win_length=64),
         stft_configs=(STFTLossConfig(n_fft=64, hop_length=16, win_length=64),),
     )
