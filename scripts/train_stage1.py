@@ -22,6 +22,7 @@ from totton_audio_de_mirroring.data.pipeline_config import (
 )
 from totton_audio_de_mirroring.models.nmse import NMSE
 from totton_audio_de_mirroring.training.trainer import (
+    LossWeights,
     TrainingConfig,
     TrainingResult,
     load_training_config,
@@ -119,6 +120,10 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--hb-loss-weight", type=float, default=None)
     parser.add_argument("--preserve-lb-weight", type=float, default=None)
+    parser.add_argument("--subtract-loss-weight", type=float, default=None)
+    parser.add_argument("--cap-strict-loss-weight", type=float, default=None)
+    parser.add_argument("--edge-loss-weight", type=float, default=None)
+    parser.add_argument("--step-loss-weight", type=float, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--require-cuda", action="store_true")
     parser.add_argument("--allow-cpu", action="store_true")
@@ -230,9 +235,67 @@ def _apply_overrides(
     if args.teacher_type is not None:
         updated = replace(updated, teacher_type=args.teacher_type)
     if args.hb_loss_weight is not None:
-        updated = replace(updated, hb_loss_weight=args.hb_loss_weight)
+        updated = replace(
+            updated,
+            hb_loss_weight=args.hb_loss_weight,
+            loss_weights=LossWeights(
+                mask=args.hb_loss_weight,
+                stft=args.hb_loss_weight,
+                preserve=updated.loss_weights.preserve,
+                energy=updated.loss_weights.energy,
+                subtract=updated.loss_weights.subtract,
+                cap_strict=updated.loss_weights.cap_strict,
+                edge=updated.loss_weights.edge,
+                step=updated.loss_weights.step,
+            ),
+        )
     if args.preserve_lb_weight is not None:
-        updated = replace(updated, preserve_lb_weight=args.preserve_lb_weight)
+        updated = replace(
+            updated,
+            preserve_lb_weight=args.preserve_lb_weight,
+            loss_weights=LossWeights(
+                mask=updated.loss_weights.mask,
+                stft=updated.loss_weights.stft,
+                preserve=args.preserve_lb_weight,
+                energy=updated.loss_weights.energy,
+                subtract=updated.loss_weights.subtract,
+                cap_strict=updated.loss_weights.cap_strict,
+                edge=updated.loss_weights.edge,
+                step=updated.loss_weights.step,
+            ),
+        )
+    if args.subtract_loss_weight is not None:
+        updated = replace(
+            updated,
+            loss_weights=replace(
+                updated.loss_weights,
+                subtract=float(args.subtract_loss_weight),
+            ),
+        )
+    if args.cap_strict_loss_weight is not None:
+        updated = replace(
+            updated,
+            loss_weights=replace(
+                updated.loss_weights,
+                cap_strict=float(args.cap_strict_loss_weight),
+            ),
+        )
+    if args.edge_loss_weight is not None:
+        updated = replace(
+            updated,
+            loss_weights=replace(
+                updated.loss_weights,
+                edge=float(args.edge_loss_weight),
+            ),
+        )
+    if args.step_loss_weight is not None:
+        updated = replace(
+            updated,
+            loss_weights=replace(
+                updated.loss_weights,
+                step=float(args.step_loss_weight),
+            ),
+        )
     if args.device is not None:
         updated = replace(updated, device=args.device)
     if args.no_amp:

@@ -22,12 +22,16 @@ class EpochMetrics:
     stft: float
     preserve: float
     energy: float
+    subtract: float
+    cap_strict: float
     edge: float
     step: float
     contrib_mask: float
     contrib_stft: float
     contrib_preserve: float
     contrib_energy: float
+    contrib_subtract: float
+    contrib_cap_strict: float
     contrib_edge: float
     contrib_step: float
     mirror_reduction_db: float

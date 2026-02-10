@@ -52,6 +52,8 @@ class LossWeights:
         stft: Weight for multi-resolution STFT loss.
         preserve: Weight for preservation loss.
         energy: Weight for energy cap penalty.
+        subtract: Weight for subtractive-suppression penalty.
+        cap_strict: Weight for strict cap-violation penalty.
         edge: Weight for edge-aligned ringing loss.
         step: Weight for step-response ringing loss.
 
@@ -64,6 +66,8 @@ class LossWeights:
     stft: float = 1.0
     preserve: float = 1.0
     energy: float = 1.0
+    subtract: float = 0.0
+    cap_strict: float = 0.0
     edge: float = 0.0
     step: float = 0.0
 
@@ -72,6 +76,8 @@ class LossWeights:
         _validate_non_negative(self.stft, "stft")
         _validate_non_negative(self.preserve, "preserve")
         _validate_non_negative(self.energy, "energy")
+        _validate_non_negative(self.subtract, "subtract")
+        _validate_non_negative(self.cap_strict, "cap_strict")
         _validate_non_negative(self.edge, "edge")
         _validate_non_negative(self.step, "step")
 
@@ -112,6 +118,8 @@ class LossTerms:
         stft: Multi-resolution STFT loss.
         preserve: Preservation loss outside mirror bins.
         energy: Energy cap penalty.
+        subtract: Subtractive-suppression penalty.
+        cap_strict: Strict cap-violation penalty.
         edge: Edge-aligned ringing loss.
         step: Step-response ringing loss.
 
@@ -125,6 +133,8 @@ class LossTerms:
     stft: torch.Tensor
     preserve: torch.Tensor
     energy: torch.Tensor
+    subtract: torch.Tensor
+    cap_strict: torch.Tensor
     edge: torch.Tensor
     step: torch.Tensor
 
@@ -138,6 +148,8 @@ class LossContributionRatios:
         stft: Weighted contribution ratio of STFT loss.
         preserve: Weighted contribution ratio of preservation loss.
         energy: Weighted contribution ratio of energy cap loss.
+        subtract: Weighted contribution ratio of subtractive suppression loss.
+        cap_strict: Weighted contribution ratio of strict cap loss.
         edge: Weighted contribution ratio of edge ringing loss.
         step: Weighted contribution ratio of step ringing loss.
 
@@ -150,6 +162,8 @@ class LossContributionRatios:
     stft: float
     preserve: float
     energy: float
+    subtract: float
+    cap_strict: float
     edge: float
     step: float
 
@@ -213,6 +227,8 @@ def compute_losses(
     loss_preserve = preserve_loss(hb_pred_mag, hb_in_mag, mirror_mask)
     loss_stft = multi_resolution_stft_loss(hb_pred, hb_target, stft_configs)
     loss_energy = energy_cap_loss(hb_pred_mag, energy_cap)
+    loss_subtract = subtractive_suppression_loss(hb_pred_mag, hb_in_mag)
+    loss_cap_strict = strict_energy_cap_loss(hb_pred_mag, energy_cap)
     loss_edge = ringing_edge_loss(hb_pred, hb_target, config=active_ringing_config)
     loss_step = ringing_step_loss(hb_pred, hb_target, config=active_ringing_config)
 
@@ -221,6 +237,8 @@ def compute_losses(
         + weights.stft * loss_stft
         + weights.preserve * loss_preserve
         + weights.energy * loss_energy
+        + weights.subtract * loss_subtract
+        + weights.cap_strict * loss_cap_strict
         + weights.edge * loss_edge
         + weights.step * loss_step
     )
@@ -231,6 +249,8 @@ def compute_losses(
         stft=loss_stft,
         preserve=loss_preserve,
         energy=loss_energy,
+        subtract=loss_subtract,
+        cap_strict=loss_cap_strict,
         edge=loss_edge,
         step=loss_step,
     )
@@ -262,17 +282,27 @@ def compute_loss_contribution_ratios(
         "stft": max(weights.stft * float(terms.stft.detach().item()), 0.0),
         "preserve": max(weights.preserve * float(terms.preserve.detach().item()), 0.0),
         "energy": max(weights.energy * float(terms.energy.detach().item()), 0.0),
+        "subtract": max(
+            weights.subtract * float(terms.subtract.detach().item()),
+            0.0,
+        ),
+        "cap_strict": max(
+            weights.cap_strict * float(terms.cap_strict.detach().item()),
+            0.0,
+        ),
         "edge": max(weights.edge * float(terms.edge.detach().item()), 0.0),
         "step": max(weights.step * float(terms.step.detach().item()), 0.0),
     }
     total = sum(weighted.values())
     if total <= eps:
-        uniform = 1.0 / 6.0
+        uniform = 1.0 / 8.0
         return LossContributionRatios(
             mask=uniform,
             stft=uniform,
             preserve=uniform,
             energy=uniform,
+            subtract=uniform,
+            cap_strict=uniform,
             edge=uniform,
             step=uniform,
         )
@@ -281,6 +311,8 @@ def compute_loss_contribution_ratios(
         stft=weighted["stft"] / total,
         preserve=weighted["preserve"] / total,
         energy=weighted["energy"] / total,
+        subtract=weighted["subtract"] / total,
+        cap_strict=weighted["cap_strict"] / total,
         edge=weighted["edge"] / total,
         step=weighted["step"] / total,
     )
@@ -433,6 +465,52 @@ def energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.Tensor:
     energy = torch.sum(pred_mag**2, dim=(-2, -1))
     excess = torch.clamp(energy - energy_cap, min=0.0)
     return torch.mean(excess)
+
+
+def subtractive_suppression_loss(
+    pred_mag: torch.Tensor,
+    input_mag: torch.Tensor,
+) -> torch.Tensor:
+    """Penalize high-band magnitude increase to prioritize subtraction.
+
+    Args:
+        pred_mag: Predicted STFT magnitude (batch, freq, time).
+        input_mag: Input STFT magnitude (batch, freq, time).
+
+    Returns:
+        Scalar additive-energy penalty.
+
+    Physical Basis:
+        Raw teacher migration should prioritize removing mirrored energy.
+        Penalizing only positive gain keeps learning subtractive.
+    """
+    _validate_mag_tensor(pred_mag, "pred_mag")
+    _validate_mag_tensor(input_mag, "input_mag")
+    if pred_mag.shape != input_mag.shape:
+        raise ValueError("pred_mag and input_mag must share shape.")
+    additive = torch.clamp(pred_mag - input_mag, min=0.0)
+    return torch.mean(additive)
+
+
+def strict_energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.Tensor:
+    """Apply nonlinear penalty to any high-band cap violation.
+
+    Args:
+        pred_mag: Predicted STFT magnitude (batch, freq, time).
+        energy_cap: Maximum allowed energy (sum of mag^2).
+
+    Returns:
+        Scalar strict cap penalty.
+
+    Physical Basis:
+        Squared normalized excess heavily penalizes cap violations and drives
+        violation rate toward zero for IMD safety.
+    """
+    _validate_mag_tensor(pred_mag, "pred_mag")
+    _validate_positive_float(energy_cap, "energy_cap")
+    energy = torch.sum(pred_mag**2, dim=(-2, -1))
+    normalized_excess = torch.clamp((energy - energy_cap) / energy_cap, min=0.0)
+    return torch.mean(normalized_excess**2)
 
 
 def ringing_edge_loss(

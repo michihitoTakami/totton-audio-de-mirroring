@@ -49,6 +49,8 @@ class LossContributionSnapshot:
         contrib_stft: Weighted contribution ratio for STFT loss.
         contrib_preserve: Weighted contribution ratio for preserve loss.
         contrib_energy: Weighted contribution ratio for energy loss.
+        contrib_subtract: Weighted contribution ratio for subtractive loss.
+        contrib_cap_strict: Weighted contribution ratio for strict cap loss.
         contrib_edge: Weighted contribution ratio for edge ringing loss.
         contrib_step: Weighted contribution ratio for step ringing loss.
 
@@ -61,6 +63,8 @@ class LossContributionSnapshot:
     contrib_stft: float
     contrib_preserve: float
     contrib_energy: float
+    contrib_subtract: float
+    contrib_cap_strict: float
     contrib_edge: float
     contrib_step: float
 
@@ -195,6 +199,8 @@ def _extract_loss_contributions(
         contrib_stft=float(last_metrics.get("contrib_stft", 0.0)),
         contrib_preserve=float(last_metrics.get("contrib_preserve", 0.0)),
         contrib_energy=float(last_metrics.get("contrib_energy", 0.0)),
+        contrib_subtract=float(last_metrics.get("contrib_subtract", 0.0)),
+        contrib_cap_strict=float(last_metrics.get("contrib_cap_strict", 0.0)),
         contrib_edge=float(last_metrics.get("contrib_edge", 0.0)),
         contrib_step=float(last_metrics.get("contrib_step", 0.0)),
     )
@@ -314,6 +320,16 @@ def _render_report(
                     "energy",
                     baseline_contrib.contrib_energy,
                     ringing_contrib.contrib_energy,
+                ),
+                _contrib_row(
+                    "subtract",
+                    baseline_contrib.contrib_subtract,
+                    ringing_contrib.contrib_subtract,
+                ),
+                _contrib_row(
+                    "cap_strict",
+                    baseline_contrib.contrib_cap_strict,
+                    ringing_contrib.contrib_cap_strict,
                 ),
                 _contrib_row(
                     "edge", baseline_contrib.contrib_edge, ringing_contrib.contrib_edge

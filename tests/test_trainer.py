@@ -70,6 +70,8 @@ def test_training_config_from_dict_parses_weights() -> None:
                 "stft": 0.5,
                 "preserve": 1.5,
                 "energy": 0.2,
+                "subtract": 0.4,
+                "cap_strict": 3.0,
                 "edge": 0.05,
                 "step": 0.07,
             },
@@ -83,6 +85,8 @@ def test_training_config_from_dict_parses_weights() -> None:
     assert config.epochs == 2
     assert config.loss_weights.mask == 2.0
     assert config.loss_weights.stft == 0.5
+    assert config.loss_weights.subtract == 0.4
+    assert config.loss_weights.cap_strict == 3.0
     assert config.loss_weights.edge == 0.05
     assert config.loss_weights.step == 0.07
     assert config.ringing_loss_config.edge_weight_cap == 3.0
@@ -93,7 +97,11 @@ def test_training_config_defaults_follow_teacher_type() -> None:
     raw_config = TrainingConfig.from_dict({"teacher_type": "raw_88k2"})
     bessel_config = TrainingConfig.from_dict({"teacher_type": "bessel_88k2"})
     assert raw_config.energy_cap == pytest.approx(1.0e-3)
+    assert raw_config.loss_weights.subtract == pytest.approx(1.0)
+    assert raw_config.loss_weights.cap_strict == pytest.approx(4.0)
     assert bessel_config.energy_cap == pytest.approx(1.0)
+    assert bessel_config.loss_weights.subtract == pytest.approx(0.0)
+    assert bessel_config.loss_weights.cap_strict == pytest.approx(0.0)
 
 
 def test_training_config_applies_hb_and_preserve_weight_aliases() -> None:
@@ -191,6 +199,8 @@ def test_train_stage1_saves_best_and_last_checkpoints(tmp_path: Path) -> None:
         + result.train_history[0].contrib_stft
         + result.train_history[0].contrib_preserve
         + result.train_history[0].contrib_energy
+        + result.train_history[0].contrib_subtract
+        + result.train_history[0].contrib_cap_strict
         + result.train_history[0].contrib_edge
         + result.train_history[0].contrib_step
     )
@@ -286,6 +296,40 @@ def test_compute_batch_metrics_clamps_extreme_energy_ratio_to_finite() -> None:
     assert torch.isfinite(torch.tensor(metrics["mirror_reduction_db"]))
     assert torch.isfinite(torch.tensor(metrics["touch_l1"]))
     assert torch.isfinite(torch.tensor(metrics["energy_cap_violation"]))
+
+
+def test_compute_batch_metrics_reports_lowband_identity_for_structure() -> None:
+    model = _DummyNMSE()
+    mask_config = STFTLossConfig(n_fft=64, hop_length=16, win_length=64)
+    sample_rate = 88_200.0
+    length = 1024
+    time = torch.arange(length, dtype=torch.float32) / sample_rate
+    x_full = torch.sin(2.0 * torch.pi * 1_000.0 * time).unsqueeze(0)
+    hb_in = torch.zeros_like(x_full)
+    hb_pred = torch.zeros_like(x_full)
+    stft = torch.stft(
+        hb_in,
+        n_fft=64,
+        hop_length=16,
+        win_length=64,
+        window=torch.hann_window(64),
+        return_complex=True,
+    )
+    mirror_mask = torch.ones(1, stft.shape[-2], stft.shape[-1], dtype=torch.float32)
+    metrics = _compute_batch_metrics(
+        model=model,
+        batch={"x_full": x_full},
+        hb_in=hb_in,
+        hb_pred=hb_pred,
+        mirror_mask=mirror_mask,
+        device=torch.device("cpu"),
+        mask_config=mask_config,
+        energy_cap=1.0,
+        compute_low_band=True,
+    )
+    assert metrics["lb_available"] is True
+    assert float(metrics["lb_mag_mae"]) <= 1.0e-6
+    assert float(metrics["lb_phase_mae"]) <= 1.0e-6
 
 
 def test_train_stage1_raises_when_non_finite_output_detected(tmp_path: Path) -> None:
