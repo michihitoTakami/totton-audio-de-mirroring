@@ -1,5 +1,5 @@
 # totton-audio-de-mirroring
-# Hybrid Neural Bessel SR (HNB-SR) – Updated Specification (Mirror-Removal & Time-Response Preservation)
+# Hybrid Neural SR (HNSR) – Updated Specification (Mirror-Removal & Time-Response Preservation)
 
 Target Platform: **Jetson Orin Nano (8GB)**
 Target Output: **705.6kHz (16× Upsampling)**
@@ -20,6 +20,16 @@ Latency: **数秒オーダー許容（非リアルタイムでも可）**
 3. **20–44kHzはゼロ近傍でもOK**（無理に倍音を作らない）
 4. 20–44kHzの**高域総エネルギーは固定上限（energy cap）**を常に遵守（IMD安全側）
 5. **リンギング回帰を禁止**（矩形波プローブで before 比悪化を許容しない）
+
+### 0.1 Stage1教師方針（EPIC #103）
+
+Stage1（44.1kHz → 88.2kHz）の教師定義は、今後 **raw 88.2kHz（純粋SRC出力）を第一選択**とする。
+
+* 目的: 原信号忠実度を優先し、0-20kHz保全とmirror抑制を両立する
+* 旧方式: Bessel教師は廃止ではなく、**比較ベースライン**として維持する
+* 運用: 実験・成果物には教師種別（`raw88` / `bessel`）を必ず明記する
+
+raw教師運用の詳細は `docs/stage1_raw_teacher_policy.md` を参照。
 
 ### Stage1 Quantitative Acceptance Criteria
 
@@ -164,6 +174,9 @@ AIは高域を生成するのではなく、**抑制マスク（ゲイン）**�
 注意:
 `HB_target` は「高域抑制のための規格化ターゲット」であり、全帯域の物理的グラウンドトゥルースではない。
 0–20kHzの同一性は `LB_out = LB_in` の構造保証で担保する。
+
+Stage1教師が`raw 88.2`の場合も、`HB_target`の意味は同じである。違いは教師参照経路のみで、
+Bessel教師は比較用ベースラインとして扱う。
 
 このとき、学習は
 
@@ -452,6 +465,52 @@ GPU前提のベンチマーク手順は `docs/onnx_runtime_benchmark.md` を参�
 4. **Phase 4：Jetson実装**
 
    * TensorRT化、チャンク長/オーバーラップ最適化、スループット測定
+
+---
+
+## 10. 実験命名規則・保存先規約（raw教師移行版）
+
+### 10.1 命名規則
+
+実験IDは以下を推奨する。
+
+* `stage1_<teacher>_<model>_<yyyymmdd>_s<seed>`
+* 例: `stage1_raw88_nmse_20260210_s1234`
+* 例: `stage1_bessel_nmse_20260210_s1234`（比較ベースライン）
+
+`teacher` は以下のどちらかに固定する。
+
+* `raw88`: raw 88.2kHz教師（本方針の標準）
+* `bessel`: 旧教師（比較ベースライン）
+
+### 10.2 保存先規約
+
+Stage1関連成果物は教師種別ごとに分離して保存する。
+
+* checkpoint: `data/checkpoints/stage1/<teacher>/<run_id>/`
+* report: `reports/stage1/<teacher>/<run_id>/`
+* 回帰fixture更新候補: `reports/stage1/<teacher>/<run_id>/candidate_outputs/`
+
+運用例:
+
+```bash
+uv run python scripts/run_issue63_stage1_workflow.py \
+  --data-config configs/data_generation.yaml \
+  --train-config configs/training_stage1.yaml \
+  --eval-input-dir tests/fixtures/golden_samples/stage1/input \
+  --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
+  --checkpoint-dir data/checkpoints/stage1/raw88/stage1_raw88_nmse_20260210_s1234 \
+  --report-dir reports/stage1/raw88/stage1_raw88_nmse_20260210_s1234 \
+  --seed 1234
+```
+
+### 10.3 raw教師移行チェックリスト
+
+- [ ] ドキュメントに「raw88が標準、besselは比較ベースライン」を明記した
+- [ ] 実験IDと保存先に`teacher`を含め、混在保存を防止した
+- [ ] 評価レポートで`raw88` vs `bessel`の比較条件を同一化した
+- [ ] `run_manifest.json`（または同等メタデータ）に教師種別・seed・config hashを記録した
+- [ ] 回帰fixture更新時にABX/Hard/Mirror/Ringing/IMDの判定根拠をPR本文へ記載した
 
 ---
 

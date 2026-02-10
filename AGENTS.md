@@ -14,6 +14,7 @@ This document provides a structured guide for AI agents (Claude Code, GitHub Cop
 2. **[.claude/rules/testing.md](./.claude/rules/testing.md)** - Testing guidelines
 3. **[.claude/rules/coding-style.md](./.claude/rules/coding-style.md)** - Code style rules
 4. **[.claude/rules/security.md](./.claude/rules/security.md)** - Security best practices
+5. **[docs/stage1_raw_teacher_policy.md](./docs/stage1_raw_teacher_policy.md)** - Stage1 teacher policy (raw88 default)
 
 ### Communication Language
 
@@ -25,7 +26,7 @@ This document provides a structured guide for AI agents (Claude Code, GitHub Cop
 
 ### What is totton-audio-de-mirroring?
 
-Hybrid Neural Bessel SR (HNB-SR) system designed to suppress mirror/aliasing artifacts while preserving time-domain characteristics (transients, phase, group delay). The project focuses on **mirror-removal** rather than aggressive high-frequency generation.
+Hybrid Neural SR (HNSR) system designed to suppress mirror/aliasing artifacts while preserving time-domain characteristics (transients, phase, group delay). The project focuses on **mirror-removal** rather than aggressive high-frequency generation.
 
 **Target Platform**: Jetson Orin Nano (8GB)
 **Input**: 44.1kHz / 16bit or 24bit PCM
@@ -37,7 +38,7 @@ Hybrid Neural Bessel SR (HNB-SR) system designed to suppress mirror/aliasing art
 1. **Anti-Hallucination**: No frequency content generation beyond Nyquist limit
 2. **Time-Response First**: Focus on flat group delay and transient preservation
 3. **Mirror Removal**: Suppress mirror/aliasing artifacts, not generate ultrasonic content
-4. **Physics-Informed**: Training based on Bessel FIR upsampling with mirror artifacts
+4. **Physics-Informed**: Training based on mirror-inducing degradation paths with safety constraints
 5. **0-20kHz Preservation**: Guaranteed by structure (band-split architecture)
 
 ### Technical Stack
@@ -393,11 +394,11 @@ Output:
 
 ### Network Goal
 
-Learn the mapping: `Input (Bessel-upsampled with mirror artifacts) → Target (Clean)`
+Learn the mapping: `Input (degradation-path 88.2kHz with mirror artifacts) → Target (HB anti-mirror target)`
 
 The network learns to:
 - **Remove mirror/aliasing artifacts** in 20kHz-22.05kHz range
-- **Preserve time-domain characteristics** (flat group delay from Bessel)
+- **Preserve time-domain characteristics** (transients, phase, group delay)
 - **Maintain 0-20kHz fidelity** without introducing phase distortion
 - **Enforce energy cap** for 20-44kHz band (IMD safety)
 
@@ -417,6 +418,13 @@ The network learns to:
 2. **Suppress mirror patterns** and reduce audible "digital harshness/graininess"
 3. **20–44kHz can be near-zero** (no forced harmonic generation)
 4. **High-frequency total energy cap** (20–44kHz) always enforced (IMD safety)
+
+### Stage1 Teacher Policy (EPIC #103 / Issue #111)
+
+- Default teacher policy: **raw 88.2kHz (`raw88`)**
+- Legacy Bessel teacher is retained as a **comparison baseline**
+- Stage1 experiment IDs and artifact paths must include teacher type (`raw88` or `bessel`)
+- Detailed conventions and migration checklist: `docs/stage1_raw_teacher_policy.md`
 
 ---
 
@@ -460,10 +468,11 @@ Consider asking the user when:
 
 1. **Read [CLAUDE.md](./CLAUDE.md)** - Full development guide
 2. **Check [.claude/rules/](./.claude/rules/)** - Specific guidelines
-3. **Review recent commits** - `git log --oneline -10`
-4. **Check open issues** - `gh issue list`
-5. **Run tests** - `uv run pytest -v`
-6. **Start coding** - Follow workflow above
+3. **Read [docs/stage1_raw_teacher_policy.md](./docs/stage1_raw_teacher_policy.md)** - Stage1 teacher policy
+4. **Review recent commits** - `git log --oneline -10`
+5. **Check open issues** - `gh issue list`
+6. **Run tests** - `uv run pytest -v`
+7. **Start coding** - Follow workflow above
 
 ---
 
