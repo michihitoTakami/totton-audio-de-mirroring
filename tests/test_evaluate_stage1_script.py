@@ -156,6 +156,59 @@ def test_cli_strict_energy_cap_returns_exit_code_2(
     assert excinfo.value.code == 2
 
 
+def test_cli_report_dir_emits_json_markdown_and_figures(
+    paired_npy_dirs: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integrated report mode should emit JSON/Markdown/figure artifacts."""
+    input_dir, output_dir = paired_npy_dirs
+    target_dir = tmp_path / "target"
+    naive_dir = tmp_path / "naive"
+    target_dir.mkdir()
+    naive_dir.mkdir()
+    np.save(target_dir / "a.npy", np.load(input_dir / "a.npy"))
+    np.save(target_dir / "b.npy", np.load(input_dir / "b.npy"))
+    np.save(naive_dir / "a.npy", np.load(input_dir / "a.npy"))
+    np.save(naive_dir / "b.npy", np.load(input_dir / "b.npy"))
+    report_dir = tmp_path / "report"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--target-dir",
+            str(target_dir),
+            "--evaluation-target",
+            "raw88.2",
+            "--imd-naive-dir",
+            str(naive_dir),
+            "--report-dir",
+            str(report_dir),
+            "--mirror-visual-limit",
+            "1",
+        ],
+    )
+
+    main()
+
+    json_path = report_dir / "stage1_integrated_evaluation.json"
+    md_path = report_dir / "stage1_integrated_evaluation.md"
+    assert json_path.exists()
+    assert md_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["evaluation_target"] == "raw88.2"
+    assert "imd_proxy" in payload
+    assert isinstance(payload["mirror_visualizations"], list)
+    assert len(payload["mirror_visualizations"]) == 1
+    assert Path(payload["mirror_visualizations"][0]).exists()
+
+
 def test_cli_raises_when_output_pair_is_missing(
     paired_npy_dirs: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -342,6 +395,39 @@ def test_cli_multiple_strict_failures_return_exit_code_5(
     assert excinfo.value.code == 5
 
 
+def test_cli_strict_imd_proxy_returns_exit_code_7(
+    paired_npy_dirs: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI should fail with exit code 7 when IMD proxy gate is unmet."""
+    input_dir, output_dir = paired_npy_dirs
+    naive_dir = tmp_path / "naive"
+    naive_dir.mkdir()
+    np.save(naive_dir / "a.npy", np.load(input_dir / "a.npy"))
+    np.save(naive_dir / "b.npy", np.load(input_dir / "b.npy"))
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--imd-naive-dir",
+            str(naive_dir),
+            "--strict-imd-proxy",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 7
+
+
 def _build_gate_inputs(
     *,
     energy_violation_rate: float,
@@ -420,19 +506,29 @@ def test_evaluate_stage1_gates_accepts_values_on_threshold() -> None:
         max_plateau_ripple_p2p_ratio=1.10,
         max_overshoot_abs_increase=5.0e-3,
         require_nonpositive_ringing_ratio_delta=True,
+        max_lb_phase_error_deg=15.0,
+        max_lb_group_delay_error_samples=600.0,
+        max_lb_amplitude_error_db=-20.0,
+        require_positive_thdn_improvement=True,
     )
 
     gate_status = _evaluate_stage1_gates(
         result=result,
         mirror_result=mirror_result,
         ringing_summary=ringing_summary,
+        imd_summary={
+            "mean_thdn_improvement_db": 1.0,
+            "all_nmse_has_lower_imd": True,
+        },
         gate_config=gate_config,
     )
 
     assert gate_status["stage1_acceptance_pass"] is True
     assert gate_status["energy_cap"]["passed"] is True
     assert gate_status["mirror_reduction"]["passed"] is True
+    assert gate_status["lowband_preservation"]["passed"] is True
     assert gate_status["ringing_regression"]["passed"] is True
+    assert gate_status["imd_proxy"]["passed"] is True
 
 
 def test_evaluate_stage1_gates_rejects_ringing_ratio_delta_when_strict() -> None:
@@ -451,6 +547,10 @@ def test_evaluate_stage1_gates_rejects_ringing_ratio_delta_when_strict() -> None
         max_plateau_ripple_p2p_ratio=1.10,
         max_overshoot_abs_increase=5.0e-3,
         require_nonpositive_ringing_ratio_delta=True,
+        max_lb_phase_error_deg=15.0,
+        max_lb_group_delay_error_samples=600.0,
+        max_lb_amplitude_error_db=-20.0,
+        require_positive_thdn_improvement=True,
     )
     relaxed_gate_config = Stage1GateConfig(
         mirror_target_reduction=0.70,
@@ -458,18 +558,30 @@ def test_evaluate_stage1_gates_rejects_ringing_ratio_delta_when_strict() -> None
         max_plateau_ripple_p2p_ratio=1.10,
         max_overshoot_abs_increase=5.0e-3,
         require_nonpositive_ringing_ratio_delta=False,
+        max_lb_phase_error_deg=15.0,
+        max_lb_group_delay_error_samples=600.0,
+        max_lb_amplitude_error_db=-20.0,
+        require_positive_thdn_improvement=True,
     )
 
     strict_status = _evaluate_stage1_gates(
         result=result,
         mirror_result=mirror_result,
         ringing_summary=ringing_summary,
+        imd_summary={
+            "mean_thdn_improvement_db": 1.0,
+            "all_nmse_has_lower_imd": True,
+        },
         gate_config=strict_gate_config,
     )
     relaxed_status = _evaluate_stage1_gates(
         result=result,
         mirror_result=mirror_result,
         ringing_summary=ringing_summary,
+        imd_summary={
+            "mean_thdn_improvement_db": 1.0,
+            "all_nmse_has_lower_imd": True,
+        },
         gate_config=relaxed_gate_config,
     )
 
