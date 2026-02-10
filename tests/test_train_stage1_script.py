@@ -31,6 +31,9 @@ def test_apply_overrides_rejects_conflicting_cuda_flags() -> None:
         seed=None,
         learning_rate=None,
         energy_cap=None,
+        teacher_type=None,
+        hb_loss_weight=None,
+        preserve_lb_weight=None,
         device=None,
         no_amp=False,
         require_cuda=True,
@@ -46,6 +49,9 @@ def test_apply_overrides_updates_seed() -> None:
         seed=1234,
         learning_rate=None,
         energy_cap=None,
+        teacher_type=None,
+        hb_loss_weight=None,
+        preserve_lb_weight=None,
         device=None,
         no_amp=False,
         require_cuda=False,
@@ -53,3 +59,23 @@ def test_apply_overrides_updates_seed() -> None:
     )
     updated = _apply_overrides(TrainingConfig(seed=1), args)
     assert updated.seed == 1234
+
+
+def test_apply_overrides_updates_teacher_policy_fields() -> None:
+    args = Namespace(
+        epochs=None,
+        seed=None,
+        learning_rate=None,
+        energy_cap=None,
+        teacher_type="bessel_88k2",
+        hb_loss_weight=1.25,
+        preserve_lb_weight=1.5,
+        device=None,
+        no_amp=False,
+        require_cuda=False,
+        allow_cpu=False,
+    )
+    updated = _apply_overrides(TrainingConfig(), args)
+    assert updated.teacher_type == "bessel_88k2"
+    assert updated.hb_loss_weight == pytest.approx(1.25)
+    assert updated.preserve_lb_weight == pytest.approx(1.5)

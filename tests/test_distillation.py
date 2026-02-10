@@ -64,6 +64,44 @@ def test_distillation_config_from_yaml(tmp_path: Path) -> None:
     assert config.require_cuda is False
 
 
+def test_distillation_config_defaults_follow_teacher_type() -> None:
+    raw_config = DistillationConfig.from_dict({"teacher_type": "raw_88k2"})
+    bessel_config = DistillationConfig.from_dict({"teacher_type": "bessel_88k2"})
+    assert raw_config.energy_cap == pytest.approx(1.0e-3)
+    assert bessel_config.energy_cap == pytest.approx(1.0)
+
+
+def test_distillation_config_applies_hb_and_preserve_weight_aliases() -> None:
+    config = DistillationConfig.from_dict(
+        {
+            "teacher_type": "raw_88k2",
+            "hb_loss_weight": 1.4,
+            "preserve_lb_weight": 1.8,
+        }
+    )
+    assert config.task_loss_weights.mask == pytest.approx(1.4)
+    assert config.task_loss_weights.stft == pytest.approx(1.4)
+    assert config.task_loss_weights.preserve == pytest.approx(1.8)
+
+
+def test_distillation_config_rejects_invalid_teacher_type() -> None:
+    with pytest.raises(ValueError, match="teacher_type must be one of"):
+        _ = DistillationConfig.from_dict({"teacher_type": "invalid"})
+
+
+def test_load_distillation_config_uses_default_teacher_type_for_fallbacks(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "distill.yaml"
+    config_path.write_text("require_cuda: false\n", encoding="utf-8")
+    config = load_distillation_config(
+        config_path,
+        default_teacher_type="bessel_88k2",
+    )
+    assert config.teacher_type == "bessel_88k2"
+    assert config.energy_cap == pytest.approx(1.0)
+
+
 def test_apply_global_magnitude_pruning_reduces_nonzero_weights() -> None:
     """Pruning should increase zero-weight count."""
     model = nn.Conv2d(4, 4, kernel_size=3, padding=1, bias=False)

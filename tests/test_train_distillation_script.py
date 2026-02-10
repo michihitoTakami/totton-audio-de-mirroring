@@ -17,6 +17,9 @@ def test_apply_overrides_rejects_conflicting_cuda_flags() -> None:
         seed=None,
         device=None,
         energy_cap=None,
+        teacher_type=None,
+        hb_loss_weight=None,
+        preserve_lb_weight=None,
         require_cuda=True,
         allow_cpu=True,
     )
@@ -32,6 +35,9 @@ def test_apply_overrides_rejects_invalid_pruning_ratio() -> None:
         seed=None,
         device=None,
         energy_cap=None,
+        teacher_type=None,
+        hb_loss_weight=None,
+        preserve_lb_weight=None,
         require_cuda=False,
         allow_cpu=False,
     )
@@ -47,11 +53,34 @@ def test_apply_overrides_updates_learning_rate() -> None:
         seed=None,
         device=None,
         energy_cap=None,
+        teacher_type=None,
+        hb_loss_weight=None,
+        preserve_lb_weight=None,
         require_cuda=False,
         allow_cpu=False,
     )
     updated = _apply_overrides(DistillationConfig(require_cuda=False), args)
     assert updated.learning_rate == pytest.approx(3.0e-4)
+
+
+def test_apply_overrides_updates_teacher_policy_fields() -> None:
+    args = Namespace(
+        pruning_ratio=0.0,
+        epochs=None,
+        learning_rate=None,
+        seed=None,
+        device=None,
+        energy_cap=None,
+        teacher_type="bessel_88k2",
+        hb_loss_weight=1.2,
+        preserve_lb_weight=1.4,
+        require_cuda=False,
+        allow_cpu=False,
+    )
+    updated = _apply_overrides(DistillationConfig(require_cuda=False), args)
+    assert updated.teacher_type == "bessel_88k2"
+    assert updated.hb_loss_weight == pytest.approx(1.2)
+    assert updated.preserve_lb_weight == pytest.approx(1.4)
 
 
 def test_emit_stage1_light_checkpoint_copies_best(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import torch
 from torch import nn
@@ -23,6 +23,9 @@ from totton_audio_de_mirroring.training.losses import (
 )
 from totton_audio_de_mirroring.training.runtime import ensure_dir, save_checkpoint
 from totton_audio_de_mirroring.training.trainer import select_device
+
+TeacherType = Literal["raw_88k2", "bessel_88k2"]
+ALLOWED_TEACHER_TYPES: tuple[TeacherType, ...] = ("raw_88k2", "bessel_88k2")
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,9 @@ class DistillationConfig:
         stft_configs: Multi-resolution STFT losses for task supervision.
         task_loss_weights: Loss weights for Stage 1 task objective.
         ringing_loss_config: Configuration for ringing auxiliary losses.
+        teacher_type: Stage1 teacher policy (`raw_88k2` or `bessel_88k2`).
+        hb_loss_weight: Default weight for high-band objective terms.
+        preserve_lb_weight: Default weight for low-band preservation term.
         energy_cap: High-band energy cap used by task loss.
         mask_mode: Loss mode used by mask objective.
         distillation_weight: Weight of teacher-student consistency loss.
@@ -78,7 +84,10 @@ class DistillationConfig:
         step=0.05,
     )
     ringing_loss_config: RingingLossConfig = RingingLossConfig()
-    energy_cap: float = 1.0
+    teacher_type: TeacherType = "raw_88k2"
+    hb_loss_weight: float = 1.0
+    preserve_lb_weight: float = 1.0
+    energy_cap: float = 1.0e-3
     mask_mode: LossMode = "l1"
     distillation_weight: float = 1.0
     task_weight: float = 1.0
@@ -98,6 +107,15 @@ class DistillationConfig:
             raise ValueError("grad_clip must be positive when set.")
         if self.log_interval <= 0:
             raise ValueError("log_interval must be positive.")
+        if self.teacher_type not in ALLOWED_TEACHER_TYPES:
+            raise ValueError(
+                "teacher_type must be one of "
+                f"{ALLOWED_TEACHER_TYPES}, got {self.teacher_type!r}."
+            )
+        if self.hb_loss_weight <= 0.0:
+            raise ValueError("hb_loss_weight must be positive.")
+        if self.preserve_lb_weight <= 0.0:
+            raise ValueError("preserve_lb_weight must be positive.")
         if self.energy_cap <= 0.0:
             raise ValueError("energy_cap must be positive.")
         if self.distillation_weight < 0.0:
@@ -110,11 +128,30 @@ class DistillationConfig:
             raise ValueError("distillation_mode must be 'l1' or 'l2'.")
 
     @staticmethod
-    def from_dict(raw: Mapping[str, Any]) -> DistillationConfig:
+    def from_dict(
+        raw: Mapping[str, Any],
+        *,
+        default_teacher_type: str | None = None,
+    ) -> DistillationConfig:
         """Create DistillationConfig from JSON/YAML mapping."""
         if not isinstance(raw, Mapping):
             raise ValueError("raw must be a mapping.")
 
+        teacher_type = _parse_teacher_type(
+            raw.get("teacher_type", default_teacher_type or "raw_88k2")
+        )
+        hb_loss_weight = float(
+            raw.get(
+                "hb_loss_weight",
+                _default_hb_loss_weight_for_teacher(teacher_type),
+            )
+        )
+        preserve_lb_weight = float(
+            raw.get(
+                "preserve_lb_weight",
+                _default_preserve_lb_weight_for_teacher(teacher_type),
+            )
+        )
         stft_list = raw.get("stft_configs")
         stft_configs = (
             tuple(_parse_stft_config(item) for item in stft_list)
@@ -133,11 +170,23 @@ class DistillationConfig:
             log_interval=int(raw.get("log_interval", 20)),
             mask_config=_parse_stft_config(raw.get("mask_config", {})),
             stft_configs=stft_configs,
-            task_loss_weights=_parse_loss_weights(raw.get("task_loss_weights", {})),
+            task_loss_weights=_parse_loss_weights(
+                raw.get("task_loss_weights", {}),
+                hb_loss_weight=hb_loss_weight,
+                preserve_lb_weight=preserve_lb_weight,
+            ),
             ringing_loss_config=_parse_ringing_loss_config(
                 raw.get("ringing_loss_config", {})
             ),
-            energy_cap=float(raw.get("energy_cap", 1.0)),
+            teacher_type=teacher_type,
+            hb_loss_weight=hb_loss_weight,
+            preserve_lb_weight=preserve_lb_weight,
+            energy_cap=float(
+                raw.get(
+                    "energy_cap",
+                    _default_energy_cap_for_teacher(teacher_type),
+                )
+            ),
             mask_mode=_parse_loss_mode(raw.get("mask_mode", "l1")),
             distillation_weight=float(raw.get("distillation_weight", 1.0)),
             task_weight=float(raw.get("task_weight", 1.0)),
@@ -173,7 +222,11 @@ class DistillationResult:
     best_checkpoint: Path | None
 
 
-def load_distillation_config(path: Path) -> DistillationConfig:
+def load_distillation_config(
+    path: Path,
+    *,
+    default_teacher_type: str | None = None,
+) -> DistillationConfig:
     """Load distillation config from JSON or YAML."""
     if not isinstance(path, Path):
         raise ValueError("path must be a pathlib.Path.")
@@ -193,7 +246,10 @@ def load_distillation_config(path: Path) -> DistillationConfig:
         raise RuntimeError(f"Failed to load distillation config: {exc}") from exc
     if raw is None:
         raw = {}
-    return DistillationConfig.from_dict(raw)
+    return DistillationConfig.from_dict(
+        raw,
+        default_teacher_type=default_teacher_type,
+    )
 
 
 def count_parameters(model: nn.Module) -> int:
@@ -515,13 +571,18 @@ def _parse_stft_config(raw: Any) -> STFTLossConfig:
     )
 
 
-def _parse_loss_weights(raw: Any) -> LossWeights:
+def _parse_loss_weights(
+    raw: Any,
+    *,
+    hb_loss_weight: float,
+    preserve_lb_weight: float,
+) -> LossWeights:
     if not isinstance(raw, Mapping):
         raise ValueError("task_loss_weights must be a mapping.")
     return LossWeights(
-        mask=float(raw.get("mask", 1.0)),
-        stft=float(raw.get("stft", 1.0)),
-        preserve=float(raw.get("preserve", 1.0)),
+        mask=float(raw.get("mask", hb_loss_weight)),
+        stft=float(raw.get("stft", hb_loss_weight)),
+        preserve=float(raw.get("preserve", preserve_lb_weight)),
         energy=float(raw.get("energy", 1.0)),
         edge=float(raw.get("edge", 0.05)),
         step=float(raw.get("step", 0.05)),
@@ -548,6 +609,37 @@ def _parse_bool(value: Any) -> bool:
         if lowered in {"false", "0", "no", "n", "off"}:
             return False
     raise ValueError(f"Expected boolean-like value, got {value!r}.")
+
+
+def _parse_teacher_type(value: Any) -> TeacherType:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
+        )
+    normalized = value.strip().lower()
+    if normalized == "raw_88k2":
+        return "raw_88k2"
+    if normalized == "bessel_88k2":
+        return "bessel_88k2"
+    raise ValueError(
+        f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
+    )
+
+
+def _default_energy_cap_for_teacher(teacher_type: TeacherType) -> float:
+    if teacher_type == "raw_88k2":
+        return 1.0e-3
+    return 1.0
+
+
+def _default_hb_loss_weight_for_teacher(teacher_type: TeacherType) -> float:
+    del teacher_type
+    return 1.0
+
+
+def _default_preserve_lb_weight_for_teacher(teacher_type: TeacherType) -> float:
+    del teacher_type
+    return 1.0
 
 
 def _parse_loss_mode(value: Any) -> LossMode:
