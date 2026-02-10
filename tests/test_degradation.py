@@ -140,4 +140,4 @@ def test_upsample_bessel_reference_preserves_lowband_gain() -> None:
     peak_out = float(np.max(np.abs(output[512:])))
     gain_ratio = peak_out / peak_in
 
-    assert 0.8 <= gain_ratio <= 1.2
+    assert 0.95 <= gain_ratio <= 1.05
