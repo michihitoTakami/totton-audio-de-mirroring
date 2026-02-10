@@ -5,6 +5,7 @@ source_duration_sec: 1.0
 chunk_duration_sec: 0.25
 random_chunk: true
 seed: 1234
+teacher_type: raw_88k2
 
 signal_sampling:
   signal_types:

@@ -8,10 +8,12 @@ from typing import Any
 
 import numpy as np
 import torch
+from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.degradation import (
     DegradationProfileManager,
     apply_degradation_profile,
+    upsample_bessel_reference,
 )
 from totton_audio_de_mirroring.data.generator import (
     SignalRequest,
@@ -127,16 +129,36 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             profile,
             rng,
         )
+        teacher_full = _build_teacher_reference(
+            source_chunk,
+            source_sr=self._config.source_sample_rate,
+            target_sr=self._config.target_sample_rate,
+            teacher_type=self._config.teacher_type,
+            bessel_cutoff_hz=self._config.band_split.cutoff_hz,
+            bessel_order=self._config.degradation.iir_order,
+        )
 
         low_band, high_band = self._band_split.split(x_full)
+        _, teacher_high_band = self._band_split.split(teacher_full)
 
         hb_target_result = generate_hb_target(
-            high_band,
+            teacher_high_band,
             self._config.target_sample_rate,
             detection_config=self._config.mirror_detection,
             suppression_floor=self._config.hb_target.suppression_floor,
             energy_cap=self._config.hb_target.energy_cap,
             envelope_min=self._config.hb_target.envelope_min,
+        )
+        _validate_training_sample_consistency(
+            source=source_chunk,
+            x_full=x_full,
+            teacher_full=teacher_full,
+            low_band=low_band,
+            high_band=high_band,
+            hb_target=hb_target_result.target,
+            source_sr=self._config.source_sample_rate,
+            target_sr=self._config.target_sample_rate,
+            chunk_duration_sec=self._config.chunk_duration_sec,
         )
         mirror_mask = _to_tensor_2d(
             hb_target_result.detection.detection_mask.astype(np.float32)
@@ -149,6 +171,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             "high_band": _to_tensor(high_band),
             "hb_target": _to_tensor(hb_target_result.target),
             "mirror_mask": mirror_mask,
+            "teacher_type": self._config.teacher_type,
             "input_route": self._config.stage1_path.input_route,
             "target_route": self._config.stage1_path.target_route,
             "profile": profile,
@@ -345,6 +368,165 @@ def _extract_chunk(
         start = int(rng.integers(0, max_start + 1))
 
     return source[start : start + chunk_samples], start
+
+
+def _build_teacher_reference(
+    signal: np.ndarray,
+    *,
+    source_sr: int,
+    target_sr: int,
+    teacher_type: str,
+    bessel_cutoff_hz: float,
+    bessel_order: int,
+) -> np.ndarray:
+    """Build Stage 1 teacher reference at target sample rate.
+
+    Args:
+        signal: Source chunk at source sample rate.
+        source_sr: Source sample rate.
+        target_sr: Target sample rate.
+        teacher_type: Teacher reference type.
+        bessel_cutoff_hz: Bessel low-pass cutoff for bessel teacher mode.
+        bessel_order: Bessel IIR order for bessel teacher mode.
+
+    Returns:
+        Teacher reference signal at target sample rate.
+
+    Raises:
+        ValueError: If teacher_type is unsupported.
+
+    Physical Basis:
+        Stage 1 uses degraded `x_full` as input while supervision is derived
+        from an explicit teacher reference path (`raw_88k2` or `bessel_88k2`).
+    """
+    _validate_signal(signal)
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(target_sr, "target_sr")
+
+    if teacher_type == "raw_88k2":
+        return _upsample_raw_reference(signal, source_sr=source_sr, target_sr=target_sr)
+    if teacher_type == "bessel_88k2":
+        return upsample_bessel_reference(
+            signal=signal,
+            source_sr=source_sr,
+            target_sr=target_sr,
+            cutoff_hz=bessel_cutoff_hz,
+            order=bessel_order,
+        )
+    raise ValueError(f"Unsupported teacher_type: {teacher_type!r}.")
+
+
+def _upsample_raw_reference(
+    signal: np.ndarray, *, source_sr: int, target_sr: int
+) -> np.ndarray:
+    """Upsample via high-quality polyphase SRC for raw teacher references.
+
+    Args:
+        signal: Source chunk.
+        source_sr: Source sample rate.
+        target_sr: Target sample rate.
+
+    Returns:
+        Raw reference upsampled signal at target sample rate.
+
+    Physical Basis:
+        Polyphase sinc-style interpolation provides a neutral 2x reference
+        path without the Bessel teacher coloration.
+    """
+    _validate_signal(signal)
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(target_sr, "target_sr")
+    ratio = target_sr / source_sr
+    if abs(ratio - round(ratio)) > 1e-6:
+        raise ValueError("target_sr must be an integer multiple of source_sr.")
+    int_ratio = int(round(ratio))
+    if int_ratio <= 0:
+        raise ValueError("upsampling ratio must be positive.")
+
+    upsampled = sp_signal.resample_poly(
+        np.asarray(signal, dtype=np.float64),
+        up=int_ratio,
+        down=1,
+        axis=-1,
+        window=("kaiser", 8.6),
+    )
+    expected_len = signal.shape[-1] * int_ratio
+    return np.asarray(upsampled[..., :expected_len], dtype=np.float64)
+
+
+def _validate_training_sample_consistency(
+    *,
+    source: np.ndarray,
+    x_full: np.ndarray,
+    teacher_full: np.ndarray,
+    low_band: np.ndarray,
+    high_band: np.ndarray,
+    hb_target: np.ndarray,
+    source_sr: int,
+    target_sr: int,
+    chunk_duration_sec: float,
+) -> None:
+    """Validate generated training sample consistency before tensor export.
+
+    Args:
+        source: Source chunk at source sample rate.
+        x_full: Degraded Stage 1 input at target sample rate.
+        teacher_full: Teacher reference at target sample rate.
+        low_band: Low-band split from x_full.
+        high_band: High-band split from x_full.
+        hb_target: Generated high-band target.
+        source_sr: Source sample rate.
+        target_sr: Target sample rate.
+        chunk_duration_sec: Chunk duration in seconds.
+
+    Raises:
+        ValueError: If rates, lengths, channel rank, or peaks are inconsistent.
+
+    Physical Basis:
+        Stage 1 supervision requires strict alignment between input and target
+        timelines; SR/length/channel/peak checks prevent silent data drift.
+    """
+    _validate_signal(source)
+    _validate_signal(x_full)
+    _validate_signal(teacher_full)
+    _validate_signal(low_band)
+    _validate_signal(high_band)
+    _validate_signal(hb_target)
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(target_sr, "target_sr")
+    _validate_positive_float(chunk_duration_sec, "chunk_duration_sec")
+
+    expected_source_len = int(round(chunk_duration_sec * source_sr))
+    expected_target_len = int(round(chunk_duration_sec * target_sr))
+    if source.shape[-1] != expected_source_len:
+        raise ValueError(
+            "source length mismatch: "
+            f"expected {expected_source_len}, got {source.shape[-1]}."
+        )
+
+    for name, signal in (
+        ("x_full", x_full),
+        ("teacher_full", teacher_full),
+        ("low_band", low_band),
+        ("high_band", high_band),
+        ("hb_target", hb_target),
+    ):
+        if signal.shape[-1] != expected_target_len:
+            raise ValueError(
+                f"{name} length mismatch: expected {expected_target_len}, "
+                f"got {signal.shape[-1]}."
+            )
+        if not np.all(np.isfinite(signal)):
+            raise ValueError(f"{name} contains non-finite values.")
+        peak = float(np.max(np.abs(signal)))
+        if peak > 4.0:
+            raise ValueError(f"{name} peak is too large: {peak:.6f} > 4.0.")
+
+    if not np.all(np.isfinite(source)):
+        raise ValueError("source contains non-finite values.")
+    source_peak = float(np.max(np.abs(source)))
+    if source_peak > 4.0:
+        raise ValueError(f"source peak is too large: {source_peak:.6f} > 4.0.")
 
 
 def _to_tensor(array: np.ndarray) -> torch.Tensor:

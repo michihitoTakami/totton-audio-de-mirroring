@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -23,6 +23,10 @@ DEFAULT_CACHE_ITEMS = 128
 DEFAULT_SEED = None
 DEFAULT_INPUT_ROUTE = "source_chunk_44k1_to_x_full_88k2_via_degradation"
 DEFAULT_TARGET_ROUTE = "high_band_to_hb_target_via_mirror_detection"
+DEFAULT_TEACHER_TYPE = "raw_88k2"
+LEGACY_DEFAULT_TEACHER_TYPE = "bessel_88k2"
+ALLOWED_TEACHER_TYPES = ("raw_88k2", "bessel_88k2")
+TeacherType = Literal["raw_88k2", "bessel_88k2"]
 
 
 @dataclass(frozen=True)
@@ -224,6 +228,7 @@ class DataPipelineConfig:
         band_split: Band-split configuration.
         mirror_detection: Mirror detection configuration.
         hb_target: HB_target normalization configuration.
+        teacher_type: Teacher reference path for Stage 1 target generation.
         stage1_path: Explicit Stage 1 input/target path specification.
         cache: Cache configuration.
 
@@ -247,6 +252,7 @@ class DataPipelineConfig:
         default_factory=MirrorDetectionConfig
     )
     hb_target: HBTargetConfig = field(default_factory=HBTargetConfig)
+    teacher_type: TeacherType = cast(TeacherType, DEFAULT_TEACHER_TYPE)
     stage1_path: Stage1PathConfig = field(default_factory=Stage1PathConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
 
@@ -265,6 +271,11 @@ class DataPipelineConfig:
             raise ValueError(
                 "strict stage1_path requires a fixed 2x route "
                 "(source_sample_rate -> target_sample_rate)."
+            )
+        if self.teacher_type not in ALLOWED_TEACHER_TYPES:
+            raise ValueError(
+                "teacher_type must be one of "
+                f"{ALLOWED_TEACHER_TYPES}, got {self.teacher_type!r}."
             )
         if self.seed is not None and not isinstance(self.seed, int):
             raise ValueError("seed must be an int or None.")
@@ -292,6 +303,7 @@ class DataPipelineConfig:
             "band_split": _dataclass_to_dict(self.band_split),
             "mirror_detection": _dataclass_to_dict(self.mirror_detection),
             "hb_target": _dataclass_to_dict(self.hb_target),
+            "teacher_type": self.teacher_type,
             "stage1_path": _dataclass_to_dict(self.stage1_path),
             "cache": _dataclass_to_dict(self.cache),
         }
@@ -357,6 +369,9 @@ class DataPipelineConfig:
             band_split=band_split,
             mirror_detection=mirror_detection,
             hb_target=hb_target,
+            teacher_type=_coerce_teacher_type(
+                raw.get("teacher_type", LEGACY_DEFAULT_TEACHER_TYPE), "teacher_type"
+            ),
             stage1_path=stage1_path,
             cache=cache,
         )
@@ -458,9 +473,9 @@ def _build_dataclass(cls: type[Any], raw: Any) -> Any:
 def _coerce_int(value: Any, name: str) -> int:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be an int.")
-    if isinstance(value, (int, np.integer)):
+    if isinstance(value, int | np.integer):
         return int(value)
-    if isinstance(value, (float, np.floating, str)):
+    if isinstance(value, float | np.floating | str):
         return int(value)
     raise ValueError(f"{name} must be an int.")
 
@@ -474,7 +489,7 @@ def _coerce_optional_int(value: Any, name: str) -> int | None:
 def _coerce_float(value: Any, name: str) -> float:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be a float.")
-    if isinstance(value, (int, float, np.integer, np.floating)):
+    if isinstance(value, int | float | np.integer | np.floating):
         return float(value)
     if isinstance(value, str):
         return float(value)
@@ -490,9 +505,28 @@ def _coerce_bool(value: Any, name: str) -> bool:
             return True
         if lowered in {"false", "0", "no", "n"}:
             return False
-    if isinstance(value, (int, np.integer)):
+    if isinstance(value, int | np.integer):
         return bool(value)
     raise ValueError(f"{name} must be a bool.")
+
+
+def _coerce_teacher_type(value: Any, name: str) -> TeacherType:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string.")
+
+    normalized = value.strip().lower()
+    aliases = {
+        "raw88": "raw_88k2",
+        "raw_88k2": "raw_88k2",
+        "bessel": "bessel_88k2",
+        "bessel_88k2": "bessel_88k2",
+    }
+    mapped = aliases.get(normalized)
+    if mapped is None:
+        raise ValueError(
+            f"{name} must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
+        )
+    return cast(TeacherType, mapped)
 
 
 def _validate_positive_int(value: int, name: str) -> None:
