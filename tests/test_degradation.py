@@ -124,3 +124,20 @@ def test_upsample_bessel_reference_length_and_type() -> None:
     )
     assert output.shape[-1] == signal.shape[-1] * 2
     assert output.dtype == np.float64
+
+
+def test_upsample_bessel_reference_preserves_lowband_gain() -> None:
+    signal = 0.8 * np.sin(2.0 * np.pi * 1_000.0 * np.arange(4096) / SOURCE_SR)
+    output = upsample_bessel_reference(
+        signal=signal,
+        source_sr=SOURCE_SR,
+        target_sr=TARGET_SR,
+        cutoff_hz=20_000.0,
+        order=6,
+    )
+
+    peak_in = float(np.max(np.abs(signal[256:])))
+    peak_out = float(np.max(np.abs(output[512:])))
+    gain_ratio = peak_out / peak_in
+
+    assert 0.8 <= gain_ratio <= 1.2

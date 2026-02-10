@@ -426,7 +426,10 @@ def _upsample_iir(
         raise ValueError(f"Unsupported IIR kind: {kind}.")
 
     filtered = sp_signal.lfilter(b, a, upsampled, axis=-1)
-    return np.asarray(filtered, dtype=np.float64)
+    # Zero-stuffing inserts (ratio - 1) zeros between samples, so recover
+    # passband amplitude by scaling the interpolated signal by ratio.
+    gain_compensated = filtered * ratio
+    return np.asarray(gain_compensated, dtype=np.float64)
 
 
 def _zero_stuff(signal: np.ndarray, ratio: int) -> np.ndarray:
