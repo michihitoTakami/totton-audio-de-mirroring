@@ -264,6 +264,22 @@ uv run python scripts/evaluate_stage1.py \
   --csv reports/stage1_metrics.csv
 ```
 
+raw教師移行後の統合評価（Issue #108）では、1コマンドで `json + md + 図` を生成できる:
+
+```bash
+uv run python scripts/evaluate_stage1.py \
+  --input-dir data/eval/stage1/input \
+  --output-dir data/eval/stage1/output \
+  --target-dir data/eval/stage1/target_raw88 \
+  --evaluation-target raw88.2 \
+  --imd-naive-dir data/eval/stage1/imd_naive \
+  --report-dir reports/stage1/integrated_eval \
+  --mirror-visual-limit 8
+```
+
+`--evaluation-target` は `input` / `raw88.2` / `bessel88.2` を選択可能。
+`raw88.2` または `bessel88.2` を使う場合は `--target-dir` が必須。
+
 主な出力指標:
 
 1. LB振幅差分（0–20kHz）
@@ -272,12 +288,16 @@ uv run python scripts/evaluate_stage1.py \
 4. Mirror低減率（STFT対称性ベース）
 5. HB energy cap違反率
 6. Touch指標（非ミラーHB変形量）
+7. Ringing / pre-ringing / overshoot 集約指標
+8. IMD proxy（naive対比）
 
 `--json` 出力には `gates` オブジェクトが含まれ、以下の判定根拠（threshold / observed / passed）を追跡できる:
 
 1. `energy_cap`
 2. `mirror_reduction`
-3. `ringing_regression`
+3. `lowband_preservation`
+4. `ringing_regression`
+5. `imd_proxy`（`--imd-naive-dir` 指定時）
 
 strict判定時の終了コードは固定:
 
@@ -285,6 +305,8 @@ strict判定時の終了コードは固定:
 2. `3`: mirror reduction gate fail (`--strict-mirror-reduction`)
 3. `4`: ringing regression gate fail (`--strict-ringing-regression`)
 4. `5`: strict複数指定時に2つ以上 fail
+5. `6`: lowband preservation gate fail (`--strict-lowband-preservation`)
+6. `7`: IMD proxy gate fail (`--strict-imd-proxy`)
 
 回帰テスト（golden samples）:
 
