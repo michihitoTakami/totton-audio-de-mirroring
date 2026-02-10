@@ -307,7 +307,7 @@ def train_stage1_distillation(
     checkpoint_dir: Path | None = None,
     val_dataloader: DataLoader[dict[str, Any]] | None = None,
     model_config: Mapping[str, Any] | None = None,
-    checkpoint_prefix: str = "stage1_distill",
+    checkpoint_prefix: str | None = None,
 ) -> DistillationResult:
     """Train lightweight Stage 1 student using teacher distillation.
 
@@ -317,8 +317,13 @@ def train_stage1_distillation(
     """
     if train_dataloader is None:
         raise ValueError("train_dataloader must be provided.")
-    if len(checkpoint_prefix.strip()) == 0:
-        raise ValueError("checkpoint_prefix must not be empty.")
+    resolved_prefix = (
+        f"stage1_distill_{_teacher_tag(config.teacher_type)}"
+        if checkpoint_prefix is None
+        else checkpoint_prefix.strip()
+    )
+    if len(resolved_prefix) == 0:
+        raise ValueError("checkpoint_prefix must not be empty when provided.")
     _set_seed(config.seed)
     device = select_device(
         device_override=config.device, require_cuda=config.require_cuda
@@ -393,13 +398,13 @@ def train_stage1_distillation(
                 device=device,
                 model_config=model_config,
             )
-            last_checkpoint = checkpoint_dir / f"{checkpoint_prefix}_last.pt"
+            last_checkpoint = checkpoint_dir / f"{resolved_prefix}_last.pt"
             save_checkpoint(last_checkpoint, state)
 
             if monitor_value < best_val_total:
                 best_val_total = monitor_value
                 state["best_val_total"] = best_val_total
-                best_checkpoint = checkpoint_dir / f"{checkpoint_prefix}_best.pt"
+                best_checkpoint = checkpoint_dir / f"{resolved_prefix}_best.pt"
                 save_checkpoint(best_checkpoint, state)
 
         if (epoch + 1) % config.log_interval == 0 or epoch == 0:
@@ -635,6 +640,14 @@ def _parse_teacher_type(value: Any) -> TeacherType:
     raise ValueError(
         f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
     )
+
+
+def _teacher_tag(teacher_type: TeacherType) -> str:
+    if teacher_type == "raw_88k2":
+        return "raw88"
+    if teacher_type == "bessel_88k2":
+        return "bessel"
+    raise ValueError(f"Unsupported teacher_type: {teacher_type!r}.")
 
 
 def _default_energy_cap_for_teacher(teacher_type: TeacherType) -> float:
