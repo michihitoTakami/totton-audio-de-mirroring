@@ -180,3 +180,92 @@ def test_build_stage1_processor_nmse_uses_device_override(
     )
 
     assert calls[0]["device"] == "cuda"
+
+
+def test_cli_fail_fast_stops_batch_on_first_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-fast should stop batch processing after first failed item."""
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+
+    bad = input_dir / "a_bad.wav"
+    good = input_dir / "b_good.wav"
+    _write_test_wav(bad, sample_rate=48_000)
+    _write_test_wav(good, sample_rate=44_100)
+
+    monkeypatch.setattr(
+        "totton_audio_de_mirroring.cli.run_stage1_stage2_pipeline",
+        _fake_run_stage1_stage2_pipeline,
+    )
+
+    exit_code = run_cli(
+        [
+            str(input_dir / "*.wav"),
+            "-o",
+            str(output_dir),
+            "--output-format",
+            "wav",
+            "--fail-fast",
+        ]
+    )
+
+    assert exit_code == 1
+    assert not (output_dir / "b_good.wav").exists()
+
+
+def test_cli_flac_guard_returns_user_friendly_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FLAC output above format limit should fail with concise user message."""
+    input_path = tmp_path / "input.wav"
+    output_dir = tmp_path / "out"
+    _write_test_wav(input_path, sample_rate=44_100)
+
+    monkeypatch.setattr(
+        "totton_audio_de_mirroring.cli.run_stage1_stage2_pipeline",
+        _fake_run_stage1_stage2_pipeline,
+    )
+
+    exit_code = run_cli(
+        [
+            str(input_path),
+            "-o",
+            str(output_dir),
+            "--output-format",
+            "flac",
+            "--fail-fast",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Failed to process" in captured.err
+    assert "FLAC output is not supported above 655350 Hz" in captured.err
+
+
+def test_cli_reports_setup_error_without_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Config validation failures should return exit code 1 with short message."""
+    config_path = tmp_path / "invalid.yaml"
+    config_path.write_text("[]\n", encoding="utf-8")
+
+    exit_code = run_cli(
+        [
+            "missing.wav",
+            "-o",
+            str(tmp_path / "out"),
+            "-c",
+            str(config_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Error: Config root must be a mapping." in captured.err

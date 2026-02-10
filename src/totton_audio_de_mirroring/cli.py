@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from glob import glob
@@ -156,63 +157,67 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         complete offline batch run.
     """
     args = parse_args(argv)
-    config_raw = _load_yaml_mapping(args.config)
-    settings = _build_cli_settings(config_raw.get("cli", {}))
+    try:
+        config_raw = _load_yaml_mapping(args.config)
+        settings = _build_cli_settings(config_raw.get("cli", {}))
 
-    log_level = str(args.log_level or settings.log_level).upper()
-    _configure_logging(log_level)
+        log_level = str(args.log_level or settings.log_level).upper()
+        _configure_logging(log_level)
 
-    pipeline_config = _build_pipeline_config(config_raw.get("pipeline", {}))
-    stage1_processor = _build_stage1_processor(
-        config_raw.get("stage1", {}),
-        device_override=args.device,
-    )
+        pipeline_config = _build_pipeline_config(config_raw.get("pipeline", {}))
+        stage1_processor = _build_stage1_processor(
+            config_raw.get("stage1", {}),
+            device_override=args.device,
+        )
 
-    selected_formats = _resolve_output_formats(
-        args.output_format,
-        default_formats=settings.output_formats,
-    )
-    input_paths = _resolve_input_paths(args.inputs)
-    targets = _resolve_output_targets(
-        input_paths=input_paths,
-        output_arg=args.output,
-        output_formats=selected_formats,
-    )
+        selected_formats = _resolve_output_formats(
+            args.output_format,
+            default_formats=settings.output_formats,
+        )
+        input_paths = _resolve_input_paths(args.inputs)
+        targets = _resolve_output_targets(
+            input_paths=input_paths,
+            output_arg=args.output,
+            output_formats=selected_formats,
+        )
 
-    fail_fast = bool(args.fail_fast or settings.fail_fast)
-    processed = 0
-    failed = 0
+        fail_fast = bool(args.fail_fast or settings.fail_fast)
+        processed = 0
+        failed = 0
 
-    LOGGER.info("Processing started: %d file(s)", len(input_paths))
-    _print_progress(0, len(input_paths))
+        LOGGER.info("Processing started: %d file(s)", len(input_paths))
+        _print_progress(0, len(input_paths))
 
-    for index, input_path in enumerate(input_paths, start=1):
-        LOGGER.info("[%d/%d] %s", index, len(input_paths), input_path)
-        try:
-            result = _process_one_file(
-                input_path=input_path,
-                pipeline_config=pipeline_config,
-                stage1_processor=stage1_processor,
-            )
-            _write_outputs(
-                result=result,
-                input_path=input_path,
-                targets=targets[input_path],
-                output_sample_rate=pipeline_config.output_sample_rate,
-            )
-            processed += 1
-        except Exception as exc:
-            failed += 1
-            LOGGER.error("Failed to process %s: %s", input_path, exc)
-            if fail_fast:
+        for index, input_path in enumerate(input_paths, start=1):
+            LOGGER.info("[%d/%d] %s", index, len(input_paths), input_path)
+            try:
+                result = _process_one_file(
+                    input_path=input_path,
+                    pipeline_config=pipeline_config,
+                    stage1_processor=stage1_processor,
+                )
+                _write_outputs(
+                    result=result,
+                    input_path=input_path,
+                    targets=targets[input_path],
+                    output_sample_rate=pipeline_config.output_sample_rate,
+                )
+                processed += 1
+            except Exception as exc:
+                failed += 1
+                LOGGER.error("Failed to process %s: %s", input_path, exc)
+                if fail_fast:
+                    _print_progress(index, len(input_paths))
+                    LOGGER.error("Stopped by fail-fast mode.")
+                    return 1
+            finally:
                 _print_progress(index, len(input_paths))
-                LOGGER.error("Stopped by fail-fast mode.")
-                return 1
-        finally:
-            _print_progress(index, len(input_paths))
 
-    LOGGER.info("Done. success=%d failure=%d", processed, failed)
-    return 0 if failed == 0 else 1
+        LOGGER.info("Done. success=%d failure=%d", processed, failed)
+        return 0 if failed == 0 else 1
+    except Exception as exc:
+        _print_user_error(str(exc))
+        return 1
 
 
 def _configure_logging(level: str) -> None:
@@ -558,7 +563,12 @@ def _print_progress(done: int, total: int) -> None:
     filled = int(round(ratio * width))
     bar = "#" * filled + "-" * (width - filled)
     end = "\n" if done >= total else ""
-    print(f"\r[{bar}] {done}/{total}", end=end, flush=True)
+    print(f"\r[{bar}] {done}/{total}", end=end, flush=True, file=sys.stderr)
+
+
+def _print_user_error(message: str) -> None:
+    """Print user-friendly fatal error message."""
+    print(f"Error: {message}", file=sys.stderr)
 
 
 def _coerce_optional_float(value: Any) -> float | None:
