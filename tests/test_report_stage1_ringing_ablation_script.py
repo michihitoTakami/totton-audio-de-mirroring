@@ -54,6 +54,8 @@ def test_report_script_writes_markdown(
     content = output_md.read_text(encoding="utf-8")
     assert "Issue #81 Stage1 Ringing-Loss Ablation Report" in content
     assert "Loss Contribution Comparison" in content
+    assert "| subtract |" in content
+    assert "| cap_strict |" in content
     assert "ringing improved: PASS" in content
     assert "mirror maintained: PASS" in content
 
@@ -87,6 +89,8 @@ def _make_history(contrib_edge: float, contrib_step: float) -> dict[str, float]:
         "contrib_stft": 0.3,
         "contrib_preserve": 0.2,
         "contrib_energy": 0.1,
+        "contrib_subtract": 0.06,
+        "contrib_cap_strict": 0.02,
         "contrib_edge": contrib_edge,
         "contrib_step": contrib_step,
     }

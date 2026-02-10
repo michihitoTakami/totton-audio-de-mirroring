@@ -6,7 +6,7 @@ Stage1 の mirror 抑制性能を維持したまま、エッジ近傍リンギ�
 
 ## Added Training Objective
 
-- Existing: `mask`, `stft`, `preserve`, `energy`
+- Existing: `mask`, `stft`, `preserve`, `energy`, `subtract`, `cap_strict`
 - New auxiliary terms:
   - `edge`: ターゲット微分に対するエッジ重み付き微分一致
   - `step`: エッジ近傍の step-response 一致
@@ -27,6 +27,7 @@ Stage1 の mirror 抑制性能を維持したまま、エッジ近傍リンギ�
 学習ログ (`EpochMetrics`) に以下の寄与率が追加される:
 
 - `contrib_mask`, `contrib_stft`, `contrib_preserve`, `contrib_energy`
+- `contrib_subtract`, `contrib_cap_strict`
 - `contrib_edge`, `contrib_step`
 
 寄与率は weighted loss の正規化比で、1.0 に和が揃う。
