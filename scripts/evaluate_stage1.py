@@ -958,6 +958,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise FileNotFoundError(f"target_dir not found: {args.target_dir}")
     if args.evaluation_target != "input" and args.target_dir is None:
         raise ValueError("target_dir is required when evaluation_target is not 'input'")
+    if args.strict_imd_proxy and args.imd_naive_dir is None:
+        raise ValueError("imd_naive_dir is required when strict_imd_proxy is enabled")
     mirror_lower_hz = float(args.mirror_band_hz[0])
     mirror_upper_hz = float(args.mirror_band_hz[1])
     if mirror_lower_hz < 0.0:

@@ -428,6 +428,29 @@ def test_cli_strict_imd_proxy_returns_exit_code_7(
     assert excinfo.value.code == 7
 
 
+def test_cli_strict_imd_proxy_requires_naive_dir(
+    paired_npy_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict IMD gate should require explicit naive reference directory."""
+    input_dir, output_dir = paired_npy_dirs
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_stage1.py",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--strict-imd-proxy",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="imd_naive_dir is required"):
+        main()
+
+
 def _build_gate_inputs(
     *,
     energy_violation_rate: float,
