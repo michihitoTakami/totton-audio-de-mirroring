@@ -500,63 +500,34 @@ def _run_epoch(
 
     start = time.perf_counter()
     model.train(mode=training)
+    amp_enabled = scaler.is_enabled()
 
     for step, batch in enumerate(dataloader):
         hb_in, hb_target, mirror_mask = _prepare_batch(batch, device)
         batch_size = hb_in.shape[0]
 
         if training:
-            optimizer.zero_grad(set_to_none=True)
-            with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
-                hb_pred = _forward_highband(model, hb_in)
-                terms = compute_losses(
-                    hb_in,
-                    hb_target,
-                    hb_pred,
-                    mirror_mask,
-                    mask_config=config.mask_config,
-                    stft_configs=config.stft_configs,
-                    weights=config.loss_weights,
-                    energy_cap=config.energy_cap,
-                    ringing_config=config.ringing_loss_config,
-                    mask_mode=config.mask_mode,
-                )
-            _validate_batch_finite(
-                hb_pred=hb_pred,
-                terms=terms,
+            hb_pred, terms, amp_enabled = _run_train_step_with_amp_fallback(
+                model=model,
+                optimizer=optimizer,
+                scaler=scaler,
+                hb_in=hb_in,
+                hb_target=hb_target,
+                mirror_mask=mirror_mask,
+                config=config,
                 epoch=epoch,
                 step=step,
-                split="train",
+                use_amp=amp_enabled,
             )
-            scaler.scale(terms.total).backward()
-            if config.grad_clip is not None:
-                scaler.unscale_(optimizer)
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    config.grad_clip,
-                )
-                if not torch.isfinite(grad_norm):
-                    optimizer.zero_grad(set_to_none=True)
-                    raise RuntimeError(
-                        f"Non-finite gradient norm detected at epoch={epoch}, "
-                        f"step={step}: grad_norm={float(grad_norm)}"
-                    )
-            scaler.step(optimizer)
-            scaler.update()
         else:
             with torch.no_grad():
                 hb_pred = _forward_highband(model, hb_in)
-                terms = compute_losses(
-                    hb_in,
-                    hb_target,
-                    hb_pred,
-                    mirror_mask,
-                    mask_config=config.mask_config,
-                    stft_configs=config.stft_configs,
-                    weights=config.loss_weights,
-                    energy_cap=config.energy_cap,
-                    ringing_config=config.ringing_loss_config,
-                    mask_mode=config.mask_mode,
+                terms = _compute_losses_fp32(
+                    hb_in=hb_in,
+                    hb_target=hb_target,
+                    hb_pred=hb_pred,
+                    mirror_mask=mirror_mask,
+                    config=config,
                 )
             _validate_batch_finite(
                 hb_pred=hb_pred,
@@ -743,6 +714,217 @@ def _forward_highband(model: nn.Module, hb_in: torch.Tensor) -> torch.Tensor:
     """Forward high-band data through the NMSE model."""
     forward_fn = cast(Callable[[torch.Tensor], torch.Tensor], model.forward_highband)
     return forward_fn(hb_in)
+
+
+def _compute_losses_fp32(
+    *,
+    hb_in: torch.Tensor,
+    hb_target: torch.Tensor,
+    hb_pred: torch.Tensor,
+    mirror_mask: torch.Tensor,
+    config: TrainingConfig,
+) -> LossTerms:
+    """Compute training losses in fp32 for STFT numerical stability.
+
+    Args:
+        hb_in: High-band input.
+        hb_target: High-band training target.
+        hb_pred: High-band model prediction.
+        mirror_mask: Mirror-bin emphasis mask.
+        config: Training configuration with loss settings.
+
+    Returns:
+        Composite loss terms.
+
+    Physical Basis:
+        STFT-based objectives are sensitive to half-precision complex arithmetic.
+        Running loss computation in fp32 avoids ComplexHalf instability while
+        preserving mixed-precision speedup in the model forward pass.
+    """
+    return compute_losses(
+        hb_in.to(dtype=torch.float32),
+        hb_target.to(dtype=torch.float32),
+        hb_pred.to(dtype=torch.float32),
+        mirror_mask.to(dtype=torch.float32),
+        mask_config=config.mask_config,
+        stft_configs=config.stft_configs,
+        weights=config.loss_weights,
+        energy_cap=config.energy_cap,
+        ringing_config=config.ringing_loss_config,
+        mask_mode=config.mask_mode,
+    )
+
+
+def _run_train_step_with_amp_fallback(
+    *,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scaler: torch.amp.GradScaler,
+    hb_in: torch.Tensor,
+    hb_target: torch.Tensor,
+    mirror_mask: torch.Tensor,
+    config: TrainingConfig,
+    epoch: int,
+    step: int,
+    use_amp: bool,
+) -> tuple[torch.Tensor, LossTerms, bool]:
+    """Run one optimizer step with optional AMP-to-fp32 fallback.
+
+    Args:
+        model: Trainable Stage1 model.
+        optimizer: Optimizer instance.
+        scaler: Gradient scaler.
+        hb_in: High-band input.
+        hb_target: High-band target.
+        mirror_mask: Mirror mask tensor.
+        config: Training configuration.
+        epoch: Current epoch index.
+        step: Current step index.
+
+    Returns:
+        Tuple of prediction and computed loss terms.
+
+    Raises:
+        RuntimeError: If non-finite gradient norm persists after fallback.
+
+    Physical Basis:
+        Some CUDA paths produce unstable gradients in mixed precision at the
+        first step. A per-step fp32 retry preserves convergence safety while
+        retaining AMP speed on stable steps.
+    """
+    use_amp_attempt = use_amp
+    max_attempts = 2 if use_amp_attempt else 1
+    for attempt in range(max_attempts):
+        optimizer.zero_grad(set_to_none=True)
+        hb_pred, terms = _forward_and_compute_terms(
+            model=model,
+            hb_in=hb_in,
+            hb_target=hb_target,
+            mirror_mask=mirror_mask,
+            config=config,
+            use_amp=use_amp_attempt,
+        )
+        _validate_batch_finite(
+            hb_pred=hb_pred,
+            terms=terms,
+            epoch=epoch,
+            step=step,
+            split="train",
+        )
+        _backward_total(terms=terms, scaler=scaler, use_amp=use_amp_attempt)
+
+        grad_norm = _clip_gradients(
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            grad_clip=config.grad_clip,
+            use_amp=use_amp_attempt,
+        )
+        if grad_norm is not None and not torch.isfinite(grad_norm):
+            optimizer.zero_grad(set_to_none=True)
+            if use_amp_attempt and attempt == 0:
+                _log_amp_fallback(epoch=epoch, step=step, grad_norm=grad_norm)
+                scaler.update()
+                use_amp_attempt = False
+                continue
+            raise RuntimeError(
+                f"Non-finite gradient norm detected at epoch={epoch}, "
+                f"step={step}: grad_norm={float(grad_norm)}"
+            )
+
+        _step_optimizer(
+            optimizer=optimizer,
+            scaler=scaler,
+            use_amp=use_amp_attempt,
+        )
+        return hb_pred, terms, use_amp_attempt
+
+    raise RuntimeError(
+        f"Training step failed unexpectedly at epoch={epoch}, step={step}."
+    )
+
+
+def _forward_and_compute_terms(
+    *,
+    model: nn.Module,
+    hb_in: torch.Tensor,
+    hb_target: torch.Tensor,
+    mirror_mask: torch.Tensor,
+    config: TrainingConfig,
+    use_amp: bool,
+) -> tuple[torch.Tensor, LossTerms]:
+    """Run forward pass and compute fp32 losses for one training step."""
+    with torch.amp.autocast("cuda", enabled=use_amp):
+        hb_pred = _forward_highband(model, hb_in)
+    terms = _compute_losses_fp32(
+        hb_in=hb_in,
+        hb_target=hb_target,
+        hb_pred=hb_pred,
+        mirror_mask=mirror_mask,
+        config=config,
+    )
+    return hb_pred, terms
+
+
+def _backward_total(
+    *,
+    terms: LossTerms,
+    scaler: torch.amp.GradScaler,
+    use_amp: bool,
+) -> None:
+    """Backpropagate one step using AMP scaler when enabled."""
+    if use_amp:
+        scaler.scale(terms.total).backward()
+        return
+    terms.total.backward()
+
+
+def _clip_gradients(
+    *,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scaler: torch.amp.GradScaler,
+    grad_clip: float | None,
+    use_amp: bool,
+) -> torch.Tensor | None:
+    """Clip gradients and return resulting norm when enabled."""
+    if grad_clip is None:
+        return None
+    if use_amp:
+        scaler.unscale_(optimizer)
+    return torch.nn.utils.clip_grad_norm_(
+        model.parameters(),
+        grad_clip,
+    )
+
+
+def _log_amp_fallback(*, epoch: int, step: int, grad_norm: torch.Tensor) -> None:
+    """Log one-line marker when switching from AMP to fp32 retry."""
+    print(
+        " ".join(
+            [
+                "amp_fallback=fp32",
+                f"epoch={epoch}",
+                f"step={step}",
+                f"grad_norm={float(grad_norm)}",
+            ]
+        ),
+        flush=True,
+    )
+
+
+def _step_optimizer(
+    *,
+    optimizer: torch.optim.Optimizer,
+    scaler: torch.amp.GradScaler,
+    use_amp: bool,
+) -> None:
+    """Apply optimizer step with or without AMP scaler."""
+    if use_amp:
+        scaler.step(optimizer)
+        scaler.update()
+        return
+    optimizer.step()
 
 
 def _log_step_progress(epoch: int, step: int, terms: LossTerms) -> None:

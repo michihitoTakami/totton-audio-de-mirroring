@@ -11,11 +11,14 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+import totton_audio_de_mirroring.training.trainer as trainer_module
 from totton_audio_de_mirroring.training.losses import LossWeights, STFTLossConfig
 from totton_audio_de_mirroring.training.runtime import compute_lowband_metrics
 from totton_audio_de_mirroring.training.trainer import (
     TrainingConfig,
     _compute_batch_metrics,
+    _compute_losses_fp32,
+    _run_train_step_with_amp_fallback,
     load_training_config,
     select_device,
     train_stage1,
@@ -45,6 +48,28 @@ class _StaticBatchDataset(Dataset[dict[str, torch.Tensor]]):
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         return self._batches[index]
+
+
+class _FakeGradScaler:
+    def __init__(self, *, enabled: bool) -> None:
+        self._enabled = enabled
+        self.step_calls = 0
+
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    def scale(self, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor
+
+    def unscale_(self, optimizer: torch.optim.Optimizer) -> None:
+        del optimizer
+
+    def step(self, optimizer: torch.optim.Optimizer) -> None:
+        self.step_calls += 1
+        optimizer.step()
+
+    def update(self) -> None:
+        return
 
 
 def test_select_device_override_cpu() -> None:
@@ -359,6 +384,110 @@ def test_train_stage1_raises_when_non_finite_output_detected(tmp_path: Path) -> 
         )
 
     assert (tmp_path / "stage1_emergency.pt").exists()
+
+
+def test_compute_losses_fp32_casts_all_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hb_in = torch.randn(2, 256, dtype=torch.float16)
+    hb_target = torch.randn(2, 256, dtype=torch.float16)
+    hb_pred = torch.randn(2, 256, dtype=torch.float16, requires_grad=True)
+    mirror_mask = torch.ones(2, 33, 17, dtype=torch.float16)
+    config = TrainingConfig(
+        epochs=1,
+        learning_rate=1.0e-3,
+        use_amp=True,
+        require_cuda=False,
+        mask_config=STFTLossConfig(n_fft=64, hop_length=16, win_length=64),
+        stft_configs=(STFTLossConfig(n_fft=64, hop_length=16, win_length=64),),
+    )
+    original_compute_losses = trainer_module.compute_losses
+
+    def _spy_compute_losses(
+        hb_in_arg: torch.Tensor,
+        hb_target_arg: torch.Tensor,
+        hb_pred_arg: torch.Tensor,
+        mirror_mask_arg: torch.Tensor,
+        **kwargs: Any,
+    ) -> Any:
+        assert hb_in_arg.dtype == torch.float32
+        assert hb_target_arg.dtype == torch.float32
+        assert hb_pred_arg.dtype == torch.float32
+        assert mirror_mask_arg.dtype == torch.float32
+        return original_compute_losses(
+            hb_in_arg,
+            hb_target_arg,
+            hb_pred_arg,
+            mirror_mask_arg,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(trainer_module, "compute_losses", _spy_compute_losses)
+    terms = _compute_losses_fp32(
+        hb_in=hb_in,
+        hb_target=hb_target,
+        hb_pred=hb_pred,
+        mirror_mask=mirror_mask,
+        config=config,
+    )
+    assert terms.total.dtype == torch.float32
+
+
+def test_run_train_step_with_amp_fallback_retries_in_fp32(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _DummyNMSE()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-3)
+    scaler = _FakeGradScaler(enabled=True)
+
+    hb_in = torch.randn(2, 256, dtype=torch.float32)
+    hb_target = hb_in * 0.8
+    stft = torch.stft(
+        hb_in,
+        n_fft=64,
+        hop_length=16,
+        win_length=64,
+        window=torch.hann_window(64),
+        return_complex=True,
+    )
+    mirror_mask = torch.ones(2, stft.shape[-2], stft.shape[-1], dtype=torch.float32)
+    config = TrainingConfig(
+        epochs=1,
+        learning_rate=1.0e-3,
+        use_amp=True,
+        require_cuda=False,
+        grad_clip=1.0,
+        mask_config=STFTLossConfig(n_fft=64, hop_length=16, win_length=64),
+        stft_configs=(STFTLossConfig(n_fft=64, hop_length=16, win_length=64),),
+    )
+    clip_values = [torch.tensor(float("nan")), torch.tensor(0.5)]
+
+    def _clip_grad_norm_side_effect(*args: Any, **kwargs: Any) -> torch.Tensor:
+        del args, kwargs
+        return clip_values.pop(0)
+
+    monkeypatch.setattr(
+        torch.nn.utils,
+        "clip_grad_norm_",
+        _clip_grad_norm_side_effect,
+    )
+    initial_gain = float(model.gain.detach().item())
+    _, terms, amp_enabled = _run_train_step_with_amp_fallback(
+        model=model,
+        optimizer=optimizer,
+        scaler=scaler,  # type: ignore[arg-type]
+        hb_in=hb_in,
+        hb_target=hb_target,
+        mirror_mask=mirror_mask,
+        config=config,
+        epoch=0,
+        step=0,
+        use_amp=True,
+    )
+    assert amp_enabled is False
+    assert scaler.step_calls == 0
+    assert float(model.gain.detach().item()) != pytest.approx(initial_gain)
+    assert terms.total.detach().item() >= 0.0
 
 
 def _make_loader(num_steps: int) -> DataLoader[dict[str, Any]]:
