@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -13,6 +14,7 @@ import torch
 from scripts.run_issue63_stage1_workflow import (
     CandidateEvaluation,
     GateConfig,
+    RunContext,
     _build_gate_details,
     _default_run_id,
     _evaluate_square_probe_ringing,
@@ -27,7 +29,10 @@ from scripts.run_issue63_stage1_workflow import (
     _select_best_candidate,
     _summarize_square_probe_ringing,
     _teacher_tag,
+    _write_run_manifest,
 )
+
+from totton_audio_de_mirroring.training.trainer import TrainingConfig
 
 
 def _gate_config() -> GateConfig:
@@ -365,6 +370,55 @@ def test_resolve_run_context_scopes_dirs_by_teacher_and_run_id() -> None:
     assert context.checkpoint_dir == Path(
         "data/checkpoints/stage1/raw88/stage1_raw88_nmse_20260210_s1234"
     )
+
+
+def test_write_run_manifest_includes_required_raw_teacher_metadata(
+    tmp_path: Path,
+) -> None:
+    report_dir = tmp_path / "reports"
+    data_config = tmp_path / "data_config.yaml"
+    train_config = tmp_path / "train_config.yaml"
+    data_config.write_text("teacher_type: raw_88k2\n", encoding="utf-8")
+    train_config.write_text("seed: 1234\n", encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "data_config": data_config,
+            "train_config": train_config,
+            "checkpoint_dir": Path("data/checkpoints/stage1/raw88/run"),
+            "candidate_checkpoints": ["stage1_best.pt", "stage1_last.pt"],
+            "seed": 1234,
+        },
+    )()
+    training = TrainingConfig(seed=1234)
+    gate = _gate_config()
+    run_context = RunContext(
+        teacher_tag="raw88",
+        run_id="stage1_raw88_nmse_20260210_s1234",
+        report_dir=report_dir,
+        checkpoint_dir=Path("data/checkpoints/stage1/raw88/run"),
+    )
+
+    report_dir.mkdir(parents=True, exist_ok=True)
+    _write_run_manifest(
+        report_dir=report_dir,
+        args=args,
+        training_config=training,
+        gate_config=gate,
+        run_context=run_context,
+        teacher_type="raw_88k2",
+    )
+
+    payload = json.loads((report_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert payload["teacher_type"] == "raw_88k2"
+    assert payload["teacher_tag"] == "raw88"
+    assert payload["run_id"] == "stage1_raw88_nmse_20260210_s1234"
+    assert payload["seed"] == 1234
+    assert "config_hash" in payload
+    assert "checkpoint_paths" in payload
+    assert "gate_thresholds" in payload
 
 
 def test_build_gate_details_contains_traceable_thresholds() -> None:

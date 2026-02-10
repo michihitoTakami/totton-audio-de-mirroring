@@ -1346,6 +1346,7 @@ def _write_run_manifest(
         "teacher_type": teacher_type,
         "teacher_tag": run_context.teacher_tag,
         "run_id": run_context.run_id,
+        "seed": training_config.seed,
         "report_dir": str(run_context.report_dir),
         "checkpoint_dir": str(run_context.checkpoint_dir),
         "python": sys.version,
