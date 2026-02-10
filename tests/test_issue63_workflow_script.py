@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -13,7 +14,9 @@ import torch
 from scripts.run_issue63_stage1_workflow import (
     CandidateEvaluation,
     GateConfig,
+    RunContext,
     _build_gate_details,
+    _default_run_id,
     _evaluate_square_probe_ringing,
     _generate_square_probe_signal,
     _load_ringing_summary,
@@ -21,10 +24,15 @@ from scripts.run_issue63_stage1_workflow import (
     _passes_imd_gate,
     _passes_mirror_gate,
     _passes_ringing_gate,
+    _resolve_run_context,
     _run_command_with_live_log,
     _select_best_candidate,
     _summarize_square_probe_ringing,
+    _teacher_tag,
+    _write_run_manifest,
 )
+
+from totton_audio_de_mirroring.training.trainer import TrainingConfig
 
 
 def _gate_config() -> GateConfig:
@@ -326,6 +334,91 @@ def test_load_ringing_summary_prefers_ringing_metrics_over_top_summary() -> None
     }
     summary = _load_ringing_summary(payload)
     assert summary["mean_plateau_ripple_rms_ratio"] == pytest.approx(1.02)
+
+
+def test_teacher_tag_maps_supported_teacher_types() -> None:
+    assert _teacher_tag("raw_88k2") == "raw88"
+    assert _teacher_tag("bessel_88k2") == "bessel"
+
+
+def test_default_run_id_embeds_teacher_and_seed() -> None:
+    run_id = _default_run_id(teacher_tag="raw88", seed=1234)
+    assert run_id.startswith("stage1_raw88_nmse_")
+    assert run_id.endswith("_s1234")
+
+
+def test_resolve_run_context_scopes_dirs_by_teacher_and_run_id() -> None:
+    args = type(
+        "Args",
+        (),
+        {
+            "teacher_tag": None,
+            "run_id": "stage1_raw88_nmse_20260210_s1234",
+            "seed": 1234,
+            "report_dir": None,
+            "checkpoint_dir": None,
+            "report_root_dir": Path("reports/stage1"),
+            "checkpoint_root_dir": Path("data/checkpoints/stage1"),
+        },
+    )()
+    context = _resolve_run_context(args=args, teacher_type="raw_88k2")
+    assert context.teacher_tag == "raw88"
+    assert context.run_id == "stage1_raw88_nmse_20260210_s1234"
+    assert context.report_dir == Path(
+        "reports/stage1/raw88/stage1_raw88_nmse_20260210_s1234"
+    )
+    assert context.checkpoint_dir == Path(
+        "data/checkpoints/stage1/raw88/stage1_raw88_nmse_20260210_s1234"
+    )
+
+
+def test_write_run_manifest_includes_required_raw_teacher_metadata(
+    tmp_path: Path,
+) -> None:
+    report_dir = tmp_path / "reports"
+    data_config = tmp_path / "data_config.yaml"
+    train_config = tmp_path / "train_config.yaml"
+    data_config.write_text("teacher_type: raw_88k2\n", encoding="utf-8")
+    train_config.write_text("seed: 1234\n", encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "data_config": data_config,
+            "train_config": train_config,
+            "checkpoint_dir": Path("data/checkpoints/stage1/raw88/run"),
+            "candidate_checkpoints": ["stage1_best.pt", "stage1_last.pt"],
+            "seed": 1234,
+        },
+    )()
+    training = TrainingConfig(seed=1234)
+    gate = _gate_config()
+    run_context = RunContext(
+        teacher_tag="raw88",
+        run_id="stage1_raw88_nmse_20260210_s1234",
+        report_dir=report_dir,
+        checkpoint_dir=Path("data/checkpoints/stage1/raw88/run"),
+    )
+
+    report_dir.mkdir(parents=True, exist_ok=True)
+    _write_run_manifest(
+        report_dir=report_dir,
+        args=args,
+        training_config=training,
+        gate_config=gate,
+        run_context=run_context,
+        teacher_type="raw_88k2",
+    )
+
+    payload = json.loads((report_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert payload["teacher_type"] == "raw_88k2"
+    assert payload["teacher_tag"] == "raw88"
+    assert payload["run_id"] == "stage1_raw88_nmse_20260210_s1234"
+    assert payload["seed"] == 1234
+    assert "config_hash" in payload
+    assert "checkpoint_paths" in payload
+    assert "gate_thresholds" in payload
 
 
 def test_build_gate_details_contains_traceable_thresholds() -> None:
