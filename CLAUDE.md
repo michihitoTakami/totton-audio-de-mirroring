@@ -14,7 +14,7 @@
 
 ### Overview
 
-**totton-audio-de-mirroring** is a Hybrid Neural Bessel SR (HNB-SR) system designed to suppress mirror/aliasing artifacts while preserving time-domain characteristics (transients, phase, group delay).
+**totton-audio-de-mirroring** is a Hybrid Neural SR (HNSR) system designed to suppress mirror/aliasing artifacts while preserving time-domain characteristics (transients, phase, group delay).
 
 ### Core Concepts
 
@@ -24,7 +24,7 @@
 
 ### Problem Statement
 
-The system targets **mirror-removal and time-response preservation** rather than aggressive high-frequency generation. The goal is to suppress aliasing artifacts from Bessel FIR upsampling while maintaining 0–20kHz fidelity (waveform, phase, group delay).
+The system targets **mirror-removal and time-response preservation** rather than aggressive high-frequency generation. The goal is to suppress aliasing artifacts from upsampling paths while maintaining 0–20kHz fidelity (waveform, phase, group delay).
 
 **Target Platform**: Jetson Orin Nano (8GB)
 **Target Output**: 705.6kHz (16× Upsampling)
@@ -51,6 +51,13 @@ The system aims for **no ringing regression with time-response preservation (tra
 - `plateau_ripple_p2p_after / before <= 1.10`
 - `overshoot_abs_after - overshoot_abs_before <= 5e-3`
 - `ringing_ratio_after - ringing_ratio_before <= 0.0`
+
+### Stage1 Teacher Policy (EPIC #103 / Issue #111)
+
+- Default teacher policy: **raw 88.2kHz (`raw88`)**
+- Legacy Bessel teacher is retained as a **comparison baseline**, not the default target policy
+- Every Stage1 experiment must encode teacher type in run ID and artifact paths
+- Use `docs/stage1_raw_teacher_policy.md` for naming, storage conventions, and migration checklist
 
 ---
 
@@ -292,7 +299,7 @@ uv run python scripts/evaluate.py --checkpoint data/checkpoints/best.pth
 
 ### Overview
 
-The training pipeline uses **Bessel FIR upsampling** to create mirror/aliasing artifacts near the Nyquist frequency that the neural network learns to suppress.
+The training pipeline targets **raw 88.2kHz teacher policy** and learns mirror suppression with high-band safety constraints. Legacy Bessel-teacher runs are kept only for baseline comparison.
 
 ### Stage 1: Neural Mirror Suppression Engine
 
@@ -336,20 +343,18 @@ After network output, always apply:
 
 ### Network Goal
 
-Learn the mapping: `Input (Bessel-upsampled with mirror artifacts) → Target (HB anti-mirror target + no-ringing-regression constraints)`
+Learn the mapping: `Input (degradation-path 88.2kHz with mirror artifacts) → Target (HB anti-mirror target + no-ringing-regression constraints)`
 
 The network learns to:
 1. **Remove mirror/aliasing artifacts** in the 20kHz-22.05kHz range
-2. **Preserve time-domain characteristics** (flat group delay from Bessel)
+2. **Preserve time-domain characteristics** (transients, phase, group delay)
 3. **Maintain 0-20kHz fidelity** without introducing phase distortion
 
-### Bessel FIR Design Guidelines
+### Baseline and Degradation Policy
 
-- **Tap Count**: 10k-20k taps (balance between computational cost and stopband attenuation)
-- **Cutoff Frequency**: 20kHz (human hearing limit)
-- **Order**: 8-12 (higher order = flatter group delay but slower rolloff)
-- **Expected Stopband Attenuation**: -40dB to -60dB (insufficient, intentionally creating aliasing)
-- **GPU Acceleration**: Required for processing (PyTorch recommended)
+- Bessel degradation remains valid as one of degradation profile candidates.
+- Bessel teacher should be treated as **baseline-only** in experiment comparison tables.
+- Report artifacts must separate `raw88` and `bessel` directories to avoid accidental mixing.
 
 ---
 
