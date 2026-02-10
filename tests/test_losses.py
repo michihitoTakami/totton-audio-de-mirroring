@@ -14,6 +14,8 @@ from totton_audio_de_mirroring.training.losses import (
     preserve_loss,
     ringing_edge_loss,
     ringing_step_loss,
+    strict_energy_cap_loss,
+    subtractive_suppression_loss,
 )
 
 
@@ -109,6 +111,20 @@ def test_energy_cap_loss_penalizes_excess() -> None:
     pred_mag = torch.ones(1, 4, 5)
     loss = energy_cap_loss(pred_mag, energy_cap=1.0)
     assert loss > 0.0
+
+
+def test_subtractive_suppression_loss_penalizes_only_additive_gain() -> None:
+    input_mag = torch.tensor([[[1.0, 2.0]]], dtype=torch.float32)
+    pred_mag = torch.tensor([[[1.5, 1.0]]], dtype=torch.float32)
+    loss = subtractive_suppression_loss(pred_mag, input_mag)
+    assert loss == pytest.approx(0.25)
+
+
+def test_strict_energy_cap_loss_is_stronger_than_linear_energy_loss() -> None:
+    pred_mag = torch.ones(1, 4, 5) * 2.0
+    linear = energy_cap_loss(pred_mag, energy_cap=1.0)
+    strict = strict_energy_cap_loss(pred_mag, energy_cap=1.0)
+    assert strict > linear
 
 
 def test_ringing_aux_losses_are_zero_when_prediction_matches_target() -> None:
@@ -243,6 +259,8 @@ def test_compute_loss_contribution_ratios_sums_to_one() -> None:
         + contrib.stft
         + contrib.preserve
         + contrib.energy
+        + contrib.subtract
+        + contrib.cap_strict
         + contrib.edge
         + contrib.step
     )

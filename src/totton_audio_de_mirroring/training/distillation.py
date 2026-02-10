@@ -80,6 +80,8 @@ class DistillationConfig:
         stft=1.0,
         preserve=1.0,
         energy=1.0,
+        subtract=1.0,
+        cap_strict=4.0,
         edge=0.05,
         step=0.05,
     )
@@ -174,6 +176,7 @@ class DistillationConfig:
                 raw.get("task_loss_weights", {}),
                 hb_loss_weight=hb_loss_weight,
                 preserve_lb_weight=preserve_lb_weight,
+                teacher_type=teacher_type,
             ),
             ringing_loss_config=_parse_ringing_loss_config(
                 raw.get("ringing_loss_config", {})
@@ -576,6 +579,7 @@ def _parse_loss_weights(
     *,
     hb_loss_weight: float,
     preserve_lb_weight: float,
+    teacher_type: TeacherType,
 ) -> LossWeights:
     if not isinstance(raw, Mapping):
         raise ValueError("task_loss_weights must be a mapping.")
@@ -584,6 +588,10 @@ def _parse_loss_weights(
         stft=float(raw.get("stft", hb_loss_weight)),
         preserve=float(raw.get("preserve", preserve_lb_weight)),
         energy=float(raw.get("energy", 1.0)),
+        subtract=float(raw.get("subtract", _default_subtractive_weight(teacher_type))),
+        cap_strict=float(
+            raw.get("cap_strict", _default_cap_strict_weight(teacher_type))
+        ),
         edge=float(raw.get("edge", 0.05)),
         step=float(raw.get("step", 0.05)),
     )
@@ -640,6 +648,18 @@ def _default_hb_loss_weight_for_teacher(teacher_type: TeacherType) -> float:
 def _default_preserve_lb_weight_for_teacher(teacher_type: TeacherType) -> float:
     del teacher_type
     return 1.0
+
+
+def _default_subtractive_weight(teacher_type: TeacherType) -> float:
+    if teacher_type == "raw_88k2":
+        return 1.0
+    return 0.0
+
+
+def _default_cap_strict_weight(teacher_type: TeacherType) -> float:
+    if teacher_type == "raw_88k2":
+        return 4.0
+    return 0.0
 
 
 def _parse_loss_mode(value: Any) -> LossMode:

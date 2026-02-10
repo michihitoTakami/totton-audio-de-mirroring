@@ -17,6 +17,8 @@ loss_weights:
   stft: 1.0
   preserve: 1.0
   energy: 1.0
+  subtract: 1.0
+  cap_strict: 4.0
   edge: 0.05
   step: 0.05
 

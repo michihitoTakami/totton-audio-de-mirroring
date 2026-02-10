@@ -171,6 +171,7 @@ class TrainingConfig:
             raw.get("loss_weights", {}),
             hb_loss_weight=hb_loss_weight,
             preserve_lb_weight=preserve_lb_weight,
+            teacher_type=teacher_type,
         )
         ringing_cfg = _parse_ringing_loss_config(raw.get("ringing_loss_config", {}))
 
@@ -475,12 +476,16 @@ def _run_epoch(
         "stft": 0.0,
         "preserve": 0.0,
         "energy": 0.0,
+        "subtract": 0.0,
+        "cap_strict": 0.0,
         "edge": 0.0,
         "step": 0.0,
         "contrib_mask": 0.0,
         "contrib_stft": 0.0,
         "contrib_preserve": 0.0,
         "contrib_energy": 0.0,
+        "contrib_subtract": 0.0,
+        "contrib_cap_strict": 0.0,
         "contrib_edge": 0.0,
         "contrib_step": 0.0,
         "mirror_reduction_db": 0.0,
@@ -578,6 +583,8 @@ def _run_epoch(
         totals["stft"] += terms.stft.detach().item()
         totals["preserve"] += terms.preserve.detach().item()
         totals["energy"] += terms.energy.detach().item()
+        totals["subtract"] += terms.subtract.detach().item()
+        totals["cap_strict"] += terms.cap_strict.detach().item()
         totals["edge"] += terms.edge.detach().item()
         totals["step"] += terms.step.detach().item()
         contributions = compute_loss_contribution_ratios(terms, config.loss_weights)
@@ -585,6 +592,8 @@ def _run_epoch(
         totals["contrib_stft"] += contributions.stft
         totals["contrib_preserve"] += contributions.preserve
         totals["contrib_energy"] += contributions.energy
+        totals["contrib_subtract"] += contributions.subtract
+        totals["contrib_cap_strict"] += contributions.cap_strict
         totals["contrib_edge"] += contributions.edge
         totals["contrib_step"] += contributions.step
         totals["mirror_reduction_db"] += batch_metrics["mirror_reduction_db"]
@@ -613,12 +622,16 @@ def _run_epoch(
         stft=totals["stft"] / step_count,
         preserve=totals["preserve"] / step_count,
         energy=totals["energy"] / step_count,
+        subtract=totals["subtract"] / step_count,
+        cap_strict=totals["cap_strict"] / step_count,
         edge=totals["edge"] / step_count,
         step=totals["step"] / step_count,
         contrib_mask=totals["contrib_mask"] / step_count,
         contrib_stft=totals["contrib_stft"] / step_count,
         contrib_preserve=totals["contrib_preserve"] / step_count,
         contrib_energy=totals["contrib_energy"] / step_count,
+        contrib_subtract=totals["contrib_subtract"] / step_count,
+        contrib_cap_strict=totals["contrib_cap_strict"] / step_count,
         contrib_edge=totals["contrib_edge"] / step_count,
         contrib_step=totals["contrib_step"] / step_count,
         mirror_reduction_db=totals["mirror_reduction_db"] / step_count,
@@ -744,6 +757,8 @@ def _log_step_progress(epoch: int, step: int, terms: LossTerms) -> None:
                 f"stft={terms.stft.item():.6f}",
                 f"preserve={terms.preserve.item():.6f}",
                 f"energy={terms.energy.item():.6f}",
+                f"subtract={terms.subtract.item():.6f}",
+                f"cap_strict={terms.cap_strict.item():.6f}",
                 f"edge={terms.edge.item():.6f}",
                 f"step={terms.step.item():.6f}",
             ]
@@ -833,6 +848,7 @@ def _parse_loss_weights(
     *,
     hb_loss_weight: float,
     preserve_lb_weight: float,
+    teacher_type: TeacherType,
 ) -> LossWeights:
     if not isinstance(raw, Mapping):
         raise ValueError("loss_weights must be a mapping.")
@@ -841,6 +857,10 @@ def _parse_loss_weights(
         stft=float(raw.get("stft", hb_loss_weight)),
         preserve=float(raw.get("preserve", preserve_lb_weight)),
         energy=float(raw.get("energy", 1.0)),
+        subtract=float(raw.get("subtract", _default_subtractive_weight(teacher_type))),
+        cap_strict=float(
+            raw.get("cap_strict", _default_cap_strict_weight(teacher_type))
+        ),
         edge=float(raw.get("edge", 0.0)),
         step=float(raw.get("step", 0.0)),
     )
@@ -867,6 +887,8 @@ def _print_loss_contribution_line(
         stft=metrics.contrib_stft,
         preserve=metrics.contrib_preserve,
         energy=metrics.contrib_energy,
+        subtract=metrics.contrib_subtract,
+        cap_strict=metrics.contrib_cap_strict,
         edge=metrics.contrib_edge,
         step=metrics.contrib_step,
     )
@@ -877,6 +899,8 @@ def _print_loss_contribution_line(
             f"stft={contributions.stft:.3f} "
             f"preserve={contributions.preserve:.3f} "
             f"energy={contributions.energy:.3f} "
+            f"subtract={contributions.subtract:.3f} "
+            f"cap_strict={contributions.cap_strict:.3f} "
             f"edge={contributions.edge:.3f} "
             f"step={contributions.step:.3f}"
         ),
@@ -939,6 +963,18 @@ def _default_preserve_lb_weight_for_teacher(teacher_type: TeacherType) -> float:
     return 1.0
 
 
+def _default_subtractive_weight(teacher_type: TeacherType) -> float:
+    if teacher_type == "raw_88k2":
+        return 1.0
+    return 0.0
+
+
+def _default_cap_strict_weight(teacher_type: TeacherType) -> float:
+    if teacher_type == "raw_88k2":
+        return 4.0
+    return 0.0
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -978,6 +1014,10 @@ def _validate_batch_finite(
         "stft": terms.stft.detach(),
         "preserve": terms.preserve.detach(),
         "energy": terms.energy.detach(),
+        "subtract": terms.subtract.detach(),
+        "cap_strict": terms.cap_strict.detach(),
+        "edge": terms.edge.detach(),
+        "step": terms.step.detach(),
     }
     for name, value in values.items():
         if not torch.all(torch.isfinite(value)):

@@ -68,7 +68,11 @@ def test_distillation_config_defaults_follow_teacher_type() -> None:
     raw_config = DistillationConfig.from_dict({"teacher_type": "raw_88k2"})
     bessel_config = DistillationConfig.from_dict({"teacher_type": "bessel_88k2"})
     assert raw_config.energy_cap == pytest.approx(1.0e-3)
+    assert raw_config.task_loss_weights.subtract == pytest.approx(1.0)
+    assert raw_config.task_loss_weights.cap_strict == pytest.approx(4.0)
     assert bessel_config.energy_cap == pytest.approx(1.0)
+    assert bessel_config.task_loss_weights.subtract == pytest.approx(0.0)
+    assert bessel_config.task_loss_weights.cap_strict == pytest.approx(0.0)
 
 
 def test_distillation_config_applies_hb_and_preserve_weight_aliases() -> None:

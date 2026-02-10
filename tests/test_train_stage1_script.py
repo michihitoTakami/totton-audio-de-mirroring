@@ -34,6 +34,10 @@ def test_apply_overrides_rejects_conflicting_cuda_flags() -> None:
         teacher_type=None,
         hb_loss_weight=None,
         preserve_lb_weight=None,
+        subtract_loss_weight=None,
+        cap_strict_loss_weight=None,
+        edge_loss_weight=None,
+        step_loss_weight=None,
         device=None,
         no_amp=False,
         require_cuda=True,
@@ -52,6 +56,10 @@ def test_apply_overrides_updates_seed() -> None:
         teacher_type=None,
         hb_loss_weight=None,
         preserve_lb_weight=None,
+        subtract_loss_weight=None,
+        cap_strict_loss_weight=None,
+        edge_loss_weight=None,
+        step_loss_weight=None,
         device=None,
         no_amp=False,
         require_cuda=False,
@@ -70,6 +78,10 @@ def test_apply_overrides_updates_teacher_policy_fields() -> None:
         teacher_type="bessel_88k2",
         hb_loss_weight=1.25,
         preserve_lb_weight=1.5,
+        subtract_loss_weight=0.9,
+        cap_strict_loss_weight=3.5,
+        edge_loss_weight=0.12,
+        step_loss_weight=0.08,
         device=None,
         no_amp=False,
         require_cuda=False,
@@ -79,3 +91,10 @@ def test_apply_overrides_updates_teacher_policy_fields() -> None:
     assert updated.teacher_type == "bessel_88k2"
     assert updated.hb_loss_weight == pytest.approx(1.25)
     assert updated.preserve_lb_weight == pytest.approx(1.5)
+    assert updated.loss_weights.mask == pytest.approx(1.25)
+    assert updated.loss_weights.stft == pytest.approx(1.25)
+    assert updated.loss_weights.preserve == pytest.approx(1.5)
+    assert updated.loss_weights.subtract == pytest.approx(0.9)
+    assert updated.loss_weights.cap_strict == pytest.approx(3.5)
+    assert updated.loss_weights.edge == pytest.approx(0.12)
+    assert updated.loss_weights.step == pytest.approx(0.08)
