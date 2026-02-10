@@ -107,6 +107,7 @@ def collate_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
         batch[key] = torch.stack([sample[key] for sample in samples])
 
     batch["profile"] = [sample["profile"] for sample in samples]
+    batch["teacher_type"] = [sample["teacher_type"] for sample in samples]
     batch["signal_type"] = [sample["signal_type"] for sample in samples]
     batch["chunk_start"] = torch.tensor(
         [sample["chunk_start"] for sample in samples], dtype=torch.int64

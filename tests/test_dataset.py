@@ -55,6 +55,7 @@ def test_dataset_item_shapes() -> None:
     )
     assert isinstance(sample["profile"].method, str)
     assert sample["signal_type"] == "multitone"
+    assert sample["teacher_type"] == config.teacher_type
     assert sample["input_route"] == config.stage1_path.input_route
     assert sample["target_route"] == config.stage1_path.target_route
     assert sample["x_full"].dtype == torch.float32
@@ -98,6 +99,7 @@ def test_dataloader_batches() -> None:
     assert batch["hb_target"].shape[0] == 2
     assert batch["mirror_mask"].shape[0] == 2
     assert batch["chunk_start"].shape == (2,)
+    assert batch["teacher_type"] == [config.teacher_type, config.teacher_type]
 
 
 def test_config_roundtrip_json_yaml(tmp_path: Path) -> None:
@@ -129,6 +131,14 @@ def test_signal_sampling_config_validation() -> None:
 def test_config_bool_coercion() -> None:
     config = DataPipelineConfig.from_dict({"random_chunk": "false"})
     assert config.random_chunk is False
+
+
+def test_config_teacher_type_legacy_default_and_alias() -> None:
+    legacy = DataPipelineConfig.from_dict({})
+    assert legacy.teacher_type == "bessel_88k2"
+
+    aliased = DataPipelineConfig.from_dict({"teacher_type": "raw88"})
+    assert aliased.teacher_type == "raw_88k2"
 
 
 def test_stage1_path_roundtrip_in_serialized_config(tmp_path: Path) -> None:
@@ -224,3 +234,76 @@ def test_dataset_hb_target_respects_energy_cap() -> None:
     hb_target = sample["hb_target"].detach().cpu().numpy().astype(np.float64)
     hb_energy = float(np.mean(np.square(hb_target)))
     assert hb_energy <= config.hb_target.energy_cap + 1.0e-9
+
+
+def test_dataset_teacher_type_switches_reference_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_calls = {"count": 0}
+    bessel_calls = {"count": 0}
+
+    def fake_raw_reference(
+        signal: np.ndarray, *, source_sr: int, target_sr: int
+    ) -> np.ndarray:
+        del source_sr, target_sr
+        raw_calls["count"] += 1
+        return np.repeat(signal.astype(np.float64), 2)
+
+    def fake_bessel_reference(
+        *,
+        signal: np.ndarray,
+        source_sr: int,
+        target_sr: int,
+        cutoff_hz: float,
+        order: int,
+    ) -> np.ndarray:
+        del source_sr, target_sr, cutoff_hz, order
+        bessel_calls["count"] += 1
+        return np.repeat(signal.astype(np.float64), 2)
+
+    monkeypatch.setattr(dataset_module, "_upsample_raw_reference", fake_raw_reference)
+    monkeypatch.setattr(
+        dataset_module, "upsample_bessel_reference", fake_bessel_reference
+    )
+
+    raw_config = _small_config()
+    raw_dataset = create_dataloader(raw_config, DataLoaderConfig(batch_size=1)).dataset
+    _ = raw_dataset[0]
+    assert raw_calls["count"] == 1
+    assert bessel_calls["count"] == 0
+
+    raw_payload = raw_config.to_dict()
+    raw_payload["teacher_type"] = "bessel_88k2"
+    bessel_config = DataPipelineConfig.from_dict(raw_payload)
+    bessel_dataset = create_dataloader(
+        bessel_config, DataLoaderConfig(batch_size=1)
+    ).dataset
+    _ = bessel_dataset[0]
+    assert raw_calls["count"] == 1
+    assert bessel_calls["count"] == 1
+
+
+def test_dataset_rejects_non_finite_teacher_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _small_config()
+
+    def fake_teacher_reference(
+        signal: np.ndarray,
+        *,
+        source_sr: int,
+        target_sr: int,
+        teacher_type: str,
+        bessel_cutoff_hz: float,
+        bessel_order: int,
+    ) -> np.ndarray:
+        del source_sr, target_sr, teacher_type, bessel_cutoff_hz, bessel_order
+        return np.full(signal.shape[0] * 2, np.nan, dtype=np.float64)
+
+    monkeypatch.setattr(
+        dataset_module, "_build_teacher_reference", fake_teacher_reference
+    )
+
+    dataset = create_dataloader(config, DataLoaderConfig(batch_size=1)).dataset
+    with pytest.raises(ValueError, match="teacher_full contains non-finite values"):
+        _ = dataset[0]
