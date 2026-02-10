@@ -4,7 +4,13 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
-from scripts.train_distillation import _apply_overrides, _emit_stage1_light_checkpoint
+import torch
+from scripts.train_distillation import (
+    _apply_overrides,
+    _emit_stage1_light_checkpoint,
+    _teacher_tag,
+    _validate_teacher_checkpoint_teacher_type,
+)
 
 from totton_audio_de_mirroring.training.distillation import DistillationConfig
 
@@ -84,11 +90,28 @@ def test_apply_overrides_updates_teacher_policy_fields() -> None:
 
 
 def test_emit_stage1_light_checkpoint_copies_best(tmp_path: Path) -> None:
-    best = tmp_path / "stage1_distill_best.pt"
+    best = tmp_path / "stage1_distill_raw88_best.pt"
     best.write_bytes(b"checkpoint")
     emitted = _emit_stage1_light_checkpoint(
         best_checkpoint=best,
         checkpoint_dir=tmp_path,
+        teacher_type="raw_88k2",
     )
-    assert emitted == tmp_path / "stage1_light.pt"
+    assert emitted == tmp_path / "stage1_light_raw88.pt"
+    assert (tmp_path / "stage1_light.pt").read_bytes() == b"checkpoint"
     assert emitted.read_bytes() == b"checkpoint"
+
+
+def test_teacher_tag_maps_supported_types() -> None:
+    assert _teacher_tag("raw_88k2") == "raw88"
+    assert _teacher_tag("bessel_88k2") == "bessel"
+
+
+def test_validate_teacher_checkpoint_type_mismatch(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "teacher.pt"
+    torch.save({"training_config": {"teacher_type": "bessel_88k2"}}, checkpoint_path)
+    with pytest.raises(RuntimeError, match="Teacher checkpoint type mismatch"):
+        _validate_teacher_checkpoint_teacher_type(
+            checkpoint_path=checkpoint_path,
+            expected_teacher_type="raw_88k2",
+        )
