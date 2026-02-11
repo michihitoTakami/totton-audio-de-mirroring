@@ -20,6 +20,43 @@ from totton_audio_de_mirroring.data.pipeline_config import (
 from totton_audio_de_mirroring.models.band_split import BandSplitConfig
 
 
+def test_raw_teacher_builder_keeps_source_teacher_alignment() -> None:
+    request = dataset_module.SignalRequest(
+        signal_type="multitone",
+        params={"frequencies_hz": [500.0, 1500.0, 3200.0]},
+    )
+    rng = np.random.default_rng(42)
+    source_chunk, teacher_chunk, chunk_start = (
+        dataset_module._build_raw_teacher_source_chunk_and_reference(
+            request=request,
+            source_seed=1234,
+            source_sr=44_100,
+            target_sr=88_200,
+            source_duration_sec=0.5,
+            chunk_duration_sec=0.25,
+            random_chunk=True,
+            augmentation=AugmentationConfig(
+                gain_range=(1.0, 1.0),
+                polarity_flip_prob=0.0,
+                noise_std_range=(0.0, 0.0),
+                soft_clip_prob=0.0,
+                soft_clip_drive_range=(1.0, 1.0),
+            ),
+            rng=rng,
+        )
+    )
+
+    expected_source = dataset_module._downsample_raw_reference(
+        teacher_chunk,
+        source_sr=88_200,
+        target_sr=44_100,
+    )
+    assert source_chunk.shape == (11_025,)
+    assert teacher_chunk.shape == (22_050,)
+    assert 0 <= chunk_start <= 11_025
+    assert np.allclose(source_chunk, expected_source)
+
+
 def _small_config() -> DataPipelineConfig:
     return DataPipelineConfig(
         num_samples=4,
