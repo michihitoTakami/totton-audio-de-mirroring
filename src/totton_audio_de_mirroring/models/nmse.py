@@ -236,6 +236,7 @@ class NMSE(nn.Module):
             win_length=self.stft_config.win_length,
             window=window,
             center=self.stft_config.center,
+            normalized=True,
             return_complex=True,
         )
 
@@ -264,6 +265,7 @@ class NMSE(nn.Module):
             win_length=self.stft_config.win_length,
             window=window,
             center=self.stft_config.center,
+            normalized=True,
             length=length,
         )
         if time_signal.ndim == 2:

@@ -523,6 +523,7 @@ def _run_epoch(
             with torch.no_grad():
                 hb_pred = _forward_highband(model, hb_in)
                 terms = _compute_losses_fp32(
+                    model=model,
                     hb_in=hb_in,
                     hb_target=hb_target,
                     hb_pred=hb_pred,
@@ -651,8 +652,18 @@ def _compute_batch_metrics(
     mirror_reduction_db = torch.mean(10.0 * torch.log10(ratio + eps)).item()
 
     touch = torch.mean(torch.abs(hb_pred_mag - hb_in_mag) * (1.0 - mirror)).item()
+    highband_mask = getattr(model, "highband_mask", None)
+    mag_sq = hb_pred_mag**2
+    if isinstance(highband_mask, torch.Tensor):
+        mask = highband_mask.to(device=hb_pred_mag.device, dtype=torch.bool)
+        if (
+            mask.ndim == 1
+            and mask.shape[0] == hb_pred_mag.shape[1]
+            and torch.count_nonzero(mask) > 0
+        ):
+            mag_sq = mag_sq[:, mask, :]
     hb_energy = torch.clamp(
-        torch.sum(hb_pred_mag**2, dim=(-2, -1)),
+        torch.mean(mag_sq, dim=(-2, -1)),
         min=0.0,
         max=max_energy,
     )
@@ -718,6 +729,7 @@ def _forward_highband(model: nn.Module, hb_in: torch.Tensor) -> torch.Tensor:
 
 def _compute_losses_fp32(
     *,
+    model: nn.Module,
     hb_in: torch.Tensor,
     hb_target: torch.Tensor,
     hb_pred: torch.Tensor,
@@ -741,6 +753,10 @@ def _compute_losses_fp32(
         Running loss computation in fp32 avoids ComplexHalf instability while
         preserving mixed-precision speedup in the model forward pass.
     """
+    highband_mask = getattr(model, "highband_mask", None)
+    highband_mask_tensor = (
+        highband_mask if isinstance(highband_mask, torch.Tensor) else None
+    )
     return compute_losses(
         hb_in.to(dtype=torch.float32),
         hb_target.to(dtype=torch.float32),
@@ -750,6 +766,7 @@ def _compute_losses_fp32(
         stft_configs=config.stft_configs,
         weights=config.loss_weights,
         energy_cap=config.energy_cap,
+        highband_mask=highband_mask_tensor,
         ringing_config=config.ringing_loss_config,
         mask_mode=config.mask_mode,
     )
@@ -858,6 +875,7 @@ def _forward_and_compute_terms(
     with torch.amp.autocast("cuda", enabled=use_amp):
         hb_pred = _forward_highband(model, hb_in)
     terms = _compute_losses_fp32(
+        model=model,
         hb_in=hb_in,
         hb_target=hb_target,
         hb_pred=hb_pred,

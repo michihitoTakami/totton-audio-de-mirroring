@@ -8,12 +8,18 @@ import torch
 import torch.nn.functional as torch_f
 
 
-def apply_energy_cap(magnitude: torch.Tensor, energy_cap: float) -> torch.Tensor:
+def apply_energy_cap(
+    magnitude: torch.Tensor,
+    energy_cap: float,
+    *,
+    highband_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Apply a fixed energy cap to high-band STFT magnitude.
 
     Args:
         magnitude: STFT magnitude tensor with shape (batch, freq, time).
-        energy_cap: Maximum total energy allowed per batch sample.
+        energy_cap: Maximum mean high-band energy allowed per batch sample.
+        highband_mask: Optional (freq,) mask indicating high-band bins.
 
     Returns:
         Magnitude scaled to satisfy the energy cap.
@@ -32,7 +38,22 @@ def apply_energy_cap(magnitude: torch.Tensor, energy_cap: float) -> torch.Tensor
     if magnitude.ndim != 3:
         raise ValueError("magnitude must be 3D (batch, freq, time).")
 
-    energy = torch.sum(magnitude**2, dim=(-2, -1), keepdim=True)
+    mag_sq = magnitude**2
+    if highband_mask is not None:
+        if highband_mask.ndim != 1:
+            raise ValueError("highband_mask must be 1D (freq,).")
+        if highband_mask.shape[0] != magnitude.shape[1]:
+            raise ValueError(
+                "highband_mask length must match magnitude frequency bins. "
+                f"Expected {magnitude.shape[1]}, got {highband_mask.shape[0]}."
+            )
+        mask = highband_mask.to(device=magnitude.device, dtype=torch.bool)
+        if torch.count_nonzero(mask) == 0:
+            return magnitude
+        mag_sq = mag_sq[:, mask, :]
+
+    # Mean energy keeps the cap stable across STFT grid sizes.
+    energy = torch.mean(mag_sq, dim=(-2, -1), keepdim=True)
     scale = torch.sqrt(energy_cap / (energy + 1.0e-8))
     limited_scale = torch.clamp(scale, max=1.0)
     return magnitude * limited_scale
@@ -124,7 +145,7 @@ def apply_safety_constraints(
     """
     shaped = apply_envelope_target(magnitude, envelope_target, highband_mask)
     highband_only = apply_highband_mask(shaped, highband_mask)
-    return apply_energy_cap(highband_only, energy_cap)
+    return apply_energy_cap(highband_only, energy_cap, highband_mask=highband_mask)
 
 
 def build_envelope_target(

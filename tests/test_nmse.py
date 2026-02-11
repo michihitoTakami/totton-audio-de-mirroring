@@ -60,9 +60,9 @@ def test_apply_energy_cap_limits_energy() -> None:
     energy_cap = 100.0
 
     capped = apply_energy_cap(magnitude, energy_cap)
-    energy = torch.sum(capped**2, dim=(-2, -1))
+    energy = torch.mean(capped**2, dim=(-2, -1))
 
-    assert torch.all(energy <= energy_cap + 1.0e-3)
+    assert torch.all(energy <= energy_cap + 1.0e-6)
 
 
 def test_nmse_invalid_energy_cap_raises() -> None:

@@ -56,8 +56,8 @@ def test_apply_safety_constraints_caps_highband_energy() -> None:
         energy_cap=energy_cap,
     )
 
-    energy = torch.sum(constrained**2, dim=(-2, -1))
-    assert torch.all(energy <= energy_cap + 1.0e-3)
+    energy = torch.mean(constrained[:, highband_mask.bool(), :] ** 2, dim=(-2, -1))
+    assert torch.all(energy <= energy_cap + 1.0e-6)
     assert torch.count_nonzero(constrained[:, :8, :]) == 0
 
 

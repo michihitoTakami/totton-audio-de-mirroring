@@ -178,6 +178,7 @@ def compute_losses(
     stft_configs: Sequence[STFTLossConfig],
     weights: LossWeights,
     energy_cap: float,
+    highband_mask: torch.Tensor | None = None,
     ringing_config: RingingLossConfig | None = None,
     mask_mode: LossMode = "l1",
     eps: float = 1.0e-8,
@@ -192,7 +193,8 @@ def compute_losses(
         mask_config: STFT config for mask and preservation losses.
         stft_configs: STFT configs for multi-resolution loss.
         weights: Loss weights.
-        energy_cap: Maximum allowed high-band energy (sum of mag^2).
+        energy_cap: Maximum allowed mean high-band STFT energy (mean of mag^2).
+        highband_mask: Optional (freq,) mask indicating high-band bins.
         ringing_config: Configuration for ringing auxiliary losses.
         mask_mode: Loss mode for mask loss ("l1" or "l2").
         eps: Small constant for numerical stability.
@@ -226,9 +228,11 @@ def compute_losses(
     loss_mask = mask_loss(pred_mask, target_mask, mode=mask_mode)
     loss_preserve = preserve_loss(hb_pred_mag, hb_in_mag, mirror_mask)
     loss_stft = multi_resolution_stft_loss(hb_pred, hb_target, stft_configs)
-    loss_energy = energy_cap_loss(hb_pred_mag, energy_cap)
+    loss_energy = energy_cap_loss(hb_pred_mag, energy_cap, highband_mask=highband_mask)
     loss_subtract = subtractive_suppression_loss(hb_pred_mag, hb_in_mag)
-    loss_cap_strict = strict_energy_cap_loss(hb_pred_mag, energy_cap)
+    loss_cap_strict = strict_energy_cap_loss(
+        hb_pred_mag, energy_cap, highband_mask=highband_mask
+    )
     loss_edge = ringing_edge_loss(hb_pred, hb_target, config=active_ringing_config)
     loss_step = ringing_step_loss(hb_pred, hb_target, config=active_ringing_config)
 
@@ -445,12 +449,18 @@ def preserve_loss(
     return torch.mean(diff * outside)
 
 
-def energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.Tensor:
+def energy_cap_loss(
+    pred_mag: torch.Tensor,
+    energy_cap: float,
+    *,
+    highband_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Penalize violations of the high-band energy cap.
 
     Args:
         pred_mag: Predicted STFT magnitude (batch, freq, time).
-        energy_cap: Maximum allowed energy (sum of mag^2).
+        energy_cap: Maximum allowed mean energy (mean of mag^2).
+        highband_mask: Optional (freq,) mask indicating high-band bins.
 
     Returns:
         Scalar loss value.
@@ -462,7 +472,17 @@ def energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.Tensor:
     _validate_mag_tensor(pred_mag, "pred_mag")
     _validate_positive_float(energy_cap, "energy_cap")
 
-    energy = torch.sum(pred_mag**2, dim=(-2, -1))
+    mag_sq = pred_mag**2
+    if highband_mask is not None:
+        if highband_mask.ndim != 1:
+            raise ValueError("highband_mask must be 1D (freq,).")
+        if highband_mask.shape[0] != pred_mag.shape[1]:
+            raise ValueError("highband_mask length mismatch.")
+        mask = highband_mask.to(device=pred_mag.device, dtype=torch.bool)
+        if torch.count_nonzero(mask) > 0:
+            mag_sq = mag_sq[:, mask, :]
+
+    energy = torch.mean(mag_sq, dim=(-2, -1))
     excess = torch.clamp(energy - energy_cap, min=0.0)
     return torch.mean(excess)
 
@@ -492,12 +512,18 @@ def subtractive_suppression_loss(
     return torch.mean(additive)
 
 
-def strict_energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.Tensor:
+def strict_energy_cap_loss(
+    pred_mag: torch.Tensor,
+    energy_cap: float,
+    *,
+    highband_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Apply nonlinear penalty to any high-band cap violation.
 
     Args:
         pred_mag: Predicted STFT magnitude (batch, freq, time).
-        energy_cap: Maximum allowed energy (sum of mag^2).
+        energy_cap: Maximum allowed mean energy (mean of mag^2).
+        highband_mask: Optional (freq,) mask indicating high-band bins.
 
     Returns:
         Scalar strict cap penalty.
@@ -508,7 +534,17 @@ def strict_energy_cap_loss(pred_mag: torch.Tensor, energy_cap: float) -> torch.T
     """
     _validate_mag_tensor(pred_mag, "pred_mag")
     _validate_positive_float(energy_cap, "energy_cap")
-    energy = torch.sum(pred_mag**2, dim=(-2, -1))
+    mag_sq = pred_mag**2
+    if highband_mask is not None:
+        if highband_mask.ndim != 1:
+            raise ValueError("highband_mask must be 1D (freq,).")
+        if highband_mask.shape[0] != pred_mag.shape[1]:
+            raise ValueError("highband_mask length mismatch.")
+        mask = highband_mask.to(device=pred_mag.device, dtype=torch.bool)
+        if torch.count_nonzero(mask) > 0:
+            mag_sq = mag_sq[:, mask, :]
+
+    energy = torch.mean(mag_sq, dim=(-2, -1))
     normalized_excess = torch.clamp((energy - energy_cap) / energy_cap, min=0.0)
     return torch.mean(normalized_excess**2)
 
@@ -632,6 +668,7 @@ def _stft_magnitude(signal: torch.Tensor, config: STFTLossConfig) -> torch.Tenso
         win_length=config.win_length,
         window=window,
         center=config.center,
+        normalized=True,
         return_complex=True,
     )
     return torch.abs(stft)
