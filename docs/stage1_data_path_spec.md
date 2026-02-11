@@ -10,6 +10,7 @@ Stage1 の学習データにおける `input` (`x_full`) と `target` (`hb_targe
 1. Input (`x_full`)
    - Route ID: `source_chunk_44k1_to_x_full_88k2_via_degradation`
    - Definition: `source` (44.1kHz chunk) に劣化SRC経路を適用して `x_full` (88.2kHz) を生成する。
+   - `raw_88k2` 教師時は、教師88.2kHzチャンクを44.1kHzへダウンサンプルした `source` を起点にする。
 2. Target (`hb_target`)
    - Route ID: `high_band_to_hb_target_via_mirror_detection`
    - Definition: `high_band = HPF(20kHz, x_full)` から mirror 検出 + 抑制 + energy/envelope 規格化で生成する。
