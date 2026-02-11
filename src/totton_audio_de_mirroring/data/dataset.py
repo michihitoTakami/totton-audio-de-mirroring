@@ -21,7 +21,9 @@ from totton_audio_de_mirroring.data.generator import (
     generate_signal,
 )
 from totton_audio_de_mirroring.data.mirror_detection import (
+    detect_mirror_artifacts,
     generate_hb_target,
+    project_teacher_hb_target,
 )
 from totton_audio_de_mirroring.data.pipeline_config import (
     AugmentationConfig,
@@ -159,13 +161,29 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
         low_band, high_band = self._band_split.split(x_full)
         _, teacher_high_band = self._band_split.split(teacher_full)
 
-        hb_target_result = generate_hb_target(
-            teacher_high_band,
+        if self._config.teacher_type == "raw_88k2":
+            hb_target = project_teacher_hb_target(
+                high_band,
+                teacher_high_band,
+                self._config.target_sample_rate,
+                detection_config=self._config.mirror_detection,
+                energy_cap=self._config.hb_target.energy_cap,
+                envelope_min=self._config.hb_target.envelope_min,
+            )
+        else:
+            hb_target_result = generate_hb_target(
+                teacher_high_band,
+                self._config.target_sample_rate,
+                detection_config=self._config.mirror_detection,
+                suppression_floor=self._config.hb_target.suppression_floor,
+                energy_cap=self._config.hb_target.energy_cap,
+                envelope_min=self._config.hb_target.envelope_min,
+            )
+            hb_target = hb_target_result.target
+        detection = detect_mirror_artifacts(
+            high_band,
             self._config.target_sample_rate,
-            detection_config=self._config.mirror_detection,
-            suppression_floor=self._config.hb_target.suppression_floor,
-            energy_cap=self._config.hb_target.energy_cap,
-            envelope_min=self._config.hb_target.envelope_min,
+            config=self._config.mirror_detection,
         )
         _validate_training_sample_consistency(
             source=source_chunk,
@@ -173,21 +191,19 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             teacher_full=teacher_full,
             low_band=low_band,
             high_band=high_band,
-            hb_target=hb_target_result.target,
+            hb_target=hb_target,
             source_sr=self._config.source_sample_rate,
             target_sr=self._config.target_sample_rate,
             chunk_duration_sec=self._config.chunk_duration_sec,
         )
-        mirror_mask = _to_tensor_2d(
-            hb_target_result.detection.detection_mask.astype(np.float32)
-        )
+        mirror_mask = _to_tensor_2d(detection.detection_mask.astype(np.float32))
 
         sample = {
             "source": _to_tensor(source_chunk),
             "x_full": _to_tensor(x_full),
             "low_band": _to_tensor(low_band),
             "high_band": _to_tensor(high_band),
-            "hb_target": _to_tensor(hb_target_result.target),
+            "hb_target": _to_tensor(hb_target),
             "mirror_mask": mirror_mask,
             "teacher_type": self._config.teacher_type,
             "input_route": self._config.stage1_path.input_route,

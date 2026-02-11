@@ -257,6 +257,96 @@ def generate_hb_target(
     )
 
 
+def project_teacher_hb_target(
+    hb_in: np.ndarray,
+    teacher_hb: np.ndarray,
+    sample_rate: int,
+    *,
+    detection_config: MirrorDetectionConfig | None = None,
+    energy_cap: float = DEFAULT_ENERGY_CAP,
+    envelope_min: float = DEFAULT_ENVELOPE_MIN,
+) -> np.ndarray:
+    """Project teacher HB magnitude onto input phase to build a learnable target.
+
+    Args:
+        hb_in: High-band input signal derived from the degradation path (HB_in).
+        teacher_hb: High-band teacher signal (raw 88.2kHz reference split to HB).
+        sample_rate: Sample rate in Hz.
+        detection_config: Optional STFT/envelope configuration (reuses MirrorDetectionConfig).
+        energy_cap: Maximum allowed high-band mean energy (IMD safety gate).
+        envelope_min: Minimum envelope gain at Nyquist.
+
+    Returns:
+        Time-domain HB target signal aligned to `hb_in` length.
+
+    Physical Basis:
+        Stage 1 NMSE applies attenuation masks in STFT magnitude while keeping
+        the input phase. Using a raw teacher directly as a waveform target can
+        over-constrain phase and can demand energy that is not present in the
+        degraded input (e.g., >22.05kHz content lost by 44.1kHz downsampling).
+        This function builds a target that:
+        - follows the teacher magnitude where feasible (prevents over-suppression),
+        - never exceeds the input magnitude (prevents hallucinated addition),
+        - retains the input phase (aligns with the model's constraint),
+        - applies envelope and energy caps for HF safety.
+    """
+    _validate_signal(hb_in)
+    _validate_signal(teacher_hb)
+    _validate_sample_rate(sample_rate)
+    _validate_positive_float(energy_cap, "energy_cap")
+    _validate_unit_interval(envelope_min, "envelope_min")
+    if hb_in.shape != teacher_hb.shape:
+        raise ValueError("hb_in and teacher_hb must share shape.")
+
+    cfg = detection_config or MirrorDetectionConfig()
+
+    freqs, _, stft_in = _compute_stft(
+        hb_in,
+        sample_rate,
+        n_fft=cfg.n_fft,
+        hop_length=cfg.hop_length,
+        window=cfg.window,
+    )
+    _, _, stft_teacher = _compute_stft(
+        teacher_hb,
+        sample_rate,
+        n_fft=cfg.n_fft,
+        hop_length=cfg.hop_length,
+        window=cfg.window,
+    )
+    if stft_in.shape != stft_teacher.shape:
+        raise ValueError("STFT shapes must match for projection.")
+
+    mag_in = np.abs(stft_in)
+    mag_teacher = np.abs(stft_teacher)
+    mag_target = np.minimum(mag_teacher, mag_in)
+
+    phase_in = np.exp(1j * np.angle(stft_in))
+    projected_stft = mag_target * phase_in
+
+    envelope = _build_envelope(
+        np.asarray(freqs, dtype=np.float64),
+        cutoff_hz=float(cfg.cutoff_hz),
+        envelope_min=float(envelope_min),
+    )
+    shaped_stft = projected_stft * envelope[:, None]
+
+    highband_mask = np.asarray(freqs >= float(cfg.cutoff_hz))
+    energy = float(np.mean(np.abs(shaped_stft[highband_mask]) ** 2))
+    if energy > energy_cap:
+        energy_scale = float(np.sqrt(energy_cap / max(energy, 1e-12)))
+        shaped_stft = _scale_highband(shaped_stft, highband_mask, energy_scale)
+
+    return _compute_istft(
+        shaped_stft,
+        sample_rate,
+        n_fft=int(cfg.n_fft),
+        hop_length=int(cfg.hop_length),
+        window=str(cfg.window),
+        target_length=hb_in.shape[-1],
+    )
+
+
 def _compute_stft(
     signal: np.ndarray,
     sample_rate: int,
