@@ -45,12 +45,24 @@ The system aims for **no ringing regression with time-response preservation (tra
 
 #### Stage 1 Quantitative Acceptance
 
+##### Mirror Suppression & Ringing
+
 - `symmetry_reduction_ratio >= 0.70`
 - `hb_energy_cap_violation_rate == 0.0`
 - `plateau_ripple_rms_after / before <= 1.10`
 - `plateau_ripple_p2p_after / before <= 1.10`
 - `overshoot_abs_after - overshoot_abs_before <= 5e-3`
 - `ringing_ratio_after - ringing_ratio_before <= 0.0`
+
+##### LB Preservation (0–20kHz structural bypass sanity check)
+
+LB bypass is guaranteed by band-split structure (`LB_out = LB_in` in NMSE forward).
+These thresholds exist as regression guards to detect structural breakage, not as
+acceptance criteria for AI output quality.
+
+- `lb_phase_error_deg <= 15.0`
+- `lb_group_delay_error_samples <= 600.0`
+- `lb_amplitude_error_db <= -20.0`
 
 ### Stage1 Teacher Policy (EPIC #103 / Issue #111)
 
@@ -350,11 +362,14 @@ The network learns to:
 2. **Preserve time-domain characteristics** (transients, phase, group delay)
 3. **Maintain 0-20kHz fidelity** without introducing phase distortion
 
-### Baseline and Degradation Policy
+### Degradation Policy
 
-- Bessel degradation remains valid as one of degradation profile candidates.
-- Bessel teacher should be treated as **baseline-only** in experiment comparison tables.
-- Report artifacts must separate `raw88` and `bessel` directories to avoid accidental mixing.
+- Bessel IIR is the fixed degradation path for Stage 1 training input generation
+  (44.1kHz → 88.2kHz upsampling with mirror artifacts)
+- This is intentional: the system itself is the upsampler
+  (44.1kHz → Neural 88.2kHz → Bessel DSP 705.6kHz), bypassing the DAC's internal SRC
+- Bessel teacher (legacy) is retained as a comparison baseline only
+- Report artifacts must separate `raw88` and `bessel` directories to avoid accidental mixing
 
 ---
 
