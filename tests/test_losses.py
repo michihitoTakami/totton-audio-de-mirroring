@@ -109,7 +109,7 @@ def test_compute_losses_has_grad_flow() -> None:
 
 def test_energy_cap_loss_penalizes_excess() -> None:
     pred_mag = torch.ones(1, 4, 5)
-    loss = energy_cap_loss(pred_mag, energy_cap=1.0)
+    loss = energy_cap_loss(pred_mag, energy_cap=0.5)
     assert loss > 0.0
 
 

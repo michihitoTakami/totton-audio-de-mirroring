@@ -203,7 +203,8 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     calls: dict[str, dict[str, object]] = {}
 
     original_apply = dataset_module.apply_degradation_profile
-    original_generate = dataset_module.generate_hb_target
+    original_detect = dataset_module.detect_mirror_artifacts
+    original_project = dataset_module.project_teacher_hb_target
 
     def wrapped_apply(
         signal: np.ndarray,
@@ -219,34 +220,49 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
         }
         return original_apply(signal, source_sr, target_sr, profile, rng)
 
-    def wrapped_generate(
+    def wrapped_detect(
         hb_signal: np.ndarray,
         sample_rate: int,
         *,
-        detection_config: object,
-        suppression_floor: float,
-        energy_cap: float,
-        envelope_min: float,
+        config: object = None,
     ) -> object:
-        calls["generate_hb_target"] = {
+        calls["detect_mirror_artifacts"] = dict(
+            calls.get("detect_mirror_artifacts", {})
+        )
+        calls["detect_mirror_artifacts"]["sample_rate"] = sample_rate
+        calls["detect_mirror_artifacts"]["hb_shape"] = hb_signal.shape
+        calls["detect_mirror_artifacts"]["config"] = config
+        return original_detect(hb_signal, sample_rate, config=config)
+
+    def wrapped_project(
+        hb_in: np.ndarray,
+        teacher_hb: np.ndarray,
+        sample_rate: int,
+        *,
+        detection_config: object = None,
+        energy_cap: float = 0.0,
+        envelope_min: float = 0.0,
+    ) -> np.ndarray:
+        calls["project_teacher_hb_target"] = {
             "sample_rate": sample_rate,
-            "hb_shape": hb_signal.shape,
-            "suppression_floor": suppression_floor,
+            "hb_in_shape": hb_in.shape,
+            "teacher_shape": teacher_hb.shape,
             "energy_cap": energy_cap,
             "envelope_min": envelope_min,
             "detection_config": detection_config,
         }
-        return original_generate(
-            hb_signal,
+        return original_project(
+            hb_in,
+            teacher_hb,
             sample_rate,
             detection_config=detection_config,
-            suppression_floor=suppression_floor,
             energy_cap=energy_cap,
             envelope_min=envelope_min,
         )
 
     monkeypatch.setattr(dataset_module, "apply_degradation_profile", wrapped_apply)
-    monkeypatch.setattr(dataset_module, "generate_hb_target", wrapped_generate)
+    monkeypatch.setattr(dataset_module, "detect_mirror_artifacts", wrapped_detect)
+    monkeypatch.setattr(dataset_module, "project_teacher_hb_target", wrapped_project)
 
     dataset = create_dataloader(config, DataLoaderConfig(batch_size=1)).dataset
     sample = dataset[0]
@@ -258,12 +274,57 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
         int(round(config.chunk_duration_sec * config.source_sample_rate)),
     )
 
-    target_call = calls["generate_hb_target"]
-    assert target_call["sample_rate"] == config.target_sample_rate
-    assert target_call["hb_shape"] == sample["high_band"].shape
-    assert target_call["suppression_floor"] == config.hb_target.suppression_floor
-    assert target_call["energy_cap"] == config.hb_target.energy_cap
-    assert target_call["envelope_min"] == config.hb_target.envelope_min
+    detect_call = calls["detect_mirror_artifacts"]
+    assert detect_call["sample_rate"] == config.target_sample_rate
+    assert detect_call["hb_shape"] == sample["high_band"].shape
+
+    project_call = calls["project_teacher_hb_target"]
+    assert project_call["sample_rate"] == config.target_sample_rate
+    assert project_call["hb_in_shape"] == sample["high_band"].shape
+    assert project_call["teacher_shape"] == sample["high_band"].shape
+    assert project_call["energy_cap"] == config.hb_target.energy_cap
+    assert project_call["envelope_min"] == config.hb_target.envelope_min
+
+
+def test_dataset_mirror_mask_derived_from_input_high_band(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mirror_mask should be derived from input high_band, not teacher high-band."""
+    config = _small_config()
+
+    source_sr = config.source_sample_rate
+    chunk_len = int(round(config.chunk_duration_sec * source_sr))
+    t = np.arange(chunk_len, dtype=np.float64) / float(source_sr)
+    source_chunk = 0.5 * np.sin(2.0 * np.pi * 21_000.0 * t)
+    teacher_full = np.zeros(
+        int(round(config.chunk_duration_sec * config.target_sample_rate))
+    )
+
+    def fake_raw_builder(**_: object) -> tuple[np.ndarray, np.ndarray, int]:
+        return source_chunk.astype(np.float32), teacher_full.astype(np.float32), 0
+
+    monkeypatch.setattr(
+        dataset_module,
+        "_build_raw_teacher_source_chunk_and_reference",
+        fake_raw_builder,
+    )
+
+    original_detect = dataset_module.detect_mirror_artifacts
+
+    def wrapped_detect(
+        hb_signal: np.ndarray,
+        sample_rate: int,
+        *,
+        config: object = None,
+    ) -> object:
+        energy = float(np.mean(np.square(hb_signal.astype(np.float64))))
+        assert energy > 1.0e-9
+        return original_detect(hb_signal, sample_rate, config=config)
+
+    monkeypatch.setattr(dataset_module, "detect_mirror_artifacts", wrapped_detect)
+
+    dataset = create_dataloader(config, DataLoaderConfig(batch_size=1)).dataset
+    _ = dataset[0]
 
 
 def test_dataset_hb_target_respects_energy_cap() -> None:

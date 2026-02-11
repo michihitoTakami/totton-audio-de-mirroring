@@ -424,6 +424,7 @@ def test_compute_losses_fp32_casts_all_inputs(
 
     monkeypatch.setattr(trainer_module, "compute_losses", _spy_compute_losses)
     terms = _compute_losses_fp32(
+        model=_DummyNMSE(),
         hb_in=hb_in,
         hb_target=hb_target,
         hb_pred=hb_pred,
