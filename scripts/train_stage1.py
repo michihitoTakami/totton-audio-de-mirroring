@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import gc
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 import torch
+from torch import nn
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from totton_audio_de_mirroring.data.dataloader import (
@@ -49,14 +51,6 @@ def main() -> None:
         training_config=training_config,
     )
 
-    train_loader, val_loader = _create_train_val_loaders(
-        data_config=data_config,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        validation_split=args.validation_split,
-        seed=training_config.seed,
-    )
-
     lowpass, highpass = design_band_split_filters(
         cutoff_hz=data_config.band_split.cutoff_hz,
         sample_rate=data_config.band_split.sample_rate,
@@ -74,14 +68,37 @@ def main() -> None:
         highpass_taps=highpass,
     )
 
-    result = train_stage1(
-        model=nmse,
-        train_dataloader=train_loader,
-        val_dataloader=val_loader,
-        config=training_config,
-        checkpoint_dir=args.checkpoint_dir,
-        resume_from=args.resume_from,
-    )
+    if args.auto_batch_size and args.resume_from is not None:
+        raise ValueError("--auto-batch-size cannot be used with --resume-from.")
+
+    if args.auto_batch_size:
+        result = _train_with_adaptive_batch_size(
+            model=nmse,
+            data_config=data_config,
+            training_config=training_config,
+            initial_batch_size=args.batch_size,
+            min_batch_size=args.min_batch_size,
+            max_oom_retries=args.max_oom_retries,
+            num_workers=args.num_workers,
+            validation_split=args.validation_split,
+            checkpoint_dir=args.checkpoint_dir,
+        )
+    else:
+        train_loader, val_loader = _create_train_val_loaders(
+            data_config=data_config,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            validation_split=args.validation_split,
+            seed=training_config.seed,
+        )
+        result = train_stage1(
+            model=nmse,
+            train_dataloader=train_loader,
+            val_dataloader=val_loader,
+            config=training_config,
+            checkpoint_dir=args.checkpoint_dir,
+            resume_from=args.resume_from,
+        )
     _log_result(result)
 
 
@@ -130,6 +147,23 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("data/checkpoints"))
     parser.add_argument("--resume-from", type=Path, default=None)
     parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument(
+        "--auto-batch-size",
+        action="store_true",
+        help="Retry training with smaller batch size on CUDA out-of-memory.",
+    )
+    parser.add_argument(
+        "--min-batch-size",
+        type=int,
+        default=1,
+        help="Minimum batch size when using --auto-batch-size.",
+    )
+    parser.add_argument(
+        "--max-oom-retries",
+        type=int,
+        default=5,
+        help="Maximum number of CUDA OOM retries when using --auto-batch-size.",
+    )
     return parser.parse_args()
 
 
@@ -414,6 +448,105 @@ def _create_train_val_loaders(
         )
 
     return train_loader, val_loader
+
+
+def _train_with_adaptive_batch_size(
+    *,
+    model: nn.Module,
+    data_config: DataPipelineConfig,
+    training_config: TrainingConfig,
+    initial_batch_size: int,
+    min_batch_size: int,
+    max_oom_retries: int,
+    num_workers: int,
+    validation_split: float,
+    checkpoint_dir: Path,
+) -> TrainingResult:
+    """Train with batch-size backoff on CUDA OOM.
+
+    Physical Basis:
+        Batch size dominates activation memory. Reducing batch size preserves
+        model/loss definitions while adapting memory footprint to available VRAM.
+    """
+    if initial_batch_size <= 0:
+        raise ValueError("initial_batch_size must be positive.")
+    if min_batch_size <= 0:
+        raise ValueError("min_batch_size must be positive.")
+    if min_batch_size > initial_batch_size:
+        raise ValueError("min_batch_size must be <= initial_batch_size.")
+    if max_oom_retries < 0:
+        raise ValueError("max_oom_retries must be non-negative.")
+
+    batch_size = initial_batch_size
+    retries = 0
+
+    while True:
+        attempt_checkpoint_dir = checkpoint_dir / f"bs{batch_size}"
+        attempt_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        _log_cuda_memory(prefix=f"attempt batch_size={batch_size}")
+
+        train_loader, val_loader = _create_train_val_loaders(
+            data_config=data_config,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            validation_split=validation_split,
+            seed=training_config.seed,
+        )
+        try:
+            return train_stage1(
+                model=model,
+                train_dataloader=train_loader,
+                val_dataloader=val_loader,
+                config=training_config,
+                checkpoint_dir=attempt_checkpoint_dir,
+                resume_from=None,
+            )
+        except Exception as exc:
+            if not _is_cuda_oom_error(exc):
+                raise
+            if batch_size <= min_batch_size or retries >= max_oom_retries:
+                raise RuntimeError(
+                    "CUDA OOM persists after adaptive batch-size retries."
+                ) from exc
+
+            retries += 1
+            next_batch_size = max(min_batch_size, batch_size // 2)
+            print(
+                "cuda_oom_detected "
+                f"retry={retries}/{max_oom_retries} "
+                f"batch_size={batch_size}->{next_batch_size}",
+                flush=True,
+            )
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            batch_size = next_batch_size
+
+
+def _is_cuda_oom_error(exc: BaseException) -> bool:
+    """Return True if exception chain indicates CUDA out-of-memory."""
+    current: BaseException | None = exc
+    while current is not None:
+        if "cuda out of memory" in str(current).lower():
+            return True
+        current = current.__cause__
+    return False
+
+
+def _log_cuda_memory(prefix: str) -> None:
+    """Log current free/total CUDA memory when available."""
+    if not torch.cuda.is_available():
+        return
+    try:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+    except Exception:
+        return
+    free_gb = free_bytes / (1024.0**3)
+    total_gb = total_bytes / (1024.0**3)
+    print(
+        f"cuda_mem {prefix} free_gb={free_gb:.3f} total_gb={total_gb:.3f}",
+        flush=True,
+    )
 
 
 def _log_result(result: TrainingResult) -> None:

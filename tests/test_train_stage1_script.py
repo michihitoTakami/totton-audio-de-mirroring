@@ -4,7 +4,11 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
-from scripts.train_stage1 import _apply_overrides, _resolve_train_config_path
+from scripts.train_stage1 import (
+    _apply_overrides,
+    _is_cuda_oom_error,
+    _resolve_train_config_path,
+)
 
 from totton_audio_de_mirroring.training.trainer import TrainingConfig
 
@@ -98,3 +102,15 @@ def test_apply_overrides_updates_teacher_policy_fields() -> None:
     assert updated.loss_weights.cap_strict == pytest.approx(3.5)
     assert updated.loss_weights.edge == pytest.approx(0.12)
     assert updated.loss_weights.step == pytest.approx(0.08)
+
+
+def test_is_cuda_oom_error_detects_nested_runtime_error() -> None:
+    cause = RuntimeError("CUDA out of memory. Tried to allocate 198.00 MiB")
+    wrapped = RuntimeError("Training failed")
+    wrapped.__cause__ = cause
+    assert _is_cuda_oom_error(wrapped) is True
+
+
+def test_is_cuda_oom_error_returns_false_for_other_errors() -> None:
+    err = RuntimeError("invalid configuration")
+    assert _is_cuda_oom_error(err) is False
