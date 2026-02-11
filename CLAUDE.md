@@ -350,11 +350,14 @@ The network learns to:
 2. **Preserve time-domain characteristics** (transients, phase, group delay)
 3. **Maintain 0-20kHz fidelity** without introducing phase distortion
 
-### Baseline and Degradation Policy
+### Degradation Policy
 
-- Bessel degradation remains valid as one of degradation profile candidates.
-- Bessel teacher should be treated as **baseline-only** in experiment comparison tables.
-- Report artifacts must separate `raw88` and `bessel` directories to avoid accidental mixing.
+- Bessel IIR is the fixed degradation path for Stage 1 training input generation
+  (44.1kHz → 88.2kHz upsampling with mirror artifacts)
+- This is intentional: the system itself is the upsampler
+  (44.1kHz → Neural 88.2kHz → Bessel DSP 705.6kHz), bypassing the DAC's internal SRC
+- Bessel teacher (legacy) is retained as a comparison baseline only
+- Report artifacts must separate `raw88` and `bessel` directories to avoid accidental mixing
 
 ---
 
