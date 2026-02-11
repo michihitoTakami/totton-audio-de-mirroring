@@ -518,6 +518,7 @@ def _coerce_teacher_type(value: Any, name: str) -> TeacherType:
     aliases = {
         "raw88": "raw_88k2",
         "raw_88k2": "raw_88k2",
+        "native_88k2": "raw_88k2",
         "bessel": "bessel_88k2",
         "bessel_88k2": "bessel_88k2",
     }

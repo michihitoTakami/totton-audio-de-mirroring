@@ -100,26 +100,52 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
         rng = self._rng_for_index(index)
         request = _sample_signal_request(rng, self._config.signal_sampling)
         source_seed = int(rng.integers(0, 2**32 - 1))
-        source = generate_signal(
-            request.signal_type,
-            sample_rate=self._config.source_sample_rate,
-            duration_sec=self._config.source_duration_sec,
-            seed=source_seed,
-            **dict(request.params),
-        )
-        source_chunk, chunk_start = _extract_chunk(
-            source,
-            self._config.source_sample_rate,
-            self._config.source_duration_sec,
-            self._config.chunk_duration_sec,
-            self._config.random_chunk,
-            rng,
-        )
-        source_chunk = apply_augmentations(
-            source_chunk,
-            self._config.augmentation,
-            rng,
-        )
+        source_chunk: np.ndarray
+        teacher_full: np.ndarray
+        chunk_start: int
+        if self._config.teacher_type == "raw_88k2":
+            source_chunk, teacher_full, chunk_start = (
+                _build_raw_teacher_source_chunk_and_reference(
+                    request=request,
+                    source_seed=source_seed,
+                    source_sr=self._config.source_sample_rate,
+                    target_sr=self._config.target_sample_rate,
+                    source_duration_sec=self._config.source_duration_sec,
+                    chunk_duration_sec=self._config.chunk_duration_sec,
+                    random_chunk=self._config.random_chunk,
+                    augmentation=self._config.augmentation,
+                    rng=rng,
+                )
+            )
+        else:
+            source = generate_signal(
+                request.signal_type,
+                sample_rate=self._config.source_sample_rate,
+                duration_sec=self._config.source_duration_sec,
+                seed=source_seed,
+                **dict(request.params),
+            )
+            source_chunk, chunk_start = _extract_chunk(
+                source,
+                self._config.source_sample_rate,
+                self._config.source_duration_sec,
+                self._config.chunk_duration_sec,
+                self._config.random_chunk,
+                rng,
+            )
+            source_chunk = apply_augmentations(
+                source_chunk,
+                self._config.augmentation,
+                rng,
+            )
+            teacher_full = _build_teacher_reference(
+                source_chunk,
+                source_sr=self._config.source_sample_rate,
+                target_sr=self._config.target_sample_rate,
+                teacher_type=self._config.teacher_type,
+                bessel_cutoff_hz=self._config.band_split.cutoff_hz,
+                bessel_order=self._config.degradation.iir_order,
+            )
 
         profile = self._degradation.sample_profile(rng=rng)
         x_full = apply_degradation_profile(
@@ -128,14 +154,6 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             self._config.target_sample_rate,
             profile,
             rng,
-        )
-        teacher_full = _build_teacher_reference(
-            source_chunk,
-            source_sr=self._config.source_sample_rate,
-            target_sr=self._config.target_sample_rate,
-            teacher_type=self._config.teacher_type,
-            bessel_cutoff_hz=self._config.band_split.cutoff_hz,
-            bessel_order=self._config.degradation.iir_order,
         )
 
         low_band, high_band = self._band_split.split(x_full)
@@ -416,6 +434,81 @@ def _build_teacher_reference(
     raise ValueError(f"Unsupported teacher_type: {teacher_type!r}.")
 
 
+def _build_raw_teacher_source_chunk_and_reference(
+    *,
+    request: SignalRequest,
+    source_seed: int,
+    source_sr: int,
+    target_sr: int,
+    source_duration_sec: float,
+    chunk_duration_sec: float,
+    random_chunk: bool,
+    augmentation: AugmentationConfig,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Build source chunk and teacher reference for the raw Stage 1 policy.
+
+    Args:
+        request: Synthetic signal request.
+        source_seed: Reproducible seed for source generation.
+        source_sr: Source sample rate.
+        target_sr: Target sample rate.
+        source_duration_sec: Full source duration in seconds.
+        chunk_duration_sec: Chunk duration in seconds.
+        random_chunk: Whether to sample chunk start randomly.
+        augmentation: Augmentation configuration.
+        rng: RNG for deterministic chunking and augmentation.
+
+    Returns:
+        Tuple of `(source_chunk, teacher_chunk, chunk_start_samples_at_source_sr)`.
+
+    Physical Basis:
+        Raw teacher supervision must carry genuine >22.05kHz information, so
+        the teacher is synthesized natively at 88.2kHz. The 44.1kHz input
+        chunk is then derived by downsampling the same teacher chunk.
+    """
+    _validate_rng(rng)
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(target_sr, "target_sr")
+    _validate_positive_float(source_duration_sec, "source_duration_sec")
+    _validate_positive_float(chunk_duration_sec, "chunk_duration_sec")
+
+    teacher_source = generate_signal(
+        request.signal_type,
+        sample_rate=target_sr,
+        duration_sec=source_duration_sec,
+        seed=source_seed,
+        **dict(request.params),
+    )
+    source_proxy = _downsample_raw_reference(
+        teacher_source, source_sr=target_sr, target_sr=source_sr
+    )
+    _, chunk_start = _extract_chunk(
+        source_proxy,
+        source_sr,
+        source_duration_sec,
+        chunk_duration_sec,
+        random_chunk,
+        rng,
+    )
+
+    ratio = target_sr / source_sr
+    if abs(ratio - round(ratio)) > 1e-6:
+        raise ValueError("target_sr must be an integer multiple of source_sr.")
+    int_ratio = int(round(ratio))
+    target_chunk_samples = int(round(chunk_duration_sec * target_sr))
+    target_start = chunk_start * int_ratio
+    teacher_chunk = teacher_source[target_start : target_start + target_chunk_samples]
+    if teacher_chunk.shape[0] != target_chunk_samples:
+        raise ValueError("teacher chunk extraction failed to match target length.")
+
+    teacher_chunk = apply_augmentations(teacher_chunk, augmentation, rng)
+    source_chunk = _downsample_raw_reference(
+        teacher_chunk, source_sr=target_sr, target_sr=source_sr
+    )
+    return source_chunk, teacher_chunk, chunk_start
+
+
 def _upsample_raw_reference(
     signal: np.ndarray, *, source_sr: int, target_sr: int
 ) -> np.ndarray:
@@ -452,6 +545,45 @@ def _upsample_raw_reference(
     )
     expected_len = signal.shape[-1] * int_ratio
     return np.asarray(upsampled[..., :expected_len], dtype=np.float64)
+
+
+def _downsample_raw_reference(
+    signal: np.ndarray, *, source_sr: int, target_sr: int
+) -> np.ndarray:
+    """Downsample via high-quality polyphase SRC for raw-teacher alignment.
+
+    Args:
+        signal: Source signal.
+        source_sr: Source sample rate.
+        target_sr: Target sample rate.
+
+    Returns:
+        Downsampled signal at target sample rate.
+
+    Physical Basis:
+        A controlled polyphase downsampling path converts native 88.2kHz
+        teacher chunks into 44.1kHz inputs while preserving corresponding
+        time structure for degradation-path synthesis.
+    """
+    _validate_signal(signal)
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(target_sr, "target_sr")
+    ratio = source_sr / target_sr
+    if abs(ratio - round(ratio)) > 1e-6:
+        raise ValueError("source_sr must be an integer multiple of target_sr.")
+    int_ratio = int(round(ratio))
+    if int_ratio <= 0:
+        raise ValueError("downsampling ratio must be positive.")
+
+    downsampled = sp_signal.resample_poly(
+        np.asarray(signal, dtype=np.float64),
+        up=1,
+        down=int_ratio,
+        axis=-1,
+        window=("kaiser", 8.6),
+    )
+    expected_len = int(round(signal.shape[-1] / int_ratio))
+    return np.asarray(downsampled[..., :expected_len], dtype=np.float64)
 
 
 def _validate_training_sample_consistency(

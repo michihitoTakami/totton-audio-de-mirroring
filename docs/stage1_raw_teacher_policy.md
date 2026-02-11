@@ -10,6 +10,9 @@ Stage1教師方針を `raw 88.2kHz` に統一し、実験運用での誤読と�
 2. Legacy `bessel` teacher remains valid only for baseline comparison.
 3. 0-20kHz preservation, mirror suppression, and 20-44kHz energy-cap safety gates are mandatory regardless of teacher type.
 
+`raw88` (`raw_88k2`) の生成経路は「44.1kHzを88.2kHzへ補間」ではなく、88.2kHzでネイティブ生成した教師信号を基準とする。
+そのうえで入力側は教師信号を44.1kHzへダウンサンプルし、劣化SRC経路で `x_full` を合成する。
+
 ## Baseline Positioning
 
 - `raw88`: production-direction teacher policy for Stage1.

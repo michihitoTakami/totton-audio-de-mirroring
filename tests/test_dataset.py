@@ -140,6 +140,9 @@ def test_config_teacher_type_legacy_default_and_alias() -> None:
     aliased = DataPipelineConfig.from_dict({"teacher_type": "raw88"})
     assert aliased.teacher_type == "raw_88k2"
 
+    native_aliased = DataPipelineConfig.from_dict({"teacher_type": "native_88k2"})
+    assert native_aliased.teacher_type == "raw_88k2"
+
 
 def test_stage1_path_roundtrip_in_serialized_config(tmp_path: Path) -> None:
     config = _small_config()
@@ -242,28 +245,32 @@ def test_dataset_teacher_type_switches_reference_path(
     raw_calls = {"count": 0}
     bessel_calls = {"count": 0}
 
-    def fake_raw_reference(
-        signal: np.ndarray, *, source_sr: int, target_sr: int
-    ) -> np.ndarray:
-        del source_sr, target_sr
+    def fake_raw_builder(**_: object) -> tuple[np.ndarray, np.ndarray, int]:
         raw_calls["count"] += 1
-        return np.repeat(signal.astype(np.float64), 2)
+        source = np.zeros(11_025, dtype=np.float64)
+        teacher = np.zeros(22_050, dtype=np.float64)
+        return source, teacher, 0
 
-    def fake_bessel_reference(
-        *,
+    def fake_teacher_reference(
         signal: np.ndarray,
+        *,
         source_sr: int,
         target_sr: int,
-        cutoff_hz: float,
-        order: int,
+        teacher_type: str,
+        bessel_cutoff_hz: float,
+        bessel_order: int,
     ) -> np.ndarray:
-        del source_sr, target_sr, cutoff_hz, order
+        del signal, source_sr, target_sr, teacher_type, bessel_cutoff_hz, bessel_order
         bessel_calls["count"] += 1
-        return np.repeat(signal.astype(np.float64), 2)
+        return np.zeros(22_050, dtype=np.float64)
 
-    monkeypatch.setattr(dataset_module, "_upsample_raw_reference", fake_raw_reference)
     monkeypatch.setattr(
-        dataset_module, "upsample_bessel_reference", fake_bessel_reference
+        dataset_module,
+        "_build_raw_teacher_source_chunk_and_reference",
+        fake_raw_builder,
+    )
+    monkeypatch.setattr(
+        dataset_module, "_build_teacher_reference", fake_teacher_reference
     )
 
     raw_config = _small_config()
@@ -286,7 +293,9 @@ def test_dataset_teacher_type_switches_reference_path(
 def test_dataset_rejects_non_finite_teacher_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _small_config()
+    payload = _small_config().to_dict()
+    payload["teacher_type"] = "bessel_88k2"
+    config = DataPipelineConfig.from_dict(payload)
 
     def fake_teacher_reference(
         signal: np.ndarray,
@@ -307,3 +316,45 @@ def test_dataset_rejects_non_finite_teacher_reference(
     dataset = create_dataloader(config, DataLoaderConfig(batch_size=1)).dataset
     with pytest.raises(ValueError, match="teacher_full contains non-finite values"):
         _ = dataset[0]
+
+
+def test_raw_teacher_generates_at_target_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _small_config()
+    sample_rates: list[int] = []
+    original_generate_signal = dataset_module.generate_signal
+    original_downsample = dataset_module._downsample_raw_reference
+
+    def wrapped_generate_signal(
+        signal_type: str,
+        sample_rate: int = 44_100,
+        duration_sec: float = 1.0,
+        seed: int | None = None,
+        **kwargs: object,
+    ) -> np.ndarray:
+        sample_rates.append(sample_rate)
+        return original_generate_signal(
+            signal_type,
+            sample_rate=sample_rate,
+            duration_sec=duration_sec,
+            seed=seed,
+            **kwargs,
+        )
+
+    downsample_calls = {"count": 0}
+
+    def wrapped_downsample(
+        signal: np.ndarray, *, source_sr: int, target_sr: int
+    ) -> np.ndarray:
+        downsample_calls["count"] += 1
+        return original_downsample(signal, source_sr=source_sr, target_sr=target_sr)
+
+    monkeypatch.setattr(dataset_module, "generate_signal", wrapped_generate_signal)
+    monkeypatch.setattr(dataset_module, "_downsample_raw_reference", wrapped_downsample)
+
+    dataset = create_dataloader(config, DataLoaderConfig(batch_size=1)).dataset
+    _ = dataset[0]
+
+    assert sample_rates == [config.target_sample_rate]
+    assert downsample_calls["count"] >= 2
