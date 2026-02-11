@@ -5,6 +5,7 @@ from totton_audio_de_mirroring.data.mirror_detection import (
     MirrorDetectionConfig,
     detect_mirror_artifacts,
     generate_hb_target,
+    project_teacher_hb_target,
 )
 
 SAMPLE_RATE = 88_200
@@ -156,3 +157,41 @@ def test_energy_cap_is_enforced() -> None:
     highband = freqs >= 20_000.0
     energy = float(np.mean(mag_out[highband] ** 2))
     assert energy <= 1.05e-4
+
+
+def test_project_teacher_hb_target_applies_suppression_floor_on_detected_bins() -> None:
+    mirror_center = SAMPLE_RATE / 4.0
+    low_freq = 21_000.0
+    high_freq = 2.0 * mirror_center - low_freq
+    signal = _sine(low_freq, SAMPLE_RATE, DURATION_SEC) + 0.8 * _sine(
+        high_freq, SAMPLE_RATE, DURATION_SEC
+    )
+
+    config = MirrorDetectionConfig(
+        cutoff_hz=20_000.0,
+        mirror_center_hz=mirror_center,
+        mirror_band_hz=(20_000.0, 22_000.0),
+        n_fft=N_FFT,
+        hop_length=HOP_LENGTH,
+        magnitude_threshold=1.5,
+        symmetry_threshold=0.3,
+    )
+    detected_in = detect_mirror_artifacts(signal, SAMPLE_RATE, config)
+    assert np.any(detected_in.detection_mask)
+
+    projected = project_teacher_hb_target(
+        signal,
+        signal,
+        SAMPLE_RATE,
+        detection_config=config,
+        suppression_floor=0.2,
+        energy_cap=10.0,
+        envelope_min=1.0,
+    )
+    detected_out = detect_mirror_artifacts(projected, SAMPLE_RATE, config)
+
+    mask = detected_in.detection_mask
+    input_mag = np.abs(detected_in.stft)[mask]
+    output_mag = np.abs(detected_out.stft)[mask]
+    ratio = float(np.mean(output_mag / (input_mag + 1.0e-12)))
+    assert ratio <= 0.30

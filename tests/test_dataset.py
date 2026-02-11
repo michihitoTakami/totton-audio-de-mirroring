@@ -240,6 +240,7 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
         sample_rate: int,
         *,
         detection_config: object = None,
+        suppression_floor: float = 0.0,
         energy_cap: float = 0.0,
         envelope_min: float = 0.0,
     ) -> np.ndarray:
@@ -247,6 +248,7 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
             "sample_rate": sample_rate,
             "hb_in_shape": hb_in.shape,
             "teacher_shape": teacher_hb.shape,
+            "suppression_floor": suppression_floor,
             "energy_cap": energy_cap,
             "envelope_min": envelope_min,
             "detection_config": detection_config,
@@ -256,6 +258,7 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
             teacher_hb,
             sample_rate,
             detection_config=detection_config,
+            suppression_floor=suppression_floor,
             energy_cap=energy_cap,
             envelope_min=envelope_min,
         )
@@ -282,6 +285,7 @@ def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None
     assert project_call["sample_rate"] == config.target_sample_rate
     assert project_call["hb_in_shape"] == sample["high_band"].shape
     assert project_call["teacher_shape"] == sample["high_band"].shape
+    assert project_call["suppression_floor"] == config.hb_target.suppression_floor
     assert project_call["energy_cap"] == config.hb_target.energy_cap
     assert project_call["envelope_min"] == config.hb_target.envelope_min
 

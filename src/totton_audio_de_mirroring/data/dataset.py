@@ -167,6 +167,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
                 teacher_high_band,
                 self._config.target_sample_rate,
                 detection_config=self._config.mirror_detection,
+                suppression_floor=self._config.hb_target.suppression_floor,
                 energy_cap=self._config.hb_target.energy_cap,
                 envelope_min=self._config.hb_target.envelope_min,
             )

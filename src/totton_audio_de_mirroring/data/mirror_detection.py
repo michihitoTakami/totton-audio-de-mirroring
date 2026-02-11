@@ -263,6 +263,7 @@ def project_teacher_hb_target(
     sample_rate: int,
     *,
     detection_config: MirrorDetectionConfig | None = None,
+    suppression_floor: float = DEFAULT_SUPPRESSION_FLOOR,
     energy_cap: float = DEFAULT_ENERGY_CAP,
     envelope_min: float = DEFAULT_ENVELOPE_MIN,
 ) -> np.ndarray:
@@ -273,6 +274,7 @@ def project_teacher_hb_target(
         teacher_hb: High-band teacher signal (raw 88.2kHz reference split to HB).
         sample_rate: Sample rate in Hz.
         detection_config: Optional STFT/envelope configuration (reuses MirrorDetectionConfig).
+        suppression_floor: Maximum retained gain in detected mirror bins.
         energy_cap: Maximum allowed high-band mean energy (IMD safety gate).
         envelope_min: Minimum envelope gain at Nyquist.
 
@@ -287,12 +289,14 @@ def project_teacher_hb_target(
         This function builds a target that:
         - follows the teacher magnitude where feasible (prevents over-suppression),
         - never exceeds the input magnitude (prevents hallucinated addition),
+        - applies explicit mirror-bin attenuation with suppression_floor,
         - retains the input phase (aligns with the model's constraint),
         - applies envelope and energy caps for HF safety.
     """
     _validate_signal(hb_in)
     _validate_signal(teacher_hb)
     _validate_sample_rate(sample_rate)
+    _validate_unit_interval(suppression_floor, "suppression_floor")
     _validate_positive_float(energy_cap, "energy_cap")
     _validate_unit_interval(envelope_min, "envelope_min")
     if hb_in.shape != teacher_hb.shape:
@@ -320,6 +324,18 @@ def project_teacher_hb_target(
     mag_in = np.abs(stft_in)
     mag_teacher = np.abs(stft_teacher)
     mag_target = np.minimum(mag_teacher, mag_in)
+    mirror_detection = detect_mirror_artifacts(
+        hb_in,
+        sample_rate,
+        config=cfg,
+    )
+    mirror_mask = mirror_detection.detection_mask
+    if mirror_mask.shape != mag_target.shape:
+        raise ValueError("mirror detection mask shape mismatch.")
+    mag_target[mirror_mask] = np.minimum(
+        mag_target[mirror_mask],
+        mag_in[mirror_mask] * suppression_floor,
+    )
 
     phase_in = np.exp(1j * np.angle(stft_in))
     projected_stft = mag_target * phase_in
