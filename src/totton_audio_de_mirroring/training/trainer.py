@@ -652,15 +652,13 @@ def _compute_batch_metrics(
     mirror_reduction_db = torch.mean(10.0 * torch.log10(ratio + eps)).item()
 
     touch = torch.mean(torch.abs(hb_pred_mag - hb_in_mag) * (1.0 - mirror)).item()
-    highband_mask = getattr(model, "highband_mask", None)
+    highband_mask = _build_highband_mask_for_stft(
+        model=model, num_freqs=hb_pred_mag.shape[1]
+    )
     mag_sq = hb_pred_mag**2
-    if isinstance(highband_mask, torch.Tensor):
+    if highband_mask is not None:
         mask = highband_mask.to(device=hb_pred_mag.device, dtype=torch.bool)
-        if (
-            mask.ndim == 1
-            and mask.shape[0] == hb_pred_mag.shape[1]
-            and torch.count_nonzero(mask) > 0
-        ):
+        if torch.count_nonzero(mask) > 0:
             mag_sq = mag_sq[:, mask, :]
     hb_energy = torch.clamp(
         torch.mean(mag_sq, dim=(-2, -1)),
@@ -753,9 +751,9 @@ def _compute_losses_fp32(
         Running loss computation in fp32 avoids ComplexHalf instability while
         preserving mixed-precision speedup in the model forward pass.
     """
-    highband_mask = getattr(model, "highband_mask", None)
-    highband_mask_tensor = (
-        highband_mask if isinstance(highband_mask, torch.Tensor) else None
+    highband_mask_tensor = _build_highband_mask_for_stft(
+        model=model,
+        num_freqs=(config.mask_config.n_fft // 2) + 1,
     )
     return compute_losses(
         hb_in.to(dtype=torch.float32),
@@ -770,6 +768,26 @@ def _compute_losses_fp32(
         ringing_config=config.ringing_loss_config,
         mask_mode=config.mask_mode,
     )
+
+
+def _build_highband_mask_for_stft(
+    *,
+    model: nn.Module,
+    num_freqs: int,
+) -> torch.Tensor | None:
+    """Build high-band mask aligned to a target STFT frequency resolution."""
+    if num_freqs <= 0:
+        raise ValueError("num_freqs must be positive.")
+    sample_rate = _get_model_float_attr(model, "sample_rate")
+    cutoff_hz = _get_model_float_attr(model, "cutoff_hz")
+    if sample_rate is None or cutoff_hz is None:
+        return None
+
+    nyquist = sample_rate / 2.0
+    if cutoff_hz <= 0.0 or cutoff_hz >= nyquist:
+        return None
+    freqs = torch.linspace(0.0, nyquist, num_freqs, dtype=torch.float32)
+    return (freqs >= cutoff_hz).to(dtype=torch.float32)
 
 
 def _run_train_step_with_amp_fallback(
