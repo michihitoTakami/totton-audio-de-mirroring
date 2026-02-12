@@ -550,7 +550,7 @@ git submodule update --init --recursive
 ```
 
 ```bash
-uv run python scripts/report_issue109_eight_metric_wins.py \
+uv run python scripts/report_eight_metric_wins.py \
   --metrics-root reports/microstructure_original88k_eval_20260210/metrics \
   --audio-root reports/microstructure_method_compare_20260210_full \
   --target-root third_party/microstructure-metrics/test_signals_88k \

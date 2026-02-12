@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scripts.generate_issue109_baseline_outputs import (
+from scripts.generate_baseline_stage1_outputs import (
     run_per_channel_inference,
     to_float_channels,
 )

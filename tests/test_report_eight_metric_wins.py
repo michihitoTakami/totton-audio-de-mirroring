@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from scipy.io import wavfile
-from scripts.report_issue109_eight_metric_wins import main
+from scripts.report_eight_metric_wins import main
 
 
 def test_issue109_report_generates_all_outputs(
@@ -29,7 +29,7 @@ def test_issue109_report_generates_all_outputs(
         sys,
         "argv",
         [
-            "report_issue109_eight_metric_wins.py",
+            "report_eight_metric_wins.py",
             "--metrics-root",
             str(metrics_root),
             "--audio-root",
@@ -82,7 +82,7 @@ def test_issue109_report_works_with_metrics_only(
         sys,
         "argv",
         [
-            "report_issue109_eight_metric_wins.py",
+            "report_eight_metric_wins.py",
             "--metrics-root",
             str(metrics_root),
             "--methods",
