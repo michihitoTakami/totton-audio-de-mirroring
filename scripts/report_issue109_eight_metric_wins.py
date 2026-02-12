@@ -141,7 +141,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--metrics-root", type=Path, required=True)
     parser.add_argument("--audio-root", type=Path, default=None)
-    parser.add_argument("--target-root", type=Path, default=None)
+    parser.add_argument(
+        "--target-root",
+        type=Path,
+        default=None,
+        help="Path to 88.2kHz target WAV directory (defaults to submodule path when available).",
+    )
     parser.add_argument(
         "--methods",
         type=str,
@@ -174,6 +179,12 @@ def main() -> None:
     """
 
     args = parse_args()
+    if args.target_root is None:
+        default_target_root = Path(
+            "third_party/microstructure-metrics/test_signals_88k"
+        )
+        if default_target_root.exists() and default_target_root.is_dir():
+            args.target_root = default_target_root
     _validate_inputs(metrics_root=args.metrics_root, methods=args.methods)
     method_names = list(dict.fromkeys(args.methods))
     all_values = _collect_metric_values(

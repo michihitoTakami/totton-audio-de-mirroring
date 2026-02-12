@@ -1,9 +1,9 @@
 # Issue #109 8指標 勝敗表
 
 ## Inputs
-- metrics_root: `/home/michihito/Working/totton-audio-de-mirroring/reports/microstructure_original88k_eval_20260210/metrics`
-- audio_root: `/home/michihito/Working/totton-audio-de-mirroring/reports/microstructure_method_compare_20260210_full`
-- target_root: `/home/michihito/Working/microstructure-metrics/test_signals_88k`
+- metrics_root: `reports/microstructure_original88k_eval_20260210/metrics`
+- audio_root: `reports/microstructure_method_compare_20260210_full`
+- target_root: `third_party/microstructure-metrics/test_signals_88k`
 - methods: bessel_iir, bessel_fir, fir_10k, baseline_nn, distillation_nn
 
 ## Aggregate Winners
