@@ -543,6 +543,25 @@ uv run python scripts/report_raw_teacher_comparison.py \
   --output-csv reports/stage1/comparison/raw88_vs_bessel_20260210.csv
 ```
 
+Issue #109（8指標勝敗表）の生成例:
+
+```bash
+uv run python scripts/report_issue109_eight_metric_wins.py \
+  --metrics-root reports/microstructure_original88k_eval_20260210/metrics \
+  --audio-root reports/microstructure_method_compare_20260210_full \
+  --target-root /home/michihito/Working/microstructure-metrics/test_signals_88k \
+  --methods bessel_iir bessel_fir fir_10k baseline_nn distillation_nn \
+  --output-dir reports/issue109/eight_metrics \
+  --report-name raw88_vs_bessel_teacher_8metrics
+```
+
+上記により以下が固定保存される。
+
+- `reports/issue109/eight_metrics/raw88_vs_bessel_teacher_8metrics.md`
+- `reports/issue109/eight_metrics/raw88_vs_bessel_teacher_8metrics_aggregate.csv`
+- `reports/issue109/eight_metrics/raw88_vs_bessel_teacher_8metrics_per_file.csv`
+- `reports/issue109/eight_metrics/raw88_vs_bessel_teacher_8metrics.json`
+
 ### 10.3 raw教師移行チェックリスト
 
 - [ ] ドキュメントに「raw88が標準、besselは比較ベースライン」を明記した
