@@ -146,8 +146,16 @@ def test_train_stage1_distillation_runs_one_epoch(tmp_path: Path) -> None:
     assert result.best_checkpoint.exists()
     assert len(result.train_history) == 1
     assert len(result.val_history) == 1
-    assert result.train_history[0].distill_ratio >= 0.0
-    assert result.val_history[0].distill_ratio >= 0.0
+    train_metrics = result.train_history[0]
+    val_metrics = result.val_history[0]
+    assert train_metrics.distill_ratio >= 0.0
+    assert val_metrics.distill_ratio >= 0.0
+    assert train_metrics.distill_ratio == pytest.approx(
+        config.distillation_weight * train_metrics.distill / train_metrics.total
+    )
+    assert val_metrics.distill_ratio == pytest.approx(
+        config.distillation_weight * val_metrics.distill / val_metrics.total
+    )
 
 
 def test_train_stage1_distillation_respects_checkpoint_prefix(tmp_path: Path) -> None:
@@ -239,6 +247,16 @@ def test_distillation_config_parses_relative_fields() -> None:
     )
     assert config.distillation_relative is False
     assert config.distillation_eps == pytest.approx(1.0e-6)
+
+
+def test_distillation_config_rejects_non_positive_distillation_eps() -> None:
+    with pytest.raises(ValueError, match="distillation_eps must be positive"):
+        _ = DistillationConfig.from_dict(
+            {
+                "teacher_type": "raw_88k2",
+                "distillation_eps": 0.0,
+            }
+        )
 
 
 def _small_stft_config() -> Any:

@@ -210,7 +210,11 @@ class DistillationConfig:
 
 @dataclass(frozen=True)
 class DistillationEpochMetrics:
-    """Aggregated one-epoch distillation metrics."""
+    """Aggregated one-epoch distillation metrics.
+
+    `distill_ratio` is the weighted contribution:
+    `(distillation_weight * distill) / total`.
+    """
 
     total: float
     task: float
@@ -522,7 +526,8 @@ def _run_epoch(
         raise RuntimeError("Empty dataloader is not supported.")
     total_mean = total_loss_sum / total_samples
     distill_mean = distill_loss_sum / total_samples
-    distill_ratio = distill_mean / max(total_mean, 1.0e-12)
+    weighted_distill_mean = config.distillation_weight * distill_mean
+    distill_ratio = weighted_distill_mean / max(total_mean, 1.0e-12)
     return DistillationEpochMetrics(
         total=total_mean,
         task=task_loss_sum / total_samples,
