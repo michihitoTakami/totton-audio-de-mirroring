@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from totton_audio_de_mirroring.training.distillation import (
     DistillationConfig,
+    _distillation_loss,
     apply_global_magnitude_pruning,
     load_distillation_config,
     train_stage1_distillation,
@@ -145,6 +146,8 @@ def test_train_stage1_distillation_runs_one_epoch(tmp_path: Path) -> None:
     assert result.best_checkpoint.exists()
     assert len(result.train_history) == 1
     assert len(result.val_history) == 1
+    assert result.train_history[0].distill_ratio >= 0.0
+    assert result.val_history[0].distill_ratio >= 0.0
 
 
 def test_train_stage1_distillation_respects_checkpoint_prefix(tmp_path: Path) -> None:
@@ -203,6 +206,39 @@ def test_train_stage1_distillation_default_prefix_uses_teacher_tag(
     assert result.best_checkpoint == tmp_path / "stage1_distill_bessel_best.pt"
     assert result.last_checkpoint.exists()
     assert result.best_checkpoint.exists()
+
+
+def test_distillation_loss_relative_normalization_increases_small_l2() -> None:
+    hb_teacher = torch.full((2, 8), 1.0e-3, dtype=torch.float32)
+    hb_student = torch.zeros((2, 8), dtype=torch.float32)
+    raw = _distillation_loss(
+        hb_student=hb_student,
+        hb_teacher=hb_teacher,
+        mode="l2",
+        relative=False,
+        eps=1.0e-8,
+    )
+    relative = _distillation_loss(
+        hb_student=hb_student,
+        hb_teacher=hb_teacher,
+        mode="l2",
+        relative=True,
+        eps=1.0e-8,
+    )
+    assert float(raw.item()) < 1.0e-5
+    assert float(relative.item()) > float(raw.item()) * 1.0e3
+
+
+def test_distillation_config_parses_relative_fields() -> None:
+    config = DistillationConfig.from_dict(
+        {
+            "teacher_type": "raw_88k2",
+            "distillation_relative": False,
+            "distillation_eps": 1.0e-6,
+        }
+    )
+    assert config.distillation_relative is False
+    assert config.distillation_eps == pytest.approx(1.0e-6)
 
 
 def _small_stft_config() -> Any:
