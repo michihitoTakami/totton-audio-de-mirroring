@@ -51,6 +51,8 @@ class DistillationConfig:
         distillation_weight: Weight of teacher-student consistency loss.
         task_weight: Weight of Stage 1 task loss.
         distillation_mode: Distillation criterion ("l1" or "l2").
+        distillation_relative: Normalize distillation loss by teacher energy.
+        distillation_eps: Numerical stability epsilon for relative normalization.
         device: Optional explicit device override.
         require_cuda: Whether CUDA is required.
         seed: Optional RNG seed.
@@ -94,6 +96,8 @@ class DistillationConfig:
     distillation_weight: float = 1.0
     task_weight: float = 1.0
     distillation_mode: LossMode = "l2"
+    distillation_relative: bool = True
+    distillation_eps: float = 1.0e-8
     device: str | None = None
     require_cuda: bool = True
     seed: int | None = None
@@ -128,6 +132,8 @@ class DistillationConfig:
             raise ValueError("stft_configs must not be empty.")
         if self.distillation_mode not in {"l1", "l2"}:
             raise ValueError("distillation_mode must be 'l1' or 'l2'.")
+        if self.distillation_eps <= 0.0:
+            raise ValueError("distillation_eps must be positive.")
 
     @staticmethod
     def from_dict(
@@ -194,6 +200,8 @@ class DistillationConfig:
             distillation_weight=float(raw.get("distillation_weight", 1.0)),
             task_weight=float(raw.get("task_weight", 1.0)),
             distillation_mode=_parse_loss_mode(raw.get("distillation_mode", "l2")),
+            distillation_relative=_parse_bool(raw.get("distillation_relative", True)),
+            distillation_eps=float(raw.get("distillation_eps", 1.0e-8)),
             device=_optional_str(raw.get("device")),
             require_cuda=_parse_bool(raw.get("require_cuda", True)),
             seed=_optional_int(raw.get("seed")),
@@ -202,11 +210,16 @@ class DistillationConfig:
 
 @dataclass(frozen=True)
 class DistillationEpochMetrics:
-    """Aggregated one-epoch distillation metrics."""
+    """Aggregated one-epoch distillation metrics.
+
+    `distill_ratio` is the weighted contribution:
+    `(distillation_weight * distill) / total`.
+    """
 
     total: float
     task: float
     distill: float
+    distill_ratio: float
     samples: int
     steps: int
     throughput_samples_per_sec: float
@@ -408,11 +421,23 @@ def train_stage1_distillation(
                 save_checkpoint(best_checkpoint, state)
 
         if (epoch + 1) % config.log_interval == 0 or epoch == 0:
-            print(
+            message = (
                 f"epoch={epoch + 1}/{config.epochs} "
                 f"train_total={train_metrics.total:.6f} "
                 f"train_task={train_metrics.task:.6f} "
-                f"train_distill={train_metrics.distill:.6f}",
+                f"train_distill={train_metrics.distill:.6f} "
+                f"train_distill_ratio={train_metrics.distill_ratio:.6e}"
+            )
+            if val_dataloader is not None and val_history:
+                val_metrics = val_history[-1]
+                message += (
+                    f" val_total={val_metrics.total:.6f} "
+                    f"val_task={val_metrics.task:.6f} "
+                    f"val_distill={val_metrics.distill:.6f} "
+                    f"val_distill_ratio={val_metrics.distill_ratio:.6e}"
+                )
+            print(
+                message,
                 flush=True,
             )
 
@@ -473,6 +498,8 @@ def _run_epoch(
                 hb_student=hb_student,
                 hb_teacher=hb_teacher,
                 mode=config.distillation_mode,
+                relative=config.distillation_relative,
+                eps=config.distillation_eps,
             )
             total_loss = (
                 config.task_weight * task_terms.total
@@ -497,10 +524,15 @@ def _run_epoch(
     elapsed = max(time.perf_counter() - start, 1.0e-6)
     if total_samples <= 0:
         raise RuntimeError("Empty dataloader is not supported.")
+    total_mean = total_loss_sum / total_samples
+    distill_mean = distill_loss_sum / total_samples
+    weighted_distill_mean = config.distillation_weight * distill_mean
+    distill_ratio = weighted_distill_mean / max(total_mean, 1.0e-12)
     return DistillationEpochMetrics(
-        total=total_loss_sum / total_samples,
+        total=total_mean,
         task=task_loss_sum / total_samples,
-        distill=distill_loss_sum / total_samples,
+        distill=distill_mean,
+        distill_ratio=distill_ratio,
         samples=total_samples,
         steps=total_steps,
         throughput_samples_per_sec=float(total_samples / elapsed),
@@ -513,13 +545,25 @@ def _distillation_loss(
     hb_student: torch.Tensor,
     hb_teacher: torch.Tensor,
     mode: LossMode,
+    relative: bool,
+    eps: float,
 ) -> torch.Tensor:
     if hb_student.shape != hb_teacher.shape:
         raise ValueError("hb_student and hb_teacher must share shape.")
+    if eps <= 0.0:
+        raise ValueError("eps must be positive.")
     if mode == "l1":
-        return torch.mean(torch.abs(hb_student - hb_teacher))
+        loss = torch.mean(torch.abs(hb_student - hb_teacher))
+        if not relative:
+            return loss
+        denom = torch.mean(torch.abs(hb_teacher.detach()))
+        return loss / (denom + eps)
     if mode == "l2":
-        return torch.mean((hb_student - hb_teacher) ** 2)
+        loss = torch.mean((hb_student - hb_teacher) ** 2)
+        if not relative:
+            return loss
+        denom = torch.mean((hb_teacher.detach()) ** 2)
+        return loss / (denom + eps)
     raise ValueError(f"Unsupported distillation mode: {mode}.")
 
 
