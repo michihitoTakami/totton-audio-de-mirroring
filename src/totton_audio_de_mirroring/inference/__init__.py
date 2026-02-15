@@ -20,6 +20,10 @@ from totton_audio_de_mirroring.inference.pipeline import (
     load_nmse_stage1_processor,
     run_stage1_stage2_pipeline,
 )
+from totton_audio_de_mirroring.inference.tensorrt_processor import (
+    TensorRtStage1Processor,
+    load_tensorrt_stage1_processor,
+)
 
 __all__ = [
     "ChunkFrame",
@@ -32,8 +36,10 @@ __all__ = [
     "PipelineResult",
     "ReferenceStage1Processor",
     "Stage1Processor",
+    "TensorRtStage1Processor",
     "iterate_chunk_frames",
     "load_onnx_stage1_processor",
+    "load_tensorrt_stage1_processor",
     "load_nmse_stage1_processor",
     "run_stage1_stage2_pipeline",
 ]

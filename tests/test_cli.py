@@ -182,6 +182,44 @@ def test_build_stage1_processor_nmse_uses_device_override(
     assert calls[0]["device"] == "cuda"
 
 
+def test_build_stage1_processor_tensorrt_uses_device_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device override should be forwarded to TensorRT loader."""
+    calls: list[dict[str, object]] = []
+
+    def _fake_loader(
+        *,
+        engine_path: Path,
+        data_config_path: Path,
+        device: str,
+        energy_cap: float | None,
+        iir_order: int,
+    ) -> object:
+        calls.append(
+            {
+                "engine_path": engine_path,
+                "data_config_path": data_config_path,
+                "device": device,
+                "energy_cap": energy_cap,
+                "iir_order": iir_order,
+            }
+        )
+        return object()
+
+    monkeypatch.setattr(
+        "totton_audio_de_mirroring.cli.load_tensorrt_stage1_processor",
+        _fake_loader,
+    )
+
+    _ = _build_stage1_processor(
+        {"mode": "tensorrt", "engine_path": "stage1.engine"},
+        device_override="cuda",
+    )
+
+    assert calls[0]["device"] == "cuda"
+
+
 def test_cli_fail_fast_stops_batch_on_first_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

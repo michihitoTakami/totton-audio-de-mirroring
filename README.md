@@ -474,6 +474,46 @@ stage1:
 
 GPU前提のベンチマーク手順は `docs/onnx_runtime_benchmark.md` を参照。
 
+### 8.5 TensorRT Stage1（Mixed Precision優先）
+
+Stage1 U-Net ONNX から TensorRT engine を生成し、`stage1.mode=tensorrt` で実行できる。
+
+```bash
+# FP32 / Pure FP16 / Mixed の3モードを一括生成
+uv run python scripts/export_to_tensorrt.py \
+  --onnx-path data/checkpoints/stage1_best.onnx \
+  --output-dir data/checkpoints/tensorrt \
+  --modes fp32,pure_fp16,mixed \
+  --strict-mixed-io-fp32
+```
+
+デフォルトの動的shapeプロファイルは、Stage1チャンク長 **0.25s / 1.0s / 2.0s**
+（@88.2kHz）に対応する `min/opt/max` time frames を前提にしている。
+
+`configs/stage1_stage2_pipeline.yaml` の `stage1.mode=tensorrt` 例:
+
+```yaml
+stage1:
+  mode: tensorrt
+  engine_path: data/checkpoints/tensorrt/stage1_mixed.engine
+  data_config_path: configs/data_generation.yaml
+  device: cuda
+  energy_cap: 0.001
+```
+
+### 8.6 FP16量子化ノイズ確認
+
+Mixed Precision採用前に、HB帯域（20-44kHz）想定信号でFP16丸めノイズを確認する。
+
+```bash
+uv run python scripts/check_fp16_quantization_noise.py \
+  --sample-rate 88200 \
+  --duration-sec 1.0 \
+  --min-snr-db 70 \
+  --max-error-rms-dbfs -80 \
+  --json
+```
+
 ---
 
 ## 9. Implementation Roadmap

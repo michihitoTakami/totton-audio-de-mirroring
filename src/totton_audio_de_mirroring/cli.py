@@ -23,6 +23,7 @@ from totton_audio_de_mirroring.inference import (
     Stage1Processor,
     load_nmse_stage1_processor,
     load_onnx_stage1_processor,
+    load_tensorrt_stage1_processor,
     run_stage1_stage2_pipeline,
 )
 
@@ -352,6 +353,24 @@ def _build_stage1_processor(
             energy_cap=energy_cap,
             iir_order=iir_order,
             allow_cpu_fallback=allow_cpu_fallback,
+        )
+    if mode == "tensorrt":
+        engine_raw = raw.get("engine_path")
+        if engine_raw is None:
+            raise ValueError("stage1.mode=tensorrt requires engine_path.")
+        device = str(device_override or raw.get("device", "cuda"))
+        data_config_path = Path(
+            str(raw.get("data_config_path", "configs/data_generation.yaml"))
+        )
+        energy_cap_raw = raw.get("energy_cap")
+        energy_cap = None if energy_cap_raw is None else float(energy_cap_raw)
+        iir_order = int(raw.get("iir_order", 6))
+        return load_tensorrt_stage1_processor(
+            engine_path=Path(str(engine_raw)),
+            data_config_path=data_config_path,
+            device=device,
+            energy_cap=energy_cap,
+            iir_order=iir_order,
         )
     raise ValueError(f"Unsupported stage1.mode: {mode}")
 

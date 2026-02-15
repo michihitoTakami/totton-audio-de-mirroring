@@ -25,3 +25,8 @@ stage1:
   # device: cuda
   # allow_cpu_fallback: false
   # energy_cap: 0.001
+  # mode=tensorrt example:
+  # engine_path: data/checkpoints/tensorrt/stage1_mixed.engine
+  # data_config_path: configs/data_generation.yaml
+  # device: cuda
+  # energy_cap: 0.001
