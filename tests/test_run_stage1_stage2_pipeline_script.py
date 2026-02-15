@@ -87,3 +87,9 @@ def test_build_stage1_processor_onnx_requires_model_path() -> None:
     """ONNX mode should reject missing model path explicitly."""
     with pytest.raises(ValueError, match="requires model_path"):
         _ = _build_stage1_processor({"mode": "onnx"})
+
+
+def test_build_stage1_processor_tensorrt_requires_engine_path() -> None:
+    """TensorRT mode should reject missing engine path explicitly."""
+    with pytest.raises(ValueError, match="requires engine_path"):
+        _ = _build_stage1_processor({"mode": "tensorrt"})
