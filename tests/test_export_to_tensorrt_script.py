@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from argparse import Namespace
 from pathlib import Path
 
@@ -30,6 +31,17 @@ def test_validate_args_rejects_invalid_profile(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="opt_time_frames"):
         export_to_tensorrt._validate_args(args)
+
+
+def test_parse_args_defaults_cover_up_to_two_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["export_to_tensorrt.py"])
+    args = export_to_tensorrt.parse_args()
+
+    assert args.min_time_frames == 87
+    assert args.opt_time_frames == 345
+    assert args.max_time_frames == 690
 
 
 def test_main_builds_requested_modes(

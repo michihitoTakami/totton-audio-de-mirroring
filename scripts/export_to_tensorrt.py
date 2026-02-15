@@ -79,20 +79,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-time-frames",
         type=int,
-        default=16,
-        help="Optimization profile minimum time frames.",
+        default=87,
+        help="Optimization profile minimum time frames (0.25s @ 88.2kHz).",
     )
     parser.add_argument(
         "--opt-time-frames",
         type=int,
-        default=96,
-        help="Optimization profile optimum time frames.",
+        default=345,
+        help="Optimization profile optimum time frames (1.0s @ 88.2kHz).",
     )
     parser.add_argument(
         "--max-time-frames",
         type=int,
-        default=512,
-        help="Optimization profile maximum time frames.",
+        default=690,
+        help="Optimization profile maximum time frames (2.0s @ 88.2kHz).",
     )
     parser.add_argument(
         "--strict-mixed-io-fp32",

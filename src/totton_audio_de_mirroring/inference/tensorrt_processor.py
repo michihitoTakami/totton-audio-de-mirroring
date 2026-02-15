@@ -54,11 +54,16 @@ class _TensorRtSession:
         context: Any,
         input_name: str,
         output_name: str,
+        runtime: Any,
+        logger: Any,
     ) -> None:
         self._engine = engine
         self._context = context
         self._input_name = input_name
         self._output_name = output_name
+        # Keep runtime/logger alive for the full session lifetime.
+        self._runtime = runtime
+        self._logger = logger
 
     def run(self, input_magnitude: np.ndarray) -> np.ndarray:
         """Run TensorRT inference for one 4D magnitude tensor.
@@ -374,7 +379,7 @@ def load_tensorrt_stage1_processor(
         sample_rate=stage1_sample_rate,
         cutoff_hz=cutoff_hz,
         energy_cap=resolved_cap,
-        envelope_floor=0.0,
+        envelope_floor=float(data_config.hb_target.envelope_min),
         lowpass_taps=lowpass_taps,
         highpass_taps=highpass_taps,
         stft_config=STFTConfig(),
@@ -420,6 +425,8 @@ def _load_tensorrt_session(engine_path: Path) -> TensorRtSessionProtocol:
         context=context,
         input_name=input_name,
         output_name=output_name,
+        runtime=runtime,
+        logger=logger,
     )
 
 

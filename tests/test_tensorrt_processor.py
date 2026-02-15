@@ -115,6 +115,7 @@ def test_load_tensorrt_stage1_processor_builds_with_loader(
     )
 
     assert isinstance(processor, TensorRtStage1Processor)
+    assert processor.envelope_floor == pytest.approx(0.2)
 
 
 @dataclass(frozen=True)
