@@ -132,7 +132,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--teacher-type",
         type=str,
-        choices=["raw_88k2", "bessel_88k2", "raw_176k4", "bessel_176k4"],
+        choices=["raw_88k2", "bessel_88k2"],
         default=None,
     )
     parser.add_argument("--hb-loss-weight", type=float, default=None)

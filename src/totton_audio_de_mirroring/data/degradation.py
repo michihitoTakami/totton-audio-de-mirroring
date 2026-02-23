@@ -10,25 +10,12 @@ from scipy import signal as sp_signal
 DEFAULT_CUTOFF_RANGE = (18_000.0, 22_000.0)
 DEFAULT_METHODS = ("iir_bessel",)
 DEFAULT_PHASE_MODES = ("analog",)
-DEFAULT_TEACHER_DOWNSAMPLE_METHODS = ("polyphase", "sinc_short", "sinc_long")
-DEFAULT_TEACHER_DOWNSAMPLE_PHASE_MODES = ("linear", "minimum")
 DEFAULT_QUANT_BITS = (16, 24)
 DEFAULT_DITHER_MODES = ("none", "rectangular", "triangular")
 DEFAULT_IIR_ORDER = 6
 SHORT_SINC_TAPS = 64
 LONG_SINC_TAPS = 256
 DEFAULT_WINDOW = "hann"
-ALLOWED_METHODS = (
-    "iir_bessel",
-    "iir_butter",
-    "sinc_short",
-    "sinc_long",
-    "zoh",
-    "linear",
-    "zero_stuff",
-)
-ALLOWED_PHASE_MODES = ("analog", "linear", "minimum")
-ALLOWED_TEACHER_DOWNSAMPLE_METHODS = ("polyphase", "sinc_short", "sinc_long")
 
 
 @dataclass(frozen=True)
@@ -42,8 +29,6 @@ class DegradationConfig:
         dither_modes: Dither modes for quantization.
         methods: Degradation method names.
         iir_order: Order for IIR-based SRC.
-        teacher_downsample_methods: Raw-teacher downsample methods.
-        teacher_downsample_phase_modes: Phase modes for sinc downsampling.
         seed: Optional RNG seed for reproducibility.
 
     Physical Basis:
@@ -58,10 +43,6 @@ class DegradationConfig:
     dither_modes: tuple[str, ...] = DEFAULT_DITHER_MODES
     methods: tuple[str, ...] = DEFAULT_METHODS
     iir_order: int = DEFAULT_IIR_ORDER
-    teacher_downsample_methods: tuple[str, ...] = DEFAULT_TEACHER_DOWNSAMPLE_METHODS
-    teacher_downsample_phase_modes: tuple[str, ...] = (
-        DEFAULT_TEACHER_DOWNSAMPLE_PHASE_MODES
-    )
     seed: int | None = None
 
 
@@ -346,8 +327,6 @@ def _apply_upsampling_method(
         return _upsample_zoh(signal, ratio)
     if profile.method == "linear":
         return _upsample_linear(signal, ratio)
-    if profile.method == "zero_stuff":
-        return _zero_stuff(signal, ratio)
     if profile.method in {"sinc_short", "sinc_long"}:
         if profile.num_taps is None:
             raise ValueError("num_taps must be provided for sinc degradation.")
@@ -507,57 +486,11 @@ def _validate_config(config: DegradationConfig) -> None:
     low, high = config.cutoff_hz_range
     if low <= 0 or high <= 0 or low >= high:
         raise ValueError("cutoff_hz_range must be positive and low < high.")
-    if len(config.methods) == 0:
-        raise ValueError("methods cannot be empty.")
-    invalid_methods = [
-        method for method in config.methods if method not in ALLOWED_METHODS
-    ]
-    if invalid_methods:
-        raise ValueError(
-            f"Unsupported methods in degradation config: {tuple(invalid_methods)}."
-        )
+    if tuple(config.methods) != DEFAULT_METHODS:
+        raise ValueError("methods must be ('iir_bessel',) for Bessel-only SRC.")
     if len(config.quantization_bits) == 0:
         raise ValueError("quantization_bits cannot be empty.")
     if len(config.dither_modes) == 0:
         raise ValueError("dither_modes cannot be empty.")
-    if len(config.phase_modes) == 0:
-        raise ValueError("phase_modes cannot be empty.")
-    invalid_phase_modes = [
-        phase_mode
-        for phase_mode in config.phase_modes
-        if phase_mode not in ALLOWED_PHASE_MODES
-    ]
-    if invalid_phase_modes:
-        raise ValueError(
-            "Unsupported phase_modes in degradation config: "
-            f"{tuple(invalid_phase_modes)}."
-        )
-    if any(method in {"sinc_short", "sinc_long"} for method in config.methods) and (
-        not any(mode in {"linear", "minimum"} for mode in config.phase_modes)
-    ):
-        raise ValueError(
-            "phase_modes must include linear or minimum when using sinc methods."
-        )
-    if len(config.teacher_downsample_methods) == 0:
-        raise ValueError("teacher_downsample_methods cannot be empty.")
-    invalid_teacher_methods = [
-        method
-        for method in config.teacher_downsample_methods
-        if method not in ALLOWED_TEACHER_DOWNSAMPLE_METHODS
-    ]
-    if invalid_teacher_methods:
-        raise ValueError(
-            f"Unsupported teacher_downsample_methods: {tuple(invalid_teacher_methods)}."
-        )
-    if len(config.teacher_downsample_phase_modes) == 0:
-        raise ValueError("teacher_downsample_phase_modes cannot be empty.")
-    invalid_teacher_phase_modes = [
-        mode
-        for mode in config.teacher_downsample_phase_modes
-        if mode not in {"linear", "minimum"}
-    ]
-    if invalid_teacher_phase_modes:
-        raise ValueError(
-            "teacher_downsample_phase_modes must be linear/minimum only, got "
-            f"{tuple(invalid_teacher_phase_modes)}."
-        )
+    if tuple(config.phase_modes) != DEFAULT_PHASE_MODES:
+        raise ValueError("phase_modes must be ('analog',) for Bessel-only SRC.")

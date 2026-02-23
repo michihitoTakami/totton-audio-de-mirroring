@@ -371,30 +371,6 @@ uv run python scripts/run_issue63_stage1_workflow.py \
 * `tests/fixtures/golden_samples/issue64_model_selection.json`
 * `docs/abx_listening_protocol.md`
 
-### 7.6.1 RAW176k4 Stage1 Training (44.1kHz -> 176.4kHz)
-
-RAW176k4教師（`raw_176k4`）で Stage1 を学習する場合は、4x専用configを使用する。
-入力劣化経路は `zero_stuff` 固定、教師側の downsampling は
-`polyphase` / `sinc_short` / `sinc_long` の多様化を使う。
-
-```bash
-uv run python scripts/train_stage1.py \
-  --data-config configs/data_generation_176k4.yaml \
-  --train-config configs/training_stage1_176k4.yaml \
-  --batch-size 16 \
-  --num-workers 4 \
-  --checkpoint-dir data/checkpoints/stage1/raw176k4
-```
-
-必要に応じて teacher を明示:
-
-```bash
-uv run python scripts/train_stage1.py \
-  --data-config configs/data_generation_176k4.yaml \
-  --train-config configs/training_stage1_176k4.yaml \
-  --teacher-type raw_176k4
-```
-
 ### 7.7 Issue #75 Workflow (Frequency/THD+N/Time-Domain Visualization)
 
 Issue #75では、Hard Metricsの数値だけでなく、周波数応答・THD+Nスペクトル・時間領域応答を画像で確認できるようにする。
@@ -622,5 +598,3 @@ uv run python scripts/report_raw_teacher_comparison.py \
 * 本システムは **“超音波の創作”を目的としない**。
 * 20–44kHzは **折り返し不自然成分の除去と安全整形**を主目的とし、必要ならゼロでも正しい。
 * 可聴帯（0–20kHz）の時間応答・位相保護を最優先とする。
-* 本PRの実装スコープは **Stage1（44.1->88.2 / 44.1->176.4）まで**。
-* **16×最終系（705.6kHz出力アルゴリズム）拡張は本スコープ外**。

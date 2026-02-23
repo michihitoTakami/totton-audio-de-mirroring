@@ -16,19 +16,17 @@ from totton_audio_de_mirroring.models.band_split import BandSplitConfig
 
 DEFAULT_SOURCE_SR = 44_100
 DEFAULT_TARGET_SR = 88_200
-DEFAULT_TARGET_SR_4X = 176_400
 DEFAULT_DURATION_SEC = 1.0
 DEFAULT_CHUNK_SEC = 0.25
 DEFAULT_NUM_SAMPLES = 10_000
 DEFAULT_CACHE_ITEMS = 128
 DEFAULT_SEED = None
 DEFAULT_INPUT_ROUTE = "source_chunk_44k1_to_x_full_88k2_via_degradation"
-DEFAULT_INPUT_ROUTE_4X = "source_chunk_44k1_to_x_full_176k4_via_zero_stuff_degradation"
 DEFAULT_TARGET_ROUTE = "high_band_to_hb_target_via_mirror_detection"
 DEFAULT_TEACHER_TYPE = "raw_88k2"
 LEGACY_DEFAULT_TEACHER_TYPE = "bessel_88k2"
-ALLOWED_TEACHER_TYPES = ("raw_88k2", "bessel_88k2", "raw_176k4", "bessel_176k4")
-TeacherType = Literal["raw_88k2", "bessel_88k2", "raw_176k4", "bessel_176k4"]
+ALLOWED_TEACHER_TYPES = ("raw_88k2", "bessel_88k2")
+TeacherType = Literal["raw_88k2", "bessel_88k2"]
 
 
 @dataclass(frozen=True)
@@ -200,10 +198,10 @@ class Stage1PathConfig:
     def __post_init__(self) -> None:
         _validate_non_empty(self.input_route, "input_route")
         _validate_non_empty(self.target_route, "target_route")
-        if self.input_route not in {DEFAULT_INPUT_ROUTE, DEFAULT_INPUT_ROUTE_4X}:
+        if self.input_route != DEFAULT_INPUT_ROUTE:
             raise ValueError(
-                "input_route must match one of fixed Stage 1 routes: "
-                f"'{DEFAULT_INPUT_ROUTE}' or '{DEFAULT_INPUT_ROUTE_4X}'."
+                "input_route must match the fixed Stage 1 route "
+                f"'{DEFAULT_INPUT_ROUTE}'."
             )
         if self.target_route != DEFAULT_TARGET_ROUTE:
             raise ValueError(
@@ -269,22 +267,11 @@ class DataPipelineConfig:
         ratio = self.target_sample_rate / self.source_sample_rate
         if abs(ratio - round(ratio)) > 1e-6:
             raise ValueError("target_sample_rate must be integer multiple of source.")
-        ratio_int = int(round(ratio))
-        if self.stage1_path.strict_route_validation and ratio_int not in {2, 4}:
+        if self.stage1_path.strict_route_validation and round(ratio) != 2:
             raise ValueError(
-                "strict stage1_path requires a fixed 2x or 4x route "
+                "strict stage1_path requires a fixed 2x route "
                 "(source_sample_rate -> target_sample_rate)."
             )
-        if self.stage1_path.strict_route_validation:
-            expected_input_route = (
-                DEFAULT_INPUT_ROUTE if ratio_int == 2 else DEFAULT_INPUT_ROUTE_4X
-            )
-            if self.stage1_path.input_route != expected_input_route:
-                raise ValueError(
-                    "strict stage1_path requires input_route to match the SR ratio: "
-                    f"expected {expected_input_route!r}, got "
-                    f"{self.stage1_path.input_route!r}."
-                )
         if self.teacher_type not in ALLOWED_TEACHER_TYPES:
             raise ValueError(
                 "teacher_type must be one of "
@@ -532,13 +519,8 @@ def _coerce_teacher_type(value: Any, name: str) -> TeacherType:
         "raw88": "raw_88k2",
         "raw_88k2": "raw_88k2",
         "native_88k2": "raw_88k2",
-        "raw176k4": "raw_176k4",
-        "raw_176k4": "raw_176k4",
-        "native_176k4": "raw_176k4",
         "bessel": "bessel_88k2",
         "bessel_88k2": "bessel_88k2",
-        "bessel176k4": "bessel_176k4",
-        "bessel_176k4": "bessel_176k4",
     }
     mapped = aliases.get(normalized)
     if mapped is None:

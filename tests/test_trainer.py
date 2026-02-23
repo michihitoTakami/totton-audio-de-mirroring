@@ -120,14 +120,10 @@ def test_training_config_from_dict_parses_weights() -> None:
 
 def test_training_config_defaults_follow_teacher_type() -> None:
     raw_config = TrainingConfig.from_dict({"teacher_type": "raw_88k2"})
-    raw_4x_config = TrainingConfig.from_dict({"teacher_type": "raw_176k4"})
     bessel_config = TrainingConfig.from_dict({"teacher_type": "bessel_88k2"})
     assert raw_config.energy_cap == pytest.approx(1.0e-3)
     assert raw_config.loss_weights.subtract == pytest.approx(1.0)
     assert raw_config.loss_weights.cap_strict == pytest.approx(4.0)
-    assert raw_4x_config.energy_cap == pytest.approx(1.0e-3)
-    assert raw_4x_config.loss_weights.subtract == pytest.approx(1.0)
-    assert raw_4x_config.loss_weights.cap_strict == pytest.approx(4.0)
     assert bessel_config.energy_cap == pytest.approx(1.0)
     assert bessel_config.loss_weights.subtract == pytest.approx(0.0)
     assert bessel_config.loss_weights.cap_strict == pytest.approx(0.0)

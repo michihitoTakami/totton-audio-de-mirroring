@@ -59,73 +59,6 @@ def apply_energy_cap(
     return magnitude * limited_scale
 
 
-def apply_frequency_dependent_energy_cap(
-    magnitude: torch.Tensor,
-    energy_cap_profile: torch.Tensor,
-    *,
-    highband_mask: torch.Tensor | None = None,
-) -> torch.Tensor:
-    """Apply per-frequency mean-energy cap in STFT magnitude domain.
-
-    Args:
-        magnitude: STFT magnitude tensor with shape (batch, freq, time).
-        energy_cap_profile: Per-frequency cap for mean(mag^2), shape (freq,).
-        highband_mask: Optional (freq,) mask indicating high-band bins.
-
-    Returns:
-        Magnitude scaled per frequency bin to satisfy the cap profile.
-
-    Raises:
-        ValueError: If inputs are invalid.
-
-    Physical Basis:
-        Frequency-dependent caps suppress ultrasonic peak build-up above
-        20kHz while allowing smoother decay toward Nyquist.
-    """
-    if magnitude.ndim != 3:
-        raise ValueError("magnitude must be 3D (batch, freq, time).")
-    if energy_cap_profile.ndim != 1:
-        raise ValueError("energy_cap_profile must be 1D (freq,).")
-    if energy_cap_profile.shape[0] != magnitude.shape[1]:
-        raise ValueError(
-            "energy_cap_profile length must match magnitude frequency bins. "
-            f"Expected {magnitude.shape[1]}, got {energy_cap_profile.shape[0]}."
-        )
-    if torch.any(~torch.isfinite(energy_cap_profile)):
-        raise ValueError("energy_cap_profile must be finite.")
-    if torch.any(energy_cap_profile <= 0):
-        raise ValueError("energy_cap_profile must be positive.")
-
-    if highband_mask is not None:
-        if highband_mask.ndim != 1:
-            raise ValueError("highband_mask must be 1D (freq,).")
-        if highband_mask.shape[0] != magnitude.shape[1]:
-            raise ValueError(
-                "highband_mask length must match magnitude frequency bins. "
-                f"Expected {magnitude.shape[1]}, got {highband_mask.shape[0]}."
-            )
-        mask = highband_mask.to(device=magnitude.device, dtype=torch.bool)
-    else:
-        mask = torch.ones(
-            magnitude.shape[1],
-            dtype=torch.bool,
-            device=magnitude.device,
-        )
-
-    if torch.count_nonzero(mask) == 0:
-        return magnitude
-
-    cap = energy_cap_profile.to(device=magnitude.device, dtype=magnitude.dtype)
-    mag_sq = magnitude**2
-    freq_energy = torch.mean(mag_sq, dim=-1)
-    safe_cap = torch.clamp(cap, min=1.0e-12)
-    scale = torch.sqrt(safe_cap.unsqueeze(0) / (freq_energy + 1.0e-8))
-    limited_scale = torch.clamp(scale, max=1.0)
-    if torch.count_nonzero(~mask) > 0:
-        limited_scale[:, ~mask] = 1.0
-    return magnitude * limited_scale.unsqueeze(-1)
-
-
 def apply_envelope_target(
     magnitude: torch.Tensor,
     envelope_target: torch.Tensor,
@@ -191,7 +124,6 @@ def apply_safety_constraints(
     envelope_target: torch.Tensor,
     highband_mask: torch.Tensor,
     energy_cap: float,
-    energy_cap_profile: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Apply Stage 1 post-network safety constraints in fixed order.
 
@@ -200,7 +132,6 @@ def apply_safety_constraints(
         envelope_target: Per-frequency decay target with shape (freq,).
         highband_mask: Binary mask for high band with shape (freq,).
         energy_cap: Maximum total energy allowed per batch sample.
-        energy_cap_profile: Optional per-frequency mean-energy caps.
 
     Returns:
         Magnitude after envelope shaping, high-band masking, and cap.
@@ -214,12 +145,6 @@ def apply_safety_constraints(
     """
     shaped = apply_envelope_target(magnitude, envelope_target, highband_mask)
     highband_only = apply_highband_mask(shaped, highband_mask)
-    if energy_cap_profile is not None:
-        highband_only = apply_frequency_dependent_energy_cap(
-            highband_only,
-            energy_cap_profile=energy_cap_profile,
-            highband_mask=highband_mask,
-        )
     return apply_energy_cap(highband_only, energy_cap, highband_mask=highband_mask)
 
 
@@ -302,61 +227,6 @@ def build_highband_mask(
 
     freqs = torch.linspace(0.0, nyquist, num_freqs)
     return (freqs >= cutoff_hz).to(dtype=torch.float32)
-
-
-def build_energy_cap_profile(
-    num_freqs: int,
-    sample_rate: int,
-    *,
-    start_hz: float,
-    cap_start: float,
-    cap_floor_ratio: float,
-) -> torch.Tensor:
-    """Build monotonic per-frequency high-band energy-cap profile.
-
-    Args:
-        num_freqs: Number of STFT frequency bins.
-        sample_rate: Sample rate in Hz.
-        start_hz: Frequency where decay starts.
-        cap_start: Cap value at start_hz.
-        cap_floor_ratio: Floor ratio at Nyquist in (0, 1].
-
-    Returns:
-        Per-frequency cap profile with shape (num_freqs,).
-
-    Raises:
-        ValueError: If inputs are invalid.
-
-    Physical Basis:
-        A smooth cap profile limits excessive ultrasonic energy growth
-        while preserving gradual decay characteristics from 20kHz upward.
-    """
-    if num_freqs <= 0:
-        raise ValueError(f"num_freqs must be positive, got {num_freqs}.")
-    if sample_rate <= 0:
-        raise ValueError(f"sample_rate must be positive, got {sample_rate}.")
-    if start_hz <= 0:
-        raise ValueError(f"start_hz must be positive, got {start_hz}.")
-    if cap_start <= 0:
-        raise ValueError(f"cap_start must be positive, got {cap_start}.")
-    if not 0.0 < cap_floor_ratio <= 1.0:
-        raise ValueError(f"cap_floor_ratio must be in (0, 1], got {cap_floor_ratio}.")
-    nyquist = sample_rate / 2
-    if start_hz >= nyquist:
-        raise ValueError(f"start_hz must be less than Nyquist ({nyquist}).")
-
-    freqs = torch.linspace(0.0, nyquist, num_freqs)
-    profile = torch.full((num_freqs,), cap_start, dtype=torch.float32)
-    high = freqs >= start_hz
-    if torch.any(high):
-        decay = (freqs[high] - start_hz) / max(nyquist - start_hz, 1.0e-6)
-        floor_cap = cap_start * cap_floor_ratio
-        profile[high] = torch.clamp(
-            cap_start - (cap_start - floor_cap) * decay,
-            min=floor_cap,
-            max=cap_start,
-        )
-    return profile
 
 
 def enforce_highpass_dc_block(

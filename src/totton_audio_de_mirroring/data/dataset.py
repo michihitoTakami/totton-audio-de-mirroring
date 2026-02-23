@@ -11,8 +11,6 @@ import torch
 from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.degradation import (
-    LONG_SINC_TAPS,
-    SHORT_SINC_TAPS,
     DegradationProfileManager,
     apply_degradation_profile,
     upsample_bessel_reference,
@@ -107,7 +105,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
         source_chunk: np.ndarray
         teacher_full: np.ndarray
         chunk_start: int
-        if self._config.teacher_type in {"raw_88k2", "raw_176k4"}:
+        if self._config.teacher_type == "raw_88k2":
             source_chunk, teacher_full, chunk_start = (
                 _build_raw_teacher_source_chunk_and_reference(
                     request=request,
@@ -118,8 +116,6 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
                     chunk_duration_sec=self._config.chunk_duration_sec,
                     random_chunk=self._config.random_chunk,
                     augmentation=self._config.augmentation,
-                    teacher_downsample_methods=self._config.degradation.teacher_downsample_methods,
-                    teacher_downsample_phase_modes=self._config.degradation.teacher_downsample_phase_modes,
                     rng=rng,
                 )
             )
@@ -165,7 +161,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
         low_band, high_band = self._band_split.split(x_full)
         _, teacher_high_band = self._band_split.split(teacher_full)
 
-        if self._config.teacher_type in {"raw_88k2", "raw_176k4"}:
+        if self._config.teacher_type == "raw_88k2":
             hb_target = project_teacher_hb_target(
                 high_band,
                 teacher_high_band,
@@ -442,9 +438,9 @@ def _build_teacher_reference(
     _validate_positive_int(source_sr, "source_sr")
     _validate_positive_int(target_sr, "target_sr")
 
-    if teacher_type in {"raw_88k2", "raw_176k4"}:
+    if teacher_type == "raw_88k2":
         return _upsample_raw_reference(signal, source_sr=source_sr, target_sr=target_sr)
-    if teacher_type in {"bessel_88k2", "bessel_176k4"}:
+    if teacher_type == "bessel_88k2":
         return upsample_bessel_reference(
             signal=signal,
             source_sr=source_sr,
@@ -465,8 +461,6 @@ def _build_raw_teacher_source_chunk_and_reference(
     chunk_duration_sec: float,
     random_chunk: bool,
     augmentation: AugmentationConfig,
-    teacher_downsample_methods: tuple[str, ...],
-    teacher_downsample_phase_modes: tuple[str, ...],
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Build source chunk and teacher reference for the raw Stage 1 policy.
@@ -480,8 +474,6 @@ def _build_raw_teacher_source_chunk_and_reference(
         chunk_duration_sec: Chunk duration in seconds.
         random_chunk: Whether to sample chunk start randomly.
         augmentation: Augmentation configuration.
-        teacher_downsample_methods: Candidate methods for teacher downsampling.
-        teacher_downsample_phase_modes: Candidate phase modes for teacher downsampling.
         rng: RNG for deterministic chunking and augmentation.
 
     Returns:
@@ -506,14 +498,7 @@ def _build_raw_teacher_source_chunk_and_reference(
         **dict(request.params),
     )
     source_proxy = _downsample_raw_reference(
-        teacher_source,
-        source_sr=target_sr,
-        target_sr=source_sr,
-        method=str(rng.choice(teacher_downsample_methods)),
-        phase_mode=_sample_teacher_phase_mode(
-            teacher_downsample_phase_modes=teacher_downsample_phase_modes,
-            rng=rng,
-        ),
+        teacher_source, source_sr=target_sr, target_sr=source_sr
     )
     _, chunk_start = _extract_chunk(
         source_proxy,
@@ -536,14 +521,7 @@ def _build_raw_teacher_source_chunk_and_reference(
 
     teacher_chunk = apply_augmentations(teacher_chunk, augmentation, rng)
     source_chunk = _downsample_raw_reference(
-        teacher_chunk,
-        source_sr=target_sr,
-        target_sr=source_sr,
-        method=str(rng.choice(teacher_downsample_methods)),
-        phase_mode=_sample_teacher_phase_mode(
-            teacher_downsample_phase_modes=teacher_downsample_phase_modes,
-            rng=rng,
-        ),
+        teacher_chunk, source_sr=target_sr, target_sr=source_sr
     )
     return source_chunk, teacher_chunk, chunk_start
 
@@ -587,12 +565,7 @@ def _upsample_raw_reference(
 
 
 def _downsample_raw_reference(
-    signal: np.ndarray,
-    *,
-    source_sr: int,
-    target_sr: int,
-    method: str = "polyphase",
-    phase_mode: str = "linear",
+    signal: np.ndarray, *, source_sr: int, target_sr: int
 ) -> np.ndarray:
     """Downsample via high-quality polyphase SRC for raw-teacher alignment.
 
@@ -600,15 +573,14 @@ def _downsample_raw_reference(
         signal: Source signal.
         source_sr: Source sample rate.
         target_sr: Target sample rate.
-        method: Downsampling method (`polyphase`, `sinc_short`, `sinc_long`).
-        phase_mode: Phase mode for sinc methods (`linear` or `minimum`).
 
     Returns:
         Downsampled signal at target sample rate.
 
     Physical Basis:
-        Controlled anti-aliasing downsampling converts high-rate teacher
-        chunks into 44.1kHz inputs while preserving corresponding timing.
+        A controlled polyphase downsampling path converts native 88.2kHz
+        teacher chunks into 44.1kHz inputs while preserving corresponding
+        time structure for degradation-path synthesis.
     """
     _validate_signal(signal)
     _validate_positive_int(source_sr, "source_sr")
@@ -620,79 +592,15 @@ def _downsample_raw_reference(
     if int_ratio <= 0:
         raise ValueError("downsampling ratio must be positive.")
 
-    if method == "polyphase":
-        downsampled = sp_signal.resample_poly(
-            np.asarray(signal, dtype=np.float64),
-            up=1,
-            down=int_ratio,
-            axis=-1,
-            window=("kaiser", 8.6),
-        )
-    elif method in {"sinc_short", "sinc_long"}:
-        num_taps = SHORT_SINC_TAPS if method == "sinc_short" else LONG_SINC_TAPS
-        downsampled = _downsample_sinc_reference(
-            signal=np.asarray(signal, dtype=np.float64),
-            decimation=int_ratio,
-            source_sr=source_sr,
-            num_taps=num_taps,
-            phase_mode=phase_mode,
-        )
-    else:
-        raise ValueError(f"Unsupported raw-teacher downsample method: {method!r}.")
-    expected_len = int(round(signal.shape[-1] / int_ratio))
-    return np.asarray(downsampled[..., :expected_len], dtype=np.float64)
-
-
-def _sample_teacher_phase_mode(
-    *,
-    teacher_downsample_phase_modes: tuple[str, ...],
-    rng: np.random.Generator,
-) -> str:
-    if not teacher_downsample_phase_modes:
-        raise ValueError("teacher_downsample_phase_modes must be non-empty.")
-    phase_mode = str(rng.choice(teacher_downsample_phase_modes))
-    if phase_mode not in {"linear", "minimum"}:
-        raise ValueError(
-            "teacher_downsample_phase_modes must contain only linear/minimum, "
-            f"got {phase_mode!r}."
-        )
-    return phase_mode
-
-
-def _downsample_sinc_reference(
-    signal: np.ndarray,
-    *,
-    decimation: int,
-    source_sr: int,
-    num_taps: int,
-    phase_mode: str,
-) -> np.ndarray:
-    _validate_signal(signal)
-    _validate_positive_int(decimation, "decimation")
-    _validate_positive_int(source_sr, "source_sr")
-    _validate_positive_int(num_taps, "num_taps")
-    if phase_mode not in {"linear", "minimum"}:
-        raise ValueError(f"phase_mode must be linear/minimum, got {phase_mode!r}.")
-
-    cutoff_hz = float(source_sr) / (2.0 * decimation)
-    taps = sp_signal.firwin(
-        num_taps,
-        cutoff_hz,
-        fs=source_sr,
-        window="hann",
-        pass_zero="lowpass",
-    )
-    if phase_mode == "minimum":
-        taps = sp_signal.minimum_phase(taps, method="homomorphic")
-
-    downsampled = sp_signal.upfirdn(
-        np.asarray(taps, dtype=np.float64),
+    downsampled = sp_signal.resample_poly(
         np.asarray(signal, dtype=np.float64),
         up=1,
-        down=decimation,
+        down=int_ratio,
         axis=-1,
+        window=("kaiser", 8.6),
     )
-    return np.asarray(downsampled, dtype=np.float64)
+    expected_len = int(round(signal.shape[-1] / int_ratio))
+    return np.asarray(downsampled[..., :expected_len], dtype=np.float64)
 
 
 def _validate_training_sample_consistency(
@@ -807,19 +715,14 @@ def _validate_stage1_path(config: DataPipelineConfig) -> None:
         ValueError: If strict route requirements are violated.
 
     Physical Basis:
-        Stage 1 training assumes a fixed integer route where `x_full` is
-        formed from the 44.1kHz chunk and `hb_target` is derived from
-        `high_band`.
+        Stage 1 training assumes a fixed 2x path where `x_full` is formed
+        from the 44.1kHz chunk and `hb_target` is derived from `high_band`.
     """
     if not config.stage1_path.strict_route_validation:
         return
-    if config.target_sample_rate not in {
-        config.source_sample_rate * 2,
-        config.source_sample_rate * 4,
-    }:
+    if config.target_sample_rate != config.source_sample_rate * 2:
         raise ValueError(
-            "strict stage1_path requires target_sample_rate = "
-            "source_sample_rate * 2 or * 4."
+            "strict stage1_path requires target_sample_rate = source_sample_rate * 2."
         )
 
 
