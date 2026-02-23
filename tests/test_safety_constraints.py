@@ -10,8 +10,10 @@ from totton_audio_de_mirroring.data.filters import design_band_split_filters
 from totton_audio_de_mirroring.models.safety_constraints import (
     apply_energy_cap,
     apply_envelope_target,
+    apply_frequency_dependent_energy_cap,
     apply_highband_mask,
     apply_safety_constraints,
+    build_energy_cap_profile,
     build_envelope_target,
     build_highband_mask,
     enforce_highpass_dc_block,
@@ -80,6 +82,35 @@ def test_build_envelope_target_monotonic_in_highband() -> None:
     diffs = torch.diff(highband_values)
     assert torch.all(diffs <= 1.0e-8)
     assert torch.min(highband_values) >= 0.2 - 1.0e-6
+
+
+def test_build_energy_cap_profile_decays_from_20khz() -> None:
+    profile = build_energy_cap_profile(
+        num_freqs=257,
+        sample_rate=176_400,
+        start_hz=20_000.0,
+        cap_start=1.0e-3,
+        cap_floor_ratio=0.1,
+    )
+    assert profile.shape == (257,)
+    assert torch.all(profile > 0.0)
+    diffs = torch.diff(profile)
+    assert torch.all(diffs <= 1.0e-8)
+    assert float(torch.min(profile)) >= 1.0e-4 - 1.0e-8
+
+
+def test_apply_frequency_dependent_energy_cap_limits_each_bin() -> None:
+    magnitude = torch.ones(1, 8, 100) * 10.0
+    profile = torch.tensor([1.0, 1.0, 1.0, 1.0, 0.5, 0.4, 0.3, 0.2])
+    highband_mask = torch.tensor([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+    constrained = apply_frequency_dependent_energy_cap(
+        magnitude,
+        energy_cap_profile=profile,
+        highband_mask=highband_mask,
+    )
+    energy = torch.mean(constrained**2, dim=-1)
+    assert torch.allclose(energy[:, :4], torch.full((1, 4), 100.0))
+    assert torch.all(energy[:, 4:] <= profile[4:].unsqueeze(0) + 1.0e-6)
 
 
 def test_enforce_highpass_dc_block_suppresses_dc_below_minus_80db() -> None:

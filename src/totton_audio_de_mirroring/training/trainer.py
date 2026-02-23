@@ -37,8 +37,13 @@ from totton_audio_de_mirroring.training.runtime import (
     save_checkpoint,
 )
 
-TeacherType = Literal["raw_88k2", "bessel_88k2"]
-ALLOWED_TEACHER_TYPES: tuple[TeacherType, ...] = ("raw_88k2", "bessel_88k2")
+TeacherType = Literal["raw_88k2", "bessel_88k2", "raw_176k4", "bessel_176k4"]
+ALLOWED_TEACHER_TYPES: tuple[TeacherType, ...] = (
+    "raw_88k2",
+    "bessel_88k2",
+    "raw_176k4",
+    "bessel_176k4",
+)
 
 
 @dataclass(frozen=True)
@@ -1156,17 +1161,28 @@ def _parse_teacher_type(value: Any) -> TeacherType:
             f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
         )
     normalized = value.strip().lower()
-    if normalized == "raw_88k2":
-        return "raw_88k2"
-    if normalized == "bessel_88k2":
-        return "bessel_88k2"
+    aliases: dict[str, TeacherType] = {
+        "raw88": "raw_88k2",
+        "raw_88k2": "raw_88k2",
+        "native_88k2": "raw_88k2",
+        "raw176k4": "raw_176k4",
+        "raw_176k4": "raw_176k4",
+        "native_176k4": "raw_176k4",
+        "bessel": "bessel_88k2",
+        "bessel_88k2": "bessel_88k2",
+        "bessel176k4": "bessel_176k4",
+        "bessel_176k4": "bessel_176k4",
+    }
+    parsed = aliases.get(normalized)
+    if parsed is not None:
+        return parsed
     raise ValueError(
         f"teacher_type must be one of {ALLOWED_TEACHER_TYPES}, got {value!r}."
     )
 
 
 def _default_energy_cap_for_teacher(teacher_type: TeacherType) -> float:
-    if teacher_type == "raw_88k2":
+    if teacher_type in {"raw_88k2", "raw_176k4"}:
         return 1.0e-3
     return 1.0
 
@@ -1182,13 +1198,13 @@ def _default_preserve_lb_weight_for_teacher(teacher_type: TeacherType) -> float:
 
 
 def _default_subtractive_weight(teacher_type: TeacherType) -> float:
-    if teacher_type == "raw_88k2":
+    if teacher_type in {"raw_88k2", "raw_176k4"}:
         return 1.0
     return 0.0
 
 
 def _default_cap_strict_weight(teacher_type: TeacherType) -> float:
-    if teacher_type == "raw_88k2":
+    if teacher_type in {"raw_88k2", "raw_176k4"}:
         return 4.0
     return 0.0
 
