@@ -14,6 +14,7 @@ from totton_audio_de_mirroring.data.pipeline_config import (
     AugmentationConfig,
     DataPipelineConfig,
     SignalSamplingConfig,
+    Stage1PathConfig,
     load_data_config,
     save_data_config,
 )
@@ -42,6 +43,8 @@ def test_raw_teacher_builder_keeps_source_teacher_alignment() -> None:
                 soft_clip_prob=0.0,
                 soft_clip_drive_range=(1.0, 1.0),
             ),
+            teacher_downsample_methods=("polyphase",),
+            teacher_downsample_phase_modes=("linear",),
             rng=rng,
         )
     )
@@ -55,6 +58,19 @@ def test_raw_teacher_builder_keeps_source_teacher_alignment() -> None:
     assert teacher_chunk.shape == (22_050,)
     assert 0 <= chunk_start <= 11_025
     assert np.allclose(source_chunk, expected_source)
+
+
+@pytest.mark.parametrize("method", ["polyphase", "sinc_short", "sinc_long"])
+def test_downsample_raw_reference_supports_multiple_methods(method: str) -> None:
+    source = np.random.default_rng(0).normal(0.0, 1.0, 44_100)
+    downsampled = dataset_module._downsample_raw_reference(
+        source,
+        source_sr=176_400,
+        target_sr=44_100,
+        method=method,
+        phase_mode="minimum",
+    )
+    assert downsampled.shape == (11_025,)
 
 
 def _small_config() -> DataPipelineConfig:
@@ -179,6 +195,8 @@ def test_config_teacher_type_legacy_default_and_alias() -> None:
 
     native_aliased = DataPipelineConfig.from_dict({"teacher_type": "native_88k2"})
     assert native_aliased.teacher_type == "raw_88k2"
+    raw_176k4_aliased = DataPipelineConfig.from_dict({"teacher_type": "raw176k4"})
+    assert raw_176k4_aliased.teacher_type == "raw_176k4"
 
 
 def test_stage1_path_roundtrip_in_serialized_config(tmp_path: Path) -> None:
@@ -191,11 +209,39 @@ def test_stage1_path_roundtrip_in_serialized_config(tmp_path: Path) -> None:
     assert loaded.stage1_path.strict_route_validation is True
 
 
-def test_stage1_strict_path_requires_2x_ratio() -> None:
+def test_stage1_strict_path_allows_4x_ratio_with_4x_route() -> None:
+    config = DataPipelineConfig(
+        source_sample_rate=44_100,
+        target_sample_rate=176_400,
+        stage1_path=Stage1PathConfig(
+            input_route=(
+                "source_chunk_44k1_to_x_full_176k4_via_zero_stuff_degradation"
+            ),
+            target_route="high_band_to_hb_target_via_mirror_detection",
+            strict_route_validation=True,
+        ),
+    )
+    assert config.target_sample_rate == 176_400
+
+
+def test_stage1_strict_path_rejects_non_2x_non_4x_ratio() -> None:
     with pytest.raises(
-        ValueError, match="strict stage1_path requires a fixed 2x route"
+        ValueError, match="strict stage1_path requires a fixed 2x or 4x route"
     ):
-        DataPipelineConfig(source_sample_rate=44_100, target_sample_rate=176_400)
+        DataPipelineConfig(source_sample_rate=44_100, target_sample_rate=132_300)
+
+
+def test_stage1_strict_path_rejects_mismatched_input_route() -> None:
+    with pytest.raises(ValueError, match="requires input_route to match the SR ratio"):
+        DataPipelineConfig(
+            source_sample_rate=44_100,
+            target_sample_rate=176_400,
+            stage1_path=Stage1PathConfig(
+                input_route="source_chunk_44k1_to_x_full_88k2_via_degradation",
+                target_route="high_band_to_hb_target_via_mirror_detection",
+                strict_route_validation=True,
+            ),
+        )
 
 
 def test_dataset_pipeline_route_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,10 +493,21 @@ def test_raw_teacher_generates_at_target_rate(
     downsample_calls = {"count": 0}
 
     def wrapped_downsample(
-        signal: np.ndarray, *, source_sr: int, target_sr: int
+        signal: np.ndarray,
+        *,
+        source_sr: int,
+        target_sr: int,
+        method: str = "polyphase",
+        phase_mode: str = "linear",
     ) -> np.ndarray:
         downsample_calls["count"] += 1
-        return original_downsample(signal, source_sr=source_sr, target_sr=target_sr)
+        return original_downsample(
+            signal,
+            source_sr=source_sr,
+            target_sr=target_sr,
+            method=method,
+            phase_mode=phase_mode,
+        )
 
     monkeypatch.setattr(dataset_module, "generate_signal", wrapped_generate_signal)
     monkeypatch.setattr(dataset_module, "_downsample_raw_reference", wrapped_downsample)

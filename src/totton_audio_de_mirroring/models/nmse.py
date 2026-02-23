@@ -13,6 +13,7 @@ from torch import nn
 
 from totton_audio_de_mirroring.models.safety_constraints import (
     apply_safety_constraints,
+    build_energy_cap_profile,
     build_envelope_target,
     build_highband_mask,
     enforce_highpass_dc_block,
@@ -51,6 +52,8 @@ class NMSE(nn.Module):
         unet: Optional UNet2D instance. If None, a default UNet2D is created.
         energy_cap: Maximum energy allowed in 20–44kHz band.
         envelope_floor: Minimum envelope value at Nyquist (0.0 to 1.0).
+        cap_start_hz: Start frequency for frequency-dependent energy cap.
+        cap_floor_ratio: Nyquist floor ratio for frequency-dependent cap.
         lowpass_taps: FIR taps for low-band extraction.
         highpass_taps: FIR taps for high-band extraction.
 
@@ -67,6 +70,8 @@ class NMSE(nn.Module):
         stft_config: STFTConfig | None = None,
         unet: UNet2D | None = None,
         envelope_floor: float = 0.0,
+        cap_start_hz: float = 20_000.0,
+        cap_floor_ratio: float = 0.1,
         *,
         energy_cap: float,
         lowpass_taps: np.ndarray,
@@ -77,6 +82,7 @@ class NMSE(nn.Module):
         self._validate_cutoff(cutoff_hz, sample_rate)
         self._validate_envelope_floor(envelope_floor)
         self._validate_energy_cap(energy_cap)
+        self._validate_cap_profile(cap_start_hz, cap_floor_ratio, sample_rate)
 
         self.sample_rate = sample_rate
         self.cutoff_hz = float(cutoff_hz)
@@ -87,6 +93,7 @@ class NMSE(nn.Module):
         self.highpass_taps: torch.Tensor
         self.envelope_target: torch.Tensor
         self.highband_mask: torch.Tensor
+        self.energy_cap_profile: torch.Tensor
         self.window: torch.Tensor
 
         self.unet = unet or UNet2D()
@@ -107,8 +114,16 @@ class NMSE(nn.Module):
             sample_rate=sample_rate,
             cutoff_hz=self.cutoff_hz,
         )
+        cap_profile = build_energy_cap_profile(
+            num_freqs=freq_bins,
+            sample_rate=sample_rate,
+            start_hz=cap_start_hz,
+            cap_start=energy_cap,
+            cap_floor_ratio=cap_floor_ratio,
+        )
         self.register_buffer("envelope_target", envelope)
         self.register_buffer("highband_mask", hb_mask)
+        self.register_buffer("energy_cap_profile", cap_profile)
 
         self._validate_fir_taps(lowpass_taps, "lowpass_taps")
         self._validate_fir_taps(highpass_taps, "highpass_taps")
@@ -197,6 +212,7 @@ class NMSE(nn.Module):
                 envelope_target=envelope,
                 highband_mask=highband,
                 energy_cap=self.energy_cap,
+                energy_cap_profile=cast(torch.Tensor, self.energy_cap_profile),
             )
 
         complex_spec = masked_mag * torch.exp(1j * phase)
@@ -332,6 +348,24 @@ class NMSE(nn.Module):
         if not math.isfinite(energy_cap) or energy_cap <= 0:
             raise ValueError(
                 f"energy_cap must be a finite positive value, got {energy_cap}."
+            )
+
+    @staticmethod
+    def _validate_cap_profile(
+        cap_start_hz: float,
+        cap_floor_ratio: float,
+        sample_rate: int,
+    ) -> None:
+        if cap_start_hz <= 0:
+            raise ValueError(f"cap_start_hz must be positive, got {cap_start_hz}.")
+        nyquist = sample_rate / 2
+        if cap_start_hz >= nyquist:
+            raise ValueError(
+                f"cap_start_hz must be below Nyquist ({nyquist}), got {cap_start_hz}."
+            )
+        if not 0.0 < cap_floor_ratio <= 1.0:
+            raise ValueError(
+                f"cap_floor_ratio must be in (0, 1], got {cap_floor_ratio}."
             )
 
     @staticmethod
