@@ -64,6 +64,31 @@ def test_apply_degradation_profile_length() -> None:
     assert degraded.shape[-1] == signal.shape[-1] * 2
 
 
+def test_apply_degradation_profile_zero_stuff_preserves_inserted_zeros() -> None:
+    signal = np.array([0.25, -0.5, 0.75], dtype=np.float64)
+    profile = DegradationProfile(
+        method="zero_stuff",
+        cutoff_hz=CUTOFF_HZ,
+        phase="linear",
+        quantization_bits=24,
+        dither="none",
+        num_taps=None,
+        iir_order=None,
+    )
+    degraded = apply_degradation_profile(
+        signal,
+        SOURCE_SR,
+        SOURCE_SR * 4,
+        profile,
+        np.random.default_rng(0),
+    )
+    assert degraded.shape[-1] == signal.shape[-1] * 4
+    assert np.allclose(degraded[::4], signal)
+    assert np.allclose(degraded[1::4], 0.0)
+    assert np.allclose(degraded[2::4], 0.0)
+    assert np.allclose(degraded[3::4], 0.0)
+
+
 def test_invalid_ratio_raises() -> None:
     signal = np.random.randn(64)
     manager = DegradationProfileManager(DegradationConfig())
@@ -141,3 +166,13 @@ def test_upsample_bessel_reference_preserves_lowband_gain() -> None:
     gain_ratio = peak_out / peak_in
 
     assert 0.95 <= gain_ratio <= 1.05
+
+
+def test_degradation_config_accepts_zero_stuff_method() -> None:
+    config = DegradationConfig(
+        methods=("zero_stuff",),
+        phase_modes=("linear",),
+    )
+    manager = DegradationProfileManager(config)
+    profile = manager.sample_profile(rng=np.random.default_rng(0))
+    assert profile.method == "zero_stuff"
