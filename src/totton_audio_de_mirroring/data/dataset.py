@@ -153,70 +153,16 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
                 bessel_order=self._config.degradation.iir_order,
             )
 
-        profile = self._degradation.sample_profile(rng=rng)
-        x_full = apply_degradation_profile(
-            source_chunk,
-            self._config.source_sample_rate,
-            self._config.target_sample_rate,
-            profile,
-            rng,
-        )
-
-        low_band, high_band = self._band_split.split(x_full)
-        _, teacher_high_band = self._band_split.split(teacher_full)
-
-        if self._config.teacher_type in {"raw_88k2", "raw_176k4"}:
-            hb_target = project_teacher_hb_target(
-                high_band,
-                teacher_high_band,
-                self._config.target_sample_rate,
-                detection_config=self._config.mirror_detection,
-                suppression_floor=self._config.hb_target.suppression_floor,
-                energy_cap=self._config.hb_target.energy_cap,
-                envelope_min=self._config.hb_target.envelope_min,
-            )
-        else:
-            hb_target_result = generate_hb_target(
-                teacher_high_band,
-                self._config.target_sample_rate,
-                detection_config=self._config.mirror_detection,
-                suppression_floor=self._config.hb_target.suppression_floor,
-                energy_cap=self._config.hb_target.energy_cap,
-                envelope_min=self._config.hb_target.envelope_min,
-            )
-            hb_target = hb_target_result.target
-        detection = detect_mirror_artifacts(
-            high_band,
-            self._config.target_sample_rate,
-            config=self._config.mirror_detection,
-        )
-        _validate_training_sample_consistency(
-            source=source_chunk,
-            x_full=x_full,
+        sample = assemble_stage1_sample(
+            config=self._config,
+            degradation=self._degradation,
+            band_split=self._band_split,
+            source_chunk=source_chunk,
             teacher_full=teacher_full,
-            low_band=low_band,
-            high_band=high_band,
-            hb_target=hb_target,
-            source_sr=self._config.source_sample_rate,
-            target_sr=self._config.target_sample_rate,
-            chunk_duration_sec=self._config.chunk_duration_sec,
+            rng=rng,
+            signal_type=request.signal_type,
+            chunk_start=chunk_start,
         )
-        mirror_mask = _to_tensor_2d(detection.detection_mask.astype(np.float32))
-
-        sample = {
-            "source": _to_tensor(source_chunk),
-            "x_full": _to_tensor(x_full),
-            "low_band": _to_tensor(low_band),
-            "high_band": _to_tensor(high_band),
-            "hb_target": _to_tensor(hb_target),
-            "mirror_mask": mirror_mask,
-            "teacher_type": self._config.teacher_type,
-            "input_route": self._config.stage1_path.input_route,
-            "target_route": self._config.stage1_path.target_route,
-            "profile": profile,
-            "signal_type": request.signal_type,
-            "chunk_start": int(chunk_start),
-        }
 
         if self._cache is not None:
             self._cache.set(index, sample)
@@ -270,6 +216,104 @@ def apply_augmentations(
         augmented = apply_soft_clip(augmented, drive=drive)
 
     return np.asarray(augmented, dtype=np.float32)
+
+
+def assemble_stage1_sample(
+    *,
+    config: DataPipelineConfig,
+    degradation: DegradationProfileManager,
+    band_split: BandSplitProcessor,
+    source_chunk: np.ndarray,
+    teacher_full: np.ndarray,
+    rng: np.random.Generator,
+    signal_type: str,
+    chunk_start: int,
+) -> dict[str, Any]:
+    """Assemble a Stage 1 training sample from source/teacher chunks.
+
+    Args:
+        config: Data pipeline configuration.
+        degradation: Degradation profile manager for input SRC diversity.
+        band_split: Band-split processor at the target sample rate.
+        source_chunk: 44.1kHz input chunk.
+        teacher_full: Teacher reference chunk at the target sample rate.
+        rng: RNG for degradation profile sampling.
+        signal_type: Source signal type tag for provenance.
+        chunk_start: Chunk start index at the source sample rate.
+
+    Returns:
+        Dictionary of tensors and metadata matching the Stage 1 contract.
+
+    Physical Basis:
+        Degrading the 44.1kHz chunk reproduces the mirror artifacts the
+        network must suppress, while the teacher high band defines the
+        amplitude-capped suppression target shared by synthetic and
+        hi-res teacher sources.
+    """
+    profile = degradation.sample_profile(rng=rng)
+    x_full = apply_degradation_profile(
+        source_chunk,
+        config.source_sample_rate,
+        config.target_sample_rate,
+        profile,
+        rng,
+    )
+
+    low_band, high_band = band_split.split(x_full)
+    _, teacher_high_band = band_split.split(teacher_full)
+
+    if config.teacher_type in {"raw_88k2", "raw_176k4"}:
+        hb_target = project_teacher_hb_target(
+            high_band,
+            teacher_high_band,
+            config.target_sample_rate,
+            detection_config=config.mirror_detection,
+            suppression_floor=config.hb_target.suppression_floor,
+            energy_cap=config.hb_target.energy_cap,
+            envelope_min=config.hb_target.envelope_min,
+        )
+    else:
+        hb_target_result = generate_hb_target(
+            teacher_high_band,
+            config.target_sample_rate,
+            detection_config=config.mirror_detection,
+            suppression_floor=config.hb_target.suppression_floor,
+            energy_cap=config.hb_target.energy_cap,
+            envelope_min=config.hb_target.envelope_min,
+        )
+        hb_target = hb_target_result.target
+    detection = detect_mirror_artifacts(
+        high_band,
+        config.target_sample_rate,
+        config=config.mirror_detection,
+    )
+    _validate_training_sample_consistency(
+        source=source_chunk,
+        x_full=x_full,
+        teacher_full=teacher_full,
+        low_band=low_band,
+        high_band=high_band,
+        hb_target=hb_target,
+        source_sr=config.source_sample_rate,
+        target_sr=config.target_sample_rate,
+        chunk_duration_sec=config.chunk_duration_sec,
+    )
+    mirror_mask = _to_tensor_2d(detection.detection_mask.astype(np.float32))
+
+    return {
+        "source": _to_tensor(source_chunk),
+        "x_full": _to_tensor(x_full),
+        "low_band": _to_tensor(low_band),
+        "high_band": _to_tensor(high_band),
+        "hb_target": _to_tensor(hb_target),
+        "mirror_mask": mirror_mask,
+        "teacher_type": config.teacher_type,
+        "input_route": config.stage1_path.input_route,
+        "target_route": config.stage1_path.target_route,
+        "profile": profile,
+        "signal_type": signal_type,
+        "chunk_start": int(chunk_start),
+    }
 
 
 def _replace_band_split_sample_rate(
@@ -505,6 +549,63 @@ def _build_raw_teacher_source_chunk_and_reference(
         seed=source_seed,
         **dict(request.params),
     )
+    return build_raw_teacher_chunks_from_source(
+        teacher_source=teacher_source,
+        source_sr=source_sr,
+        target_sr=target_sr,
+        source_duration_sec=source_duration_sec,
+        chunk_duration_sec=chunk_duration_sec,
+        random_chunk=random_chunk,
+        augmentation=augmentation,
+        teacher_downsample_methods=teacher_downsample_methods,
+        teacher_downsample_phase_modes=teacher_downsample_phase_modes,
+        rng=rng,
+    )
+
+
+def build_raw_teacher_chunks_from_source(
+    *,
+    teacher_source: np.ndarray,
+    source_sr: int,
+    target_sr: int,
+    source_duration_sec: float,
+    chunk_duration_sec: float,
+    random_chunk: bool,
+    augmentation: AugmentationConfig,
+    teacher_downsample_methods: tuple[str, ...],
+    teacher_downsample_phase_modes: tuple[str, ...],
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Build source/teacher chunks from a native target-rate teacher signal.
+
+    Args:
+        teacher_source: Full teacher signal sampled at ``target_sr``.
+        source_sr: Source (input) sample rate.
+        target_sr: Target (teacher) sample rate.
+        source_duration_sec: Full source duration in seconds.
+        chunk_duration_sec: Chunk duration in seconds.
+        random_chunk: Whether to sample chunk start randomly.
+        augmentation: Augmentation configuration.
+        teacher_downsample_methods: Candidate methods for teacher downsampling.
+        teacher_downsample_phase_modes: Candidate phase modes for downsampling.
+        rng: RNG for deterministic chunking, augmentation, and SRC selection.
+
+    Returns:
+        Tuple of ``(source_chunk, teacher_chunk, chunk_start_at_source_sr)``.
+
+    Physical Basis:
+        Raw teacher supervision must carry genuine >22.05kHz information.
+        Whether the teacher signal is synthesized natively or loaded from a
+        hi-res recording, the 44.1kHz input chunk is derived by downsampling
+        the very same teacher chunk so input and target timelines align.
+    """
+    _validate_signal(teacher_source)
+    _validate_rng(rng)
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(target_sr, "target_sr")
+    _validate_positive_float(source_duration_sec, "source_duration_sec")
+    _validate_positive_float(chunk_duration_sec, "chunk_duration_sec")
+
     source_proxy = _downsample_raw_reference(
         teacher_source,
         source_sr=target_sr,

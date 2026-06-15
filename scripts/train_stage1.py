@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+from collections.abc import Sized
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -82,6 +83,7 @@ def main() -> None:
             num_workers=args.num_workers,
             validation_split=args.validation_split,
             checkpoint_dir=args.checkpoint_dir,
+            hires_root=args.hires_root,
         )
     else:
         train_loader, val_loader = _create_train_val_loaders(
@@ -90,6 +92,7 @@ def main() -> None:
             num_workers=args.num_workers,
             validation_split=args.validation_split,
             seed=training_config.seed,
+            hires_root=args.hires_root,
         )
         result = train_stage1(
             model=nmse,
@@ -125,6 +128,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--validation-split", type=float, default=0.1)
+    parser.add_argument(
+        "--hires-root",
+        type=Path,
+        default=None,
+        help=(
+            "Directory of genuine hi-res recordings to use as the raw teacher "
+            "(requires a raw teacher type). When omitted, synthetic data is used."
+        ),
+    )
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
@@ -360,6 +372,40 @@ def _synchronize_teacher_type(
     )
 
 
+def _build_stage1_dataset(
+    data_config: DataPipelineConfig,
+    hires_root: Path | None,
+) -> Dataset[dict[str, Any]]:
+    """Build the Stage 1 dataset (synthetic or hi-res teacher).
+
+    Args:
+        data_config: Data pipeline configuration.
+        hires_root: Optional directory of hi-res recordings. When set, a
+            ``HiResTeacherDataset`` backed by genuine hi-res audio is used.
+
+    Returns:
+        A dataset producing the Stage 1 batch contract.
+
+    Raises:
+        ValueError: If a hi-res root is given with a non-raw teacher type.
+
+    Physical Basis:
+        Genuine hi-res teachers carry real >22.05kHz energy, raising the
+        ceiling beyond the synthetic DSP-defined target. The two datasets
+        share the same batch contract so the training loop is unchanged.
+    """
+    if hires_root is None:
+        return MirrorSuppressionDataset(data_config)
+    from totton_audio_de_mirroring.data.hires_corpus import HiResCorpusConfig
+    from totton_audio_de_mirroring.data.hires_dataset import HiResTeacherDataset
+
+    corpus_config = HiResCorpusConfig(
+        root=hires_root,
+        min_sample_rate=data_config.target_sample_rate,
+    )
+    return HiResTeacherDataset(data_config, corpus_config)
+
+
 def _create_train_val_loaders(
     *,
     data_config: DataPipelineConfig,
@@ -367,6 +413,7 @@ def _create_train_val_loaders(
     num_workers: int,
     validation_split: float,
     seed: int | None,
+    hires_root: Path | None = None,
 ) -> tuple[DataLoader[dict[str, object]], DataLoader[dict[str, object]] | None]:
     """Create train/validation dataloaders from a single dataset.
 
@@ -376,19 +423,20 @@ def _create_train_val_loaders(
         num_workers: DataLoader worker count.
         validation_split: Validation split ratio in [0, 1).
         seed: Optional random seed.
+        hires_root: Optional hi-res teacher corpus directory.
 
     Returns:
         Tuple of (train_loader, val_loader).
 
     Physical Basis:
         Validation split quantifies suppression generalization while
-        preserving consistent synthetic data generation.
+        preserving consistent data generation.
     """
     if not 0.0 <= validation_split < 1.0:
         raise ValueError("validation_split must be in [0.0, 1.0).")
 
-    dataset = MirrorSuppressionDataset(data_config)
-    total_size = len(dataset)
+    dataset = _build_stage1_dataset(data_config, hires_root)
+    total_size = len(cast(Sized, dataset))
     if total_size < 2:
         raise ValueError("dataset must contain at least 2 samples for training.")
 
@@ -461,6 +509,7 @@ def _train_with_adaptive_batch_size(
     num_workers: int,
     validation_split: float,
     checkpoint_dir: Path,
+    hires_root: Path | None = None,
 ) -> TrainingResult:
     """Train with batch-size backoff on CUDA OOM.
 
@@ -491,6 +540,7 @@ def _train_with_adaptive_batch_size(
             num_workers=num_workers,
             validation_split=validation_split,
             seed=training_config.seed,
+            hires_root=hires_root,
         )
         try:
             return train_stage1(

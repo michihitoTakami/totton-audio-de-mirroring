@@ -1,0 +1,28 @@
+# Hi-res teacher audio download manifest.
+#
+# Used by: uv run python scripts/download_hires_teacher_data.py
+#
+# Requirements for every entry:
+#   - Native sample rate >= the Stage 1 target rate (88_200 Hz by default).
+#     48kHz "hi-res" sources are rejected: their Nyquist (24kHz) carries almost
+#     no content above 22.05kHz, so they teach nothing about the lost band.
+#   - License must be CC0, CC-BY (any version), or public domain. SA/ND variants
+#     are accepted; NC (non-commercial) requires --allow-noncommercial.
+#   - The downloaded file must contain genuine energy above 22.05kHz
+#     (verified automatically; upsampled-from-44.1k masters are rejected).
+#
+# NOTE: No default sources are bundled. Genuine CC-BY/CC0 audio at >= 88.2kHz is
+# scarce and source URLs are unstable, so populate this list with sources you
+# have verified, or drop your own licensed hi-res files straight into
+# data/hires_corpus/ (the corpus loader reads any directory of audio files).
+#
+# Example entry (replace with a real, verified source before running):
+#   entries:
+#     - name: example_track.flac
+#       url: https://example.org/path/example_track.flac
+#       license: CC-BY-4.0
+#       attribution: "Artist - Title (CC BY 4.0), https://example.org/page"
+#       source_url: https://example.org/page
+#       sha256: ""   # optional; set to enforce an integrity check
+
+entries: []
