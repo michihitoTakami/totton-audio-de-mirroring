@@ -127,6 +127,32 @@ enough correct edge-sharpening content to cancel the Gibbs ringing; it mostly
 perturbs the overshoot. This confirms, a second time, that generation under the
 safety constraints does not raise the ceiling.
 
+### Removing the safety valve makes ringing strictly WORSE
+
+To test the hypothesis "hallucinate freely (no energy cap) to remove ringing",
+the cap was swept up. 500Hz square overshoot / plateau-ripple:
+
+| energy cap | overshoot | ripple |
+|------------|-----------|--------|
+| FIR only (no generation) | 0.274 | 0.0063 |
+| 1e-2 (weak generation)   | 0.294 | 0.0051 |
+| 0.1  (10x generation)    | 0.559 | 0.0365 |
+| inf  (uncapped)          | clips at +13 dBFS (target peak 4.59) — training aborts |
+
+**More generation monotonically worsens ringing.** This is exactly the Fourier
+result: added high-frequency energy (with the input phase, and unconstrained
+magnitude) *steepens* the edge and *adds* in-phase energy at the transition,
+increasing overshoot rather than cancelling it. Mis-phased HF piles onto the
+ringing instead of removing it; fully unbounded generation clips the signal.
+
+**Definitive conclusion: ringing cannot be removed by hallucination — it is
+intrinsic to band-limiting a discontinuity (Gibbs), and generating more high
+band makes it worse.** The only real levers are: the transparent FIR (minimal
+correct reconstruction, Part A), apodization (less ring at the cost of high-
+frequency dulling), minimum-phase (relocation only), or accepting the ~9% Gibbs
+overshoot (a ~22kHz oscillation that is largely inaudible and gently removed by
+the final analog reconstruction filter).
+
 ## Overall conclusion
 
 - **The real win is Part A — the 32-bit-transparent Kaiser FIR upsampler**, which

@@ -1,0 +1,72 @@
+# Stage 1b anti-ringing data config (transient-focused, transparent-FIR input).
+#
+# Usage:
+#   uv run python scripts/train_stage1b_generation.py \
+#     --data-config configs/data_generation_antiring88k2.yaml \
+#     --input-mode transparent --edge-weight 1.0 --step-weight 1.0 --stft-weight 0.3
+#
+# The input is the mirror-free 32-bit-transparent FIR upsample, so the only
+# artifact left is the inherent band-limited (Gibbs) ringing on transients.
+# Signal types are transient-rich so the model learns to add >22.05kHz content
+# that sharpens edges and cancels ringing (objective = ringing minimisation).
+
+num_samples: 10000
+source_sample_rate: 44100
+target_sample_rate: 88200
+source_duration_sec: 1.0
+chunk_duration_sec: 0.25
+random_chunk: true
+seed: 1234
+teacher_type: raw_88k2
+
+signal_sampling:
+  signal_types:
+    - percussive
+    - soft_clipped_tone
+    - multitone
+
+augmentation:
+  gain_range: [0.7, 1.0]
+  polarity_flip_prob: 0.3
+  noise_std_range: [0.0, 0.002]
+  soft_clip_prob: 0.2
+  soft_clip_drive_range: [1.2, 2.5]
+
+degradation:
+  cutoff_hz_range: [18000.0, 22000.0]
+  phase_modes: [analog]
+  quantization_bits: [16, 24]
+  dither_modes: [none, rectangular, triangular]
+  methods:
+    - iir_bessel
+  iir_order: 6
+
+band_split:
+  cutoff_hz: 20000.0
+  sample_rate: 88200
+  num_taps: 4097
+  window: hamming
+
+mirror_detection:
+  cutoff_hz: 20000.0
+  mirror_center_hz: null
+  mirror_band_hz: [20000.0, 22050.0]
+  n_fft: 2048
+  hop_length: 512
+  window: hann
+  magnitude_threshold: 3.0
+  symmetry_threshold: 0.6
+
+hb_target:
+  suppression_floor: 0.2
+  energy_cap: 0.1
+  envelope_min: 0.5
+
+stage1_path:
+  input_route: source_chunk_44k1_to_x_full_88k2_via_degradation
+  target_route: high_band_to_hb_target_via_mirror_detection
+  strict_route_validation: true
+
+cache:
+  enabled: true
+  max_items: 128
