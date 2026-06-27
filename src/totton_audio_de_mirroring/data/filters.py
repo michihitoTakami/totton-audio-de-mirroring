@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 from scipy import signal as sp_signal
 
@@ -9,6 +11,218 @@ DEFAULT_CUTOFF_HZ = 20_000.0
 DEFAULT_FILTER_ORDER = 8
 DEFAULT_NUM_TAPS = 4097
 DEFAULT_WINDOW = "hamming"
+
+# Transparent upsampler defaults: pass 0-20kHz, reject >=22.05kHz images.
+DEFAULT_PASSBAND_HZ = 20_000.0
+DEFAULT_STOPBAND_HZ = 22_050.0
+DEFAULT_STOPBAND_DB = 180.0
+
+
+def kaiser_params_for_stopband(
+    stopband_db: float,
+    transition_hz: float,
+    sample_rate: int,
+) -> tuple[int, float]:
+    """Derive Kaiser FIR tap count and beta for a target stopband attenuation.
+
+    Args:
+        stopband_db: Desired stopband attenuation (and passband ripple) in dB.
+        transition_hz: Transition-band width in Hz.
+        sample_rate: Sample rate the FIR runs at (the upsampled rate) in Hz.
+
+    Returns:
+        Tuple of (num_taps, beta); num_taps is forced odd (Type I linear phase).
+
+    Raises:
+        ValueError: If inputs are invalid.
+
+    Physical Basis:
+        The Kaiser window design formulas (Kaiser/Oppenheim) map a desired
+        stopband attenuation and transition width to the minimum tap count and
+        beta. Targeting ~180 dB keeps both passband ripple and image leakage
+        far below the 32-bit float floor (~-144 dB), so float32 arithmetic —
+        not the filter — limits transparency.
+    """
+    _validate_sample_rate(sample_rate)
+    if stopband_db <= 0.0:
+        raise ValueError(f"stopband_db must be positive, got {stopband_db}.")
+    if transition_hz <= 0.0:
+        raise ValueError(f"transition_hz must be positive, got {transition_hz}.")
+    nyquist = sample_rate / 2.0
+    width_norm = transition_hz / nyquist
+    if not 0.0 < width_norm < 1.0:
+        raise ValueError("transition_hz must be within (0, Nyquist).")
+
+    num_taps, beta = sp_signal.kaiserord(stopband_db, width_norm)
+    if num_taps % 2 == 0:
+        num_taps += 1
+    return int(num_taps), float(beta)
+
+
+def design_transparent_upsampler_fir(
+    *,
+    source_sr: int,
+    ratio: int,
+    passband_hz: float = DEFAULT_PASSBAND_HZ,
+    stopband_hz: float = DEFAULT_STOPBAND_HZ,
+    stopband_db: float = DEFAULT_STOPBAND_DB,
+    num_taps: int | None = None,
+) -> tuple[np.ndarray, float]:
+    """Design a linear-phase Kaiser FIR anti-imaging filter for 2x upsampling.
+
+    Args:
+        source_sr: Input sample rate in Hz (e.g., 44100).
+        ratio: Integer upsampling ratio (e.g., 2).
+        passband_hz: Top of the flat passband to preserve (e.g., 20000).
+        stopband_hz: Start of the image stopband to reject (e.g., 22050).
+        stopband_db: Target stopband attenuation in dB.
+        num_taps: Optional explicit tap count (odd); if None, derived from the
+            Kaiser formula for the minimum transparent filter.
+
+    Returns:
+        Tuple of (taps, beta). Taps are gain-compensated by ``ratio`` so the
+        zero-stuffed passband returns to unity gain.
+
+    Raises:
+        ValueError: If inputs are invalid.
+
+    Physical Basis:
+        Zero-stuffing by ``ratio`` creates spectral images above the source
+        Nyquist; a sharp linear-phase low-pass removes them. A Kaiser window at
+        ~180 dB makes the filter transparent below the 32-bit float floor while
+        keeping the tap count (and thus the impulse-response/ringing length)
+        minimal, so residual transient ringing stays local enough for a
+        neural de-ringer to address.
+    """
+    _validate_positive_int(source_sr, "source_sr")
+    _validate_positive_int(ratio, "ratio")
+    if ratio < 2:
+        raise ValueError(f"ratio must be >= 2, got {ratio}.")
+    target_sr = source_sr * ratio
+    if not 0.0 < passband_hz < stopband_hz <= target_sr / 2.0:
+        raise ValueError("require 0 < passband_hz < stopband_hz <= target Nyquist.")
+
+    transition_hz = stopband_hz - passband_hz
+    beta = kaiser_params_for_stopband(stopband_db, transition_hz, target_sr)[1]
+    if num_taps is None:
+        num_taps = kaiser_params_for_stopband(stopband_db, transition_hz, target_sr)[0]
+    _validate_positive_int(num_taps, "num_taps")
+    if num_taps % 2 == 0:
+        raise ValueError("num_taps must be odd for linear-phase design.")
+
+    cutoff_hz = 0.5 * (passband_hz + stopband_hz)
+    taps = sp_signal.firwin(
+        num_taps,
+        cutoff_hz,
+        window=("kaiser", beta),
+        pass_zero="lowpass",
+        fs=target_sr,
+    )
+    taps = np.asarray(taps, dtype=np.float64) * float(ratio)
+    return taps, beta
+
+
+@lru_cache(maxsize=8)
+def _cached_transparent_taps(
+    source_sr: int,
+    ratio: int,
+    passband_hz: float,
+    stopband_hz: float,
+    stopband_db: float,
+    num_taps: int | None,
+) -> tuple[np.ndarray, float]:
+    return design_transparent_upsampler_fir(
+        source_sr=source_sr,
+        ratio=ratio,
+        passband_hz=passband_hz,
+        stopband_hz=stopband_hz,
+        stopband_db=stopband_db,
+        num_taps=num_taps,
+    )
+
+
+def upsample_transparent_reference(
+    *,
+    signal: np.ndarray,
+    source_sr: int,
+    target_sr: int,
+    passband_hz: float = DEFAULT_PASSBAND_HZ,
+    stopband_hz: float = DEFAULT_STOPBAND_HZ,
+    stopband_db: float = DEFAULT_STOPBAND_DB,
+    num_taps: int | None = None,
+) -> np.ndarray:
+    """Upsample via the 32-bit-transparent Kaiser FIR (image-free reconstruction).
+
+    Args:
+        signal: 1D input signal at ``source_sr``.
+        source_sr: Source sample rate in Hz.
+        target_sr: Target sample rate in Hz (integer multiple of source).
+        passband_hz: Flat passband edge to preserve.
+        stopband_hz: Image stopband edge to reject.
+        stopband_db: Target stopband attenuation in dB.
+        num_taps: Optional explicit odd tap count (else minimal derived).
+
+    Returns:
+        Upsampled signal at ``target_sr`` (float64), images rejected to well
+        below the 32-bit float floor.
+
+    Raises:
+        ValueError: If the rate ratio is not a valid integer >= 2.
+
+    Physical Basis:
+        Drop-in replacement for the legacy Bessel IIR path; eliminates the
+        mirror/image leakage at the source instead of suppressing it later.
+    """
+    if source_sr <= 0 or target_sr <= 0:
+        raise ValueError("sample rates must be positive.")
+    ratio = target_sr // source_sr
+    if ratio < 2 or ratio * source_sr != target_sr:
+        raise ValueError("target_sr must be an integer (>=2) multiple of source_sr.")
+    taps, _ = _cached_transparent_taps(
+        source_sr, ratio, passband_hz, stopband_hz, stopband_db, num_taps
+    )
+    return upsample_fir(np.asarray(signal, dtype=np.float64), ratio, taps)
+
+
+def upsample_fir(
+    signal: np.ndarray,
+    ratio: int,
+    taps: np.ndarray,
+) -> np.ndarray:
+    """Upsample a 1D signal by zero-stuffing and linear-phase FIR filtering.
+
+    Args:
+        signal: 1D input signal.
+        ratio: Integer upsampling ratio.
+        taps: Linear-phase FIR taps (odd length, gain-compensated).
+
+    Returns:
+        Upsampled signal of length ``len(signal) * ratio``, group-delay aligned.
+
+    Raises:
+        ValueError: If inputs are invalid.
+
+    Physical Basis:
+        ``upfirdn`` performs the zero-stuff + convolution efficiently. Removing
+        the linear-phase group delay ((num_taps-1)/2 samples) aligns the output
+        to the ideal band-limited interpolation grid.
+    """
+    if signal.ndim != 1:
+        raise ValueError(f"signal must be 1D, got {signal.ndim}D.")
+    if signal.size == 0:
+        raise ValueError("signal cannot be empty.")
+    _validate_positive_int(ratio, "ratio")
+    _validate_taps(taps)
+    if taps.size % 2 == 0:
+        raise ValueError("taps must be odd length for linear-phase alignment.")
+
+    filtered = sp_signal.upfirdn(taps, np.asarray(signal, dtype=np.float64), up=ratio)
+    delay = (taps.size - 1) // 2
+    expected = signal.shape[-1] * ratio
+    aligned = filtered[delay : delay + expected]
+    if aligned.shape[-1] < expected:
+        aligned = np.pad(aligned, (0, expected - aligned.shape[-1]))
+    return np.asarray(aligned, dtype=np.float64)
 
 
 def design_bessel_fir(
