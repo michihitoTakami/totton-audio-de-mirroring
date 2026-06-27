@@ -106,6 +106,39 @@ This engine is retained as a **tested, safe, opt-in experimental scaffold** and 
 documented negative result; it is not recommended for production over the
 suppression NMSE.
 
+## Results (2): transient de-ringing on the transparent FIR base — also negative
+
+After replacing Bessel IIR with the 32-bit-transparent Kaiser FIR (which removes
+mirror images entirely), the only remaining transient artifact is the inherent
+band-limited (Gibbs) ringing. An NBEE was trained with `input_mode=transparent`,
+ringing-weighted losses (edge/step = 1.0), and the hi-res transient corpus to add
+>22.05kHz content that sharpens edges. Measured on square probes
+(`scripts/evaluate_antiringing.py`):
+
+| probe | overshoot FIR | overshoot +NBEE | ripple FIR | ripple +NBEE |
+|-------|---------------|-----------------|------------|--------------|
+| 500Hz | 0.274 | 0.294 | 0.0063 | 0.0051 |
+| 1kHz  | 0.296 | 0.303 | 0.000  | 0.000  |
+| 5kHz  | 0.416 | 0.409 | 0.000  | 0.000  |
+
+The de-ringer does **not** meaningfully reduce ringing (overshoot is slightly
+worse at 500Hz/1kHz). Under the energy cap, the generated high band cannot add
+enough correct edge-sharpening content to cancel the Gibbs ringing; it mostly
+perturbs the overshoot. This confirms, a second time, that generation under the
+safety constraints does not raise the ceiling.
+
+## Overall conclusion
+
+- **The real win is Part A — the 32-bit-transparent Kaiser FIR upsampler**, which
+  eliminates mirror images at the source (image at 21kHz: -4.8 dB Bessel IIR ->
+  -168 dB FIR) and is transparent below the float32 floor. It makes the original
+  neural mirror-suppression largely unnecessary.
+- **Neural high-band generation (NBEE) does not help** — neither faithful HB
+  reconstruction nor transient de-ringing beats the safe baseline, because the
+  >22.05kHz content is unrecoverable and the IMD-safety constraints cap
+  generation. Retained as a tested, opt-in scaffold and a documented negative
+  result; not recommended for production.
+
 ## Limitations
 
 - v1/v2 reuse the input phase for the generated band (phase above 22.05kHz is

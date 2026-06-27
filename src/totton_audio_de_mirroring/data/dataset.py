@@ -17,6 +17,7 @@ from totton_audio_de_mirroring.data.degradation import (
     apply_degradation_profile,
     upsample_bessel_reference,
 )
+from totton_audio_de_mirroring.data.filters import upsample_transparent_reference
 from totton_audio_de_mirroring.data.generator import (
     SignalRequest,
     apply_soft_clip,
@@ -51,15 +52,22 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
     """
 
     def __init__(
-        self, config: DataPipelineConfig, *, target_mode: str = "suppress"
+        self,
+        config: DataPipelineConfig,
+        *,
+        target_mode: str = "suppress",
+        input_mode: str = "degrade",
     ) -> None:
         _validate_pipeline_config(config)
         _validate_stage1_path(config)
         if target_mode not in {"suppress", "generate"}:
             raise ValueError(f"Unsupported target_mode: {target_mode!r}.")
+        if input_mode not in {"degrade", "transparent"}:
+            raise ValueError(f"Unsupported input_mode: {input_mode!r}.")
 
         self._config = config
         self._target_mode = target_mode
+        self._input_mode = input_mode
         self._degradation = DegradationProfileManager(config.degradation)
         self._band_split = BandSplitProcessor(
             _replace_band_split_sample_rate(
@@ -169,6 +177,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             signal_type=request.signal_type,
             chunk_start=chunk_start,
             target_mode=self._target_mode,
+            input_mode=self._input_mode,
         )
 
         if self._cache is not None:
@@ -236,6 +245,7 @@ def assemble_stage1_sample(
     signal_type: str,
     chunk_start: int,
     target_mode: str = "suppress",
+    input_mode: str = "degrade",
 ) -> dict[str, Any]:
     """Assemble a Stage 1 training sample from source/teacher chunks.
 
@@ -251,6 +261,9 @@ def assemble_stage1_sample(
         target_mode: "suppress" (default, NMSE attenuation target) or
             "generate" (Stage 1b bandwidth-extension target = full real
             teacher high band, not capped to the degraded input).
+        input_mode: "degrade" (default, Bessel-IIR mirror-laden input) or
+            "transparent" (mirror-free 32-bit-transparent FIR upsample, used to
+            train transient de-ringing where only inherent ringing remains).
 
     Returns:
         Dictionary of tensors and metadata matching the Stage 1 contract.
@@ -263,14 +276,25 @@ def assemble_stage1_sample(
     """
     if target_mode not in {"suppress", "generate"}:
         raise ValueError(f"Unsupported target_mode: {target_mode!r}.")
-    profile = degradation.sample_profile(rng=rng)
-    x_full = apply_degradation_profile(
-        source_chunk,
-        config.source_sample_rate,
-        config.target_sample_rate,
-        profile,
-        rng,
-    )
+    if input_mode not in {"degrade", "transparent"}:
+        raise ValueError(f"Unsupported input_mode: {input_mode!r}.")
+    if input_mode == "transparent":
+        profile: Any = "transparent_fir"
+        x_full = upsample_transparent_reference(
+            signal=source_chunk,
+            source_sr=config.source_sample_rate,
+            target_sr=config.target_sample_rate,
+        )
+    else:
+        sampled_profile = degradation.sample_profile(rng=rng)
+        profile = sampled_profile
+        x_full = apply_degradation_profile(
+            source_chunk,
+            config.source_sample_rate,
+            config.target_sample_rate,
+            sampled_profile,
+            rng,
+        )
 
     low_band, high_band = band_split.split(x_full)
     _, teacher_high_band = band_split.split(teacher_full)

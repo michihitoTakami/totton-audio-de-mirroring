@@ -53,13 +53,13 @@ def main() -> None:
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     weights = LossWeights(
         mask=1.0,
-        stft=1.0,
+        stft=args.stft_weight,
         preserve=1.0,
         energy=1.0,
         subtract=0.0,
         cap_strict=4.0,
-        edge=0.05,
-        step=0.05,
+        edge=args.edge_weight,
+        step=args.step_weight,
     )
     mask_cfg = STFTLossConfig(n_fft=2048, hop_length=512, win_length=2048)
     stft_cfgs = (
@@ -129,7 +129,9 @@ def _build_model(
 
 
 def _build_loader(cfg: Any, args: argparse.Namespace) -> DataLoader[dict[str, Any]]:
-    synth = MirrorSuppressionDataset(cfg, target_mode="generate")
+    synth = MirrorSuppressionDataset(
+        cfg, target_mode="generate", input_mode=args.input_mode
+    )
     datasets: list[Any] = [synth]
     if args.hires_root is not None:
         from totton_audio_de_mirroring.data.hires_corpus import HiResCorpusConfig
@@ -141,6 +143,7 @@ def _build_loader(cfg: Any, args: argparse.Namespace) -> DataLoader[dict[str, An
                 root=args.hires_root, min_sample_rate=cfg.target_sample_rate
             ),
             target_mode="generate",
+            input_mode=args.input_mode,
         )
         datasets.append(hires)
     dataset: Any = synth if len(datasets) == 1 else ConcatDataset(datasets)
@@ -188,6 +191,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--energy-cap", type=float, default=1.0e-2)
     parser.add_argument("--seed", type=int, default=1234)
+    parser.add_argument(
+        "--input-mode",
+        type=str,
+        default="transparent",
+        choices=["degrade", "transparent"],
+        help="transparent: clean 32-bit FIR input (anti-ringing); degrade: Bessel.",
+    )
+    parser.add_argument("--edge-weight", type=float, default=1.0)
+    parser.add_argument("--step-weight", type=float, default=1.0)
+    parser.add_argument("--stft-weight", type=float, default=0.3)
     parser.add_argument(
         "--output", type=Path, default=Path("data/checkpoints/stage1b/stage1b_nbee.pt")
     )

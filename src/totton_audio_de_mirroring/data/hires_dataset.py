@@ -46,6 +46,7 @@ class HiResTeacherDataset(torch.utils.data.Dataset[dict[str, Any]]):
         corpus_config: HiResCorpusConfig,
         *,
         target_mode: str = "suppress",
+        input_mode: str = "degrade",
     ) -> None:
         if not isinstance(config, DataPipelineConfig):
             raise ValueError("config must be a DataPipelineConfig.")
@@ -56,9 +57,12 @@ class HiResTeacherDataset(torch.utils.data.Dataset[dict[str, Any]]):
             )
         if target_mode not in {"suppress", "generate"}:
             raise ValueError(f"Unsupported target_mode: {target_mode!r}.")
+        if input_mode not in {"degrade", "transparent"}:
+            raise ValueError(f"Unsupported input_mode: {input_mode!r}.")
 
         self._config = config
         self._target_mode = target_mode
+        self._input_mode = input_mode
         self._corpus = HiResCorpus(
             corpus_config,
             target_sample_rate=config.target_sample_rate,
@@ -131,6 +135,7 @@ class HiResTeacherDataset(torch.utils.data.Dataset[dict[str, Any]]):
             signal_type=HIRES_SIGNAL_TAG,
             chunk_start=chunk_start,
             target_mode=self._target_mode,
+            input_mode=self._input_mode,
         )
 
     def _rng_for_index(self, index: int) -> np.random.Generator:
