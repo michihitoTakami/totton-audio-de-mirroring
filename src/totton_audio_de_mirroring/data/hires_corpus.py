@@ -51,6 +51,7 @@ class HiResCorpusConfig:
     split_hz: float = 22_050.0
     mono_mode: MonoMode = "downmix"
     extensions: tuple[str, ...] = DEFAULT_EXTENSIONS
+    max_load_attempts: int = 8
 
     def __post_init__(self) -> None:
         if not isinstance(self.root, Path):
@@ -65,6 +66,8 @@ class HiResCorpusConfig:
             raise ValueError("mono_mode must be 'downmix' or 'left'.")
         if not self.extensions:
             raise ValueError("extensions must be non-empty.")
+        if self.max_load_attempts <= 0:
+            raise ValueError("max_load_attempts must be positive.")
 
 
 class HiResCorpus:
@@ -147,25 +150,31 @@ class HiResCorpus:
         if not isinstance(rng, np.random.Generator):
             raise ValueError("rng must be a numpy.random.Generator.")
 
-        path = self._files[index % len(self._files)]
-        mono, file_sr = _read_mono_segment(
-            path,
-            duration_sec=self._source_duration_sec,
-            mono_mode=self._config.mono_mode,
-            rng=rng,
-        )
-        ratio = high_frequency_energy_ratio(
-            mono, file_sr, split_hz=self._config.split_hz
-        )
-        if ratio < self._config.min_hf_energy_ratio:
-            raise ValueError(
-                f"Segment from {path.name} has insufficient high-frequency "
-                f"energy ratio ({ratio:.3e} < {self._config.min_hf_energy_ratio:.3e})."
-            )
-
         target_len = int(round(self._source_duration_sec * self._target_sample_rate))
-        resampled = resample_signal(mono, file_sr, self._target_sample_rate)
-        return _fit_length(resampled, target_len)
+        last_ratio = 0.0
+        last_name = ""
+        for attempt in range(self._config.max_load_attempts):
+            path = self._files[(index + attempt) % len(self._files)]
+            mono, file_sr = _read_mono_segment(
+                path,
+                duration_sec=self._source_duration_sec,
+                mono_mode=self._config.mono_mode,
+                rng=rng,
+            )
+            ratio = high_frequency_energy_ratio(
+                mono, file_sr, split_hz=self._config.split_hz
+            )
+            if ratio >= self._config.min_hf_energy_ratio:
+                resampled = resample_signal(mono, file_sr, self._target_sample_rate)
+                return _fit_length(resampled, target_len)
+            last_ratio = ratio
+            last_name = path.name
+
+        raise ValueError(
+            f"No segment with sufficient high-frequency energy after "
+            f"{self._config.max_load_attempts} attempts (last {last_name}: "
+            f"{last_ratio:.3e} < {self._config.min_hf_energy_ratio:.3e})."
+        )
 
     def _has_min_sample_rate(self, path: Path) -> bool:
         try:

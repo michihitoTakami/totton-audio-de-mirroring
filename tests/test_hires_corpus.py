@@ -97,6 +97,20 @@ def test_corpus_rejects_segment_without_ultrasonic_energy(tmp_path: Path) -> Non
         corpus.load_teacher_source(0, np.random.default_rng(0))
 
 
+def test_corpus_retries_past_low_energy_segments(tmp_path: Path) -> None:
+    """Loader should skip low-HF files and return a genuinely hi-res one."""
+    _write_hires_wav(tmp_path / "a_flat.wav", include_ultrasonic=False)
+    _write_hires_wav(tmp_path / "b_rich.wav", include_ultrasonic=True)
+    corpus = HiResCorpus(
+        HiResCorpusConfig(root=tmp_path, min_hf_energy_ratio=1.0e-2),
+        target_sample_rate=88_200,
+        source_duration_sec=1.0,
+    )
+    # index 0 maps to the flat file first; retry must advance to the rich file.
+    segment = corpus.load_teacher_source(0, np.random.default_rng(0))
+    assert segment.shape[0] == 88_200
+
+
 def test_corpus_config_rejects_subrate_min(tmp_path: Path) -> None:
     _write_hires_wav(tmp_path / "tone.wav")
     with pytest.raises(ValueError, match="min_sample_rate must be >="):
