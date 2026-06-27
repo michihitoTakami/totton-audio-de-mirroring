@@ -23,6 +23,7 @@ from totton_audio_de_mirroring.data.generator import (
     generate_signal,
 )
 from totton_audio_de_mirroring.data.mirror_detection import (
+    build_generative_hb_target,
     detect_mirror_artifacts,
     generate_hb_target,
     project_teacher_hb_target,
@@ -49,11 +50,16 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
         -> band split -> mirror-suppressed target generation.
     """
 
-    def __init__(self, config: DataPipelineConfig) -> None:
+    def __init__(
+        self, config: DataPipelineConfig, *, target_mode: str = "suppress"
+    ) -> None:
         _validate_pipeline_config(config)
         _validate_stage1_path(config)
+        if target_mode not in {"suppress", "generate"}:
+            raise ValueError(f"Unsupported target_mode: {target_mode!r}.")
 
         self._config = config
+        self._target_mode = target_mode
         self._degradation = DegradationProfileManager(config.degradation)
         self._band_split = BandSplitProcessor(
             _replace_band_split_sample_rate(
@@ -162,6 +168,7 @@ class MirrorSuppressionDataset(torch.utils.data.Dataset[dict[str, Any]]):
             rng=rng,
             signal_type=request.signal_type,
             chunk_start=chunk_start,
+            target_mode=self._target_mode,
         )
 
         if self._cache is not None:
@@ -228,6 +235,7 @@ def assemble_stage1_sample(
     rng: np.random.Generator,
     signal_type: str,
     chunk_start: int,
+    target_mode: str = "suppress",
 ) -> dict[str, Any]:
     """Assemble a Stage 1 training sample from source/teacher chunks.
 
@@ -240,16 +248,21 @@ def assemble_stage1_sample(
         rng: RNG for degradation profile sampling.
         signal_type: Source signal type tag for provenance.
         chunk_start: Chunk start index at the source sample rate.
+        target_mode: "suppress" (default, NMSE attenuation target) or
+            "generate" (Stage 1b bandwidth-extension target = full real
+            teacher high band, not capped to the degraded input).
 
     Returns:
         Dictionary of tensors and metadata matching the Stage 1 contract.
 
     Physical Basis:
         Degrading the 44.1kHz chunk reproduces the mirror artifacts the
-        network must suppress, while the teacher high band defines the
-        amplitude-capped suppression target shared by synthetic and
-        hi-res teacher sources.
+        network must process. In "suppress" mode the teacher high band defines
+        an amplitude-capped attenuation target; in "generate" mode it defines
+        the full real high band to recreate (still envelope/energy-capped).
     """
+    if target_mode not in {"suppress", "generate"}:
+        raise ValueError(f"Unsupported target_mode: {target_mode!r}.")
     profile = degradation.sample_profile(rng=rng)
     x_full = apply_degradation_profile(
         source_chunk,
@@ -262,7 +275,16 @@ def assemble_stage1_sample(
     low_band, high_band = band_split.split(x_full)
     _, teacher_high_band = band_split.split(teacher_full)
 
-    if config.teacher_type in {"raw_88k2", "raw_176k4"}:
+    if target_mode == "generate":
+        hb_target = build_generative_hb_target(
+            high_band,
+            teacher_high_band,
+            config.target_sample_rate,
+            detection_config=config.mirror_detection,
+            energy_cap=config.hb_target.energy_cap,
+            envelope_min=config.hb_target.envelope_min,
+        )
+    elif config.teacher_type in {"raw_88k2", "raw_176k4"}:
         hb_target = project_teacher_hb_target(
             high_band,
             teacher_high_band,
