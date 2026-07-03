@@ -81,6 +81,13 @@ class CAPBController(nn.Module):
             if bias is None:
                 raise ValueError("Controller head must have a bias term.")
             bias.copy_(torch.log(torch.tensor(init_weights, dtype=torch.float32)))
+        # Freeze the static blend component: with zero-initialized head
+        # weights the controller output is bias-only early in training, and
+        # a trainable bias races to a one-hot static optimum where softmax
+        # gradients vanish (observed as always-sharp/always-mid collapse).
+        # Freezing the bias makes content-dependent modulation the only way
+        # to reduce the loss.
+        bias.requires_grad_(False)
 
     def forward(self, source: torch.Tensor) -> torch.Tensor:
         """Compute blend logits.
@@ -131,6 +138,39 @@ class CAPB(nn.Module):
 
         self.controller = CAPBController(self.num_prototypes, init_weights)
 
+    def forward_with_details(
+        self, source: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Upsample and also return blend weights and prototype outputs.
+
+        Args:
+            source: Input waveform (batch, time) at the source rate.
+
+        Returns:
+            Tuple of (output, weights (B, K, frames), prototype outputs
+            (B, K, time * ratio)).
+
+        Physical Basis:
+            Training losses that reference a specific prototype's behavior
+            (e.g. "ripple no worse than gentle") reuse the same prototype
+            convolutions instead of recomputing them.
+        """
+        if source.dim() != 2 or source.shape[-1] == 0:
+            raise ValueError("source must be a non-empty (batch, time) tensor.")
+
+        prototype_outputs = self._prototype_outputs(source)
+        peak = source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
+        logits = self.controller(source / peak)
+        weights = torch.softmax(logits, dim=1)
+        weights_up = F.interpolate(
+            weights,
+            size=prototype_outputs.shape[-1],
+            mode="linear",
+            align_corners=False,
+        )
+        output = (weights_up * prototype_outputs).sum(dim=1)
+        return output, weights, prototype_outputs
+
     def forward(
         self, source: torch.Tensor, return_weights: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
@@ -152,19 +192,13 @@ class CAPB(nn.Module):
             pointwise convex combination, so the output at every instant is
             the response of SOME valid linear-phase interpolation filter.
         """
-        if source.dim() != 2 or source.shape[-1] == 0:
-            raise ValueError("source must be a non-empty (batch, time) tensor.")
-
-        prototype_outputs = self._prototype_outputs(source)
-        logits = self.controller(source)
-        weights = torch.softmax(logits, dim=1)
-        weights_up = F.interpolate(
-            weights,
-            size=prototype_outputs.shape[-1],
-            mode="linear",
-            align_corners=False,
-        )
-        output = (weights_up * prototype_outputs).sum(dim=1)
+        # Peak-normalize the controller input (inside forward_with_details):
+        # the correct interpolation choice is a property of signal SHAPE,
+        # not level, and run6 showed the controller otherwise learns an
+        # amplitude shortcut that fails on out-of-distribution probe levels.
+        # The blend still applies to the unnormalized prototype outputs, so
+        # the system stays linear.
+        output, weights, _ = self.forward_with_details(source)
         if return_weights:
             return output, weights
         return output

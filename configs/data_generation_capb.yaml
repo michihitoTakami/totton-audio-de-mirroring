@@ -36,7 +36,7 @@ signal_mix:
   near_nyquist_noise: 0.04
 
 augmentation:
-  gain_range: [0.7, 1.0]
+  gain_range: [0.25, 1.0]
   polarity_flip_prob: 0.3
   noise_std_range: [0.0, 0.001]
   soft_clip_prob: 0.1

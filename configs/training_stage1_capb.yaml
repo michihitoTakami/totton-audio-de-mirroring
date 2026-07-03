@@ -7,7 +7,9 @@
 epochs: 50
 batch_size: 16
 learning_rate: 1.0e-4
-weight_decay: 0.0
+# Non-zero weight decay keeps controller logits away from softmax
+# saturation (run1 collapsed to always-sharp with frozen gradients).
+weight_decay: 1.0e-3
 grad_clip: 1.0
 val_fraction: 0.1
 num_workers: 4
@@ -19,6 +21,18 @@ log_interval: 20
 loss_weights:
   wave: 1.0
   stft: 1.0
-  plateau: 20.0
-  quiet: 20.0
+  plateau: 300.0
+  quiet: 300.0
   tv: 0.1
+  entropy_floor: 10.0
+  # Entropy floor threshold: 0.05 nats allows ~99% blend purity. The
+  # residual 3-4% sharp leakage at 0.15 nats was the remaining G1 p2p
+  # excess in run7.
+  min_entropy: 0.05
+  # Fidelity relaxation inside broadband-transient zones (edge_mask): the
+  # brickwall teacher rings there, and reproducing that ringing is exactly
+  # what the plateau/quiet gates forbid.
+  edge_fidelity_relax: 0.9
+  # Edge-zone ripple above the gentle prototype's level (dense-edge
+  # content such as 5 kHz squares has no plateaus for the plateau loss).
+  edge_ring: 300.0

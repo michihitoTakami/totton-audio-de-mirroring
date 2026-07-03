@@ -55,6 +55,13 @@ def test_only_controller_is_trainable(model: CAPB) -> None:
     assert "kernels" in dict(model.named_buffers())
 
 
+def test_head_bias_is_frozen(model: CAPB) -> None:
+    """The static blend component must stay fixed (anti-collapse guard)."""
+    assert model.controller.head.bias is not None
+    assert not model.controller.head.bias.requires_grad
+    assert model.controller.head.weight.requires_grad
+
+
 def test_epoch0_output_close_to_init_blend(model: CAPB) -> None:
     """Untrained output must equal the fixed init blend of prototypes."""
     rng = np.random.default_rng(5)
@@ -115,7 +122,16 @@ def test_compute_capb_losses_total(model: CAPB) -> None:
         loss_weights=CAPBLossWeights(),
         trim=256,
     )
-    assert set(losses) == {"wave", "stft", "plateau", "quiet", "tv", "total"}
+    assert set(losses) == {
+        "wave",
+        "stft",
+        "plateau",
+        "quiet",
+        "tv",
+        "entropy_floor",
+        "edge_ring",
+        "total",
+    }
     assert torch.isfinite(losses["total"])
     losses["total"].backward()
     grads = [p.grad for p in model.controller.parameters() if p.grad is not None]

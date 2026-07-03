@@ -27,9 +27,15 @@ from totton_audio_de_mirroring.data.pipeline_config import AugmentationConfig
 SOURCE_SAMPLE_RATE = 44_100
 TARGET_SAMPLE_RATE = 88_200
 UPSAMPLE_RATIO = 2
-FLAT_MASK_WINDOW_MS = 0.5
+# The exclusion window must match the ringing gate, which starts measuring
+# plateau ripple 0.1 ms after the edge: a wider window would let the mid
+# prototype's ~0.3 ms settling tail escape the training loss while still
+# failing the gate (observed in run5 as mid-instead-of-gentle at edges).
+FLAT_MASK_WINDOW_MS = 0.15
 FLAT_MASK_SLOPE_REL = 3.0e-4
 QUIET_MASK_LEVEL_REL = 1.0e-3
+EDGE_MASK_DILATION_MS = 3.0
+EDGE_SLOPE_SPIKE_REL = 0.25
 
 
 @dataclass(frozen=True)
@@ -191,12 +197,14 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         clean_chunk = clean_full[chunk_start : chunk_start + target_chunk.size]
         flat_mask = compute_flat_mask(clean_chunk)
         quiet_mask = compute_quiet_mask(clean_chunk)
+        edge_mask = compute_edge_mask(flat_mask, quiet_mask, clean_chunk)
 
         return {
             "source": torch.from_numpy(source_chunk.astype(np.float32)),
             "target": torch.from_numpy(target_chunk.astype(np.float32)),
             "flat_mask": torch.from_numpy(flat_mask.astype(np.float32)),
             "quiet_mask": torch.from_numpy(quiet_mask.astype(np.float32)),
+            "edge_mask": torch.from_numpy(edge_mask.astype(np.float32)),
             "signal_type": signal_type,
             "chunk_start": int(chunk_start),
         }
@@ -261,6 +269,8 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
                 "mod_hz": float(rng.uniform(2.0, 200.0)),
                 "modulation_index": float(rng.uniform(0.5, 4.0)),
             }
+        elif signal_type == "isolated_click":
+            params = {"click_width_samples": int(rng.integers(1, 6))}
         elif signal_type == "band_limited_noise":
             low = float(rng.uniform(40.0, 4_000.0))
             params = {
@@ -378,6 +388,54 @@ def compute_quiet_mask(clean_signal: np.ndarray) -> np.ndarray:
     window = max(1, int(round(FLAT_MASK_WINDOW_MS * TARGET_SAMPLE_RATE / 1_000.0)))
     envelope = _moving_max(np.abs(clean_signal), window)
     return (envelope < QUIET_MASK_LEVEL_REL * peak).astype(np.float64)
+
+
+def compute_edge_mask(
+    flat_mask: np.ndarray,
+    quiet_mask: np.ndarray,
+    clean_signal: np.ndarray | None = None,
+) -> np.ndarray:
+    """Mark broadband-transient neighborhoods.
+
+    Args:
+        flat_mask: Plateau mask from compute_flat_mask.
+        quiet_mask: Silence mask from compute_quiet_mask.
+        clean_signal: Optional clean waveform; when given, large slope
+            spikes also count as edges (covers dense-edge signals like
+            5 kHz squares whose plateaus are too short for flat_mask).
+
+    Returns:
+        Float mask (1.0 near broadband transients, 0.0 elsewhere).
+
+    Physical Basis:
+        Edges of plateaus, onsets out of silence, and sample-scale jumps
+        are the points where "ring like the brickwall teacher" and "stay
+        clean like the Bessel reference" genuinely conflict; the fidelity
+        losses are relaxed there so the controller can choose the ring-free
+        behavior without fighting the teacher. A slope spike threshold of
+        a quarter of the peak cannot be reached by any band-limited-to-10k
+        oscillation at that amplitude, so steady tonal content is never
+        marked.
+    """
+    if flat_mask.shape != quiet_mask.shape:
+        raise ValueError("flat_mask and quiet_mask must share a shape.")
+    transitions = np.zeros_like(flat_mask)
+    transitions[1:] = np.maximum(
+        np.abs(np.diff(flat_mask)), np.abs(np.diff(quiet_mask))
+    )
+    if clean_signal is not None:
+        if clean_signal.shape != flat_mask.shape:
+            raise ValueError("clean_signal must share the mask shape.")
+        peak = max(float(np.max(np.abs(clean_signal))), 1e-12)
+        spikes = np.zeros_like(flat_mask)
+        spikes[1:] = (
+            np.abs(np.diff(clean_signal)) > EDGE_SLOPE_SPIKE_REL * peak
+        ).astype(np.float64)
+        transitions = np.maximum(transitions, spikes)
+    half_window = max(
+        1, int(round(EDGE_MASK_DILATION_MS * TARGET_SAMPLE_RATE / 1_000.0))
+    )
+    return (_moving_max(transitions, half_window) > 0.0).astype(np.float64)
 
 
 def _moving_max(values: np.ndarray, half_window: int) -> np.ndarray:

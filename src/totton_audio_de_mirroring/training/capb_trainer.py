@@ -94,9 +94,13 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
     loss_weights = CAPBLossWeights(
         wave=float(weights_raw.get("wave", 1.0)),
         stft=float(weights_raw.get("stft", 1.0)),
-        plateau=float(weights_raw.get("plateau", 20.0)),
-        quiet=float(weights_raw.get("quiet", 20.0)),
+        plateau=float(weights_raw.get("plateau", 100.0)),
+        quiet=float(weights_raw.get("quiet", 100.0)),
         tv=float(weights_raw.get("tv", 0.1)),
+        entropy_floor=float(weights_raw.get("entropy_floor", 10.0)),
+        edge_fidelity_relax=float(weights_raw.get("edge_fidelity_relax", 0.9)),
+        edge_ring=float(weights_raw.get("edge_ring", 300.0)),
+        min_entropy=float(weights_raw.get("min_entropy", 0.05)),
     )
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
@@ -248,9 +252,13 @@ def _run_epoch(
         target = batch["target"].to(device)
         flat_mask = batch["flat_mask"].to(device)
         quiet_mask = batch["quiet_mask"].to(device)
+        edge_mask = batch["edge_mask"].to(device)
 
         with torch.set_grad_enabled(train):
-            output, weights = model(source, return_weights=True)
+            output, weights, prototypes = model.forward_with_details(source)
+            gentle_output = prototypes[
+                :, model.prototype_names.index("gentle")
+            ].detach()
             losses = compute_capb_losses(
                 output=output,
                 target=target,
@@ -260,6 +268,8 @@ def _run_epoch(
                 stft_configs=stft_configs,
                 loss_weights=config.loss_weights,
                 trim=config.border_trim,
+                edge_mask=edge_mask,
+                gentle_output=gentle_output,
             )
 
         if train:
