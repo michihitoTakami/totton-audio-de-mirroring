@@ -260,19 +260,19 @@ def generate_probe(
         sign = float(_require(spec.step_sign, "step_sign", spec))
         wave = np.full(num_samples, -sign, dtype=np.float64)
         wave[num_samples // 2 :] = sign
-        return spec.amplitude * wave
+        return np.asarray(spec.amplitude * wave, dtype=np.float64)
 
     if spec.kind == KIND_IMPULSE:
         wave = np.zeros(num_samples, dtype=np.float64)
         wave[num_samples // 2] = spec.amplitude
-        return wave
+        return np.asarray(wave, dtype=np.float64)
 
     if spec.kind == KIND_IMPULSE_TRAIN:
         period_ms = _require(spec.period_ms, "period_ms", spec)
         period = max(1, int(round(period_ms * sample_rate / 1_000.0)))
         wave = np.zeros(num_samples, dtype=np.float64)
         wave[::period] = spec.amplitude
-        return wave
+        return np.asarray(wave, dtype=np.float64)
 
     if spec.kind == KIND_TONE_BURST:
         frequency = _require(spec.frequency_hz, "frequency_hz", spec)
@@ -283,7 +283,7 @@ def generate_probe(
         local_time = np.arange(burst_len, dtype=np.float64) / sample_rate
         burst = np.sin(2.0 * np.pi * frequency * local_time) * np.hanning(burst_len)
         wave[start : start + burst_len] = spec.amplitude * burst
-        return wave
+        return np.asarray(wave, dtype=np.float64)
 
     if spec.kind == KIND_SWEEP_LOG:
         start_hz = _require(spec.frequency_hz, "frequency_hz", spec)
