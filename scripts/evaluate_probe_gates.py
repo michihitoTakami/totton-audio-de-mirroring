@@ -146,7 +146,42 @@ def _build_backend(args: argparse.Namespace) -> ModelFn:
             )
         return _build_checkpoint_backend(args.checkpoint, args.data_config, args.device)
 
+    if backend == "capb":
+        return _build_capb_backend(args.checkpoint, args.device)
+
     raise ValueError(f"Unknown backend: {backend}")
+
+
+def _build_capb_backend(checkpoint_path: Path | None, device: str) -> ModelFn:
+    """Build a CAPB backend (untrained init blend if no checkpoint given).
+
+    Physical Basis:
+        The untrained CAPB equals the fixed init blend of prototypes, so
+        gating it validates the structural baseline before any training.
+    """
+    import torch
+
+    from totton_audio_de_mirroring.models.capb import CAPB
+
+    model = CAPB()
+    if checkpoint_path is not None:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(checkpoint["model_state"])
+    model.eval()
+    torch_device = torch.device(device)
+    model = model.to(torch_device)
+
+    def capb_fn(source: np.ndarray, _bessel: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            tensor = (
+                torch.from_numpy(np.asarray(source, dtype=np.float32))
+                .unsqueeze(0)
+                .to(torch_device)
+            )
+            output = model(tensor)
+        return np.asarray(output.squeeze(0).cpu().numpy(), dtype=np.float64)
+
+    return capb_fn
 
 
 def _build_checkpoint_backend(

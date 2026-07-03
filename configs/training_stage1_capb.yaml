@@ -1,0 +1,24 @@
+# CAPB Stage 1 training configuration.
+#
+# Only the ~10^5-parameter controller trains; the prototype bank is frozen
+# DSP. plateau/quiet weights are the differentiable ringing gates and
+# intentionally oppose wave/stft fidelity at edges.
+
+epochs: 50
+batch_size: 16
+learning_rate: 1.0e-4
+weight_decay: 0.0
+grad_clip: 1.0
+val_fraction: 0.1
+num_workers: 4
+seed: 1234
+border_trim: 512
+checkpoint_dir: data/checkpoints/capb
+log_interval: 20
+
+loss_weights:
+  wave: 1.0
+  stft: 1.0
+  plateau: 20.0
+  quiet: 20.0
+  tv: 0.1
