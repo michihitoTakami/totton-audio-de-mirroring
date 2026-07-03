@@ -33,6 +33,7 @@ loss_weights:
   # brickwall teacher rings there, and reproducing that ringing is exactly
   # what the plateau/quiet gates forbid.
   edge_fidelity_relax: 0.9
-  # Edge-zone ripple above the gentle prototype's level (dense-edge
-  # content such as 5 kHz squares has no plateaus for the plateau loss).
-  edge_ring: 300.0
+  # Edge-zone ripple above the gentle prototype's level. Disabled for v1:
+  # with slope-spike edge detection off (see capb_dataset), the remaining
+  # edge zones are already covered by the plateau/quiet losses.
+  edge_ring: 0.0

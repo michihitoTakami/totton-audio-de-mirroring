@@ -197,7 +197,13 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         clean_chunk = clean_full[chunk_start : chunk_start + target_chunk.size]
         flat_mask = compute_flat_mask(clean_chunk)
         quiet_mask = compute_quiet_mask(clean_chunk)
-        edge_mask = compute_edge_mask(flat_mask, quiet_mask, clean_chunk)
+        # Note: slope-spike edge detection (clean_chunk argument) is
+        # currently disabled - broadband noise legitimately exceeds any
+        # slope threshold, and run8 showed it drags the whole distribution
+        # into relaxed-fidelity edge zones (always-gentle collapse).
+        # Discriminating "dense edges" from "steady noise" is the
+        # controller's job; G2 dense-square coverage is a known follow-up.
+        edge_mask = compute_edge_mask(flat_mask, quiet_mask)
 
         return {
             "source": torch.from_numpy(source_chunk.astype(np.float32)),
