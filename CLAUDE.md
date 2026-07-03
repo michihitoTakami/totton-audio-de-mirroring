@@ -10,6 +10,23 @@
 
 ---
 
+## Agent Skills
+
+スキルの実体は **`.agent/skills/<name>/SKILL.md`**（単一ソース）。
+`.claude/skills` と `.codex/skills` はそこへの symlink なので、どちらを編集しても実体は同じ。
+`.claude/rules` も同様に `.agent/rules/` への symlink。
+
+- スキル追加後は Claude Code を再起動すると認識される
+- Codex CLI へは `scripts/development/install_codex_skills.sh` で `~/.codex/skills/` に実体コピー
+- 規約（frontmatter 形式・追加手順）は `.agent/skills/README.md` を参照
+
+利用可能スキル: `worktree-pr-workflow` / `quality-gate` / `stage1-training` /
+`stage1-evaluation` / `stage1-full-workflow` / `pipeline-inference` /
+`model-export-verify` / `distillation` / `audio-visualization` /
+`regression-golden-update` / `abx-protocol` / `de-mirroring-engineering`
+
+---
+
 ## Project Context
 
 ### Overview
@@ -289,20 +306,28 @@ uv run pytest --cov=totton_audio_de_mirroring --cov-report=html
 uv run pytest tests/test_filters.py::test_bessel_filter -v
 ```
 
-### Training
+### Training & Evaluation
+
+Data generation is integrated into training via `configs/data_generation*.yaml`
+(there is no standalone `generate_data.py`). Stage 2 is DSP/C++ (no trainer).
+See the corresponding skills in `.agent/skills/` for full options.
 
 ```bash
-# Generate synthetic data
-uv run python scripts/generate_data.py --num-samples 10000
+# Train Stage 1 (NMSE) — stage1-training skill
+uv run python scripts/train_stage1.py \
+  --data-config configs/data_generation.yaml \
+  --config configs/training_stage1.yaml
 
-# Train Stage 1 (NMSE)
-uv run python scripts/train_stage1.py --config configs/nmse_base.yaml
+# Evaluate Stage 1 hard metrics — stage1-evaluation skill
+uv run python scripts/evaluate_stage1.py --input-dir <in> --output-dir <out> ...
 
-# Train Stage 2 (HIE)
-uv run python scripts/train_stage2.py --config configs/hie_base.yaml
+# End-to-end retrain → evaluate → select — stage1-full-workflow skill
+uv run python scripts/run_issue63_stage1_workflow.py \
+  --eval-input-dir <in> --imd-naive-dir <naive> ...
 
-# Evaluate model
-uv run python scripts/evaluate.py --checkpoint data/checkpoints/best.pth
+# Stage1→Stage2 inference — pipeline-inference skill
+uv run python scripts/run_stage1_stage2_pipeline.py --config configs/stage1_stage2_pipeline.yaml ...
+uv run totton-upsample input.wav -o output.wav
 ```
 
 ---

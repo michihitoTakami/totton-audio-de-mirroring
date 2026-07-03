@@ -11,14 +11,39 @@ This document provides a structured guide for AI agents (Claude Code, GitHub Cop
 ### Primary Documentation
 
 1. **[CLAUDE.md](./CLAUDE.md)** - Main development guide (READ THIS FIRST)
-2. **[.claude/rules/testing.md](./.claude/rules/testing.md)** - Testing guidelines
-3. **[.claude/rules/coding-style.md](./.claude/rules/coding-style.md)** - Code style rules
-4. **[.claude/rules/security.md](./.claude/rules/security.md)** - Security best practices
-5. **[docs/stage1_raw_teacher_policy.md](./docs/stage1_raw_teacher_policy.md)** - Stage1 teacher policy (raw88 default)
+2. **[.agent/skills/](./.agent/skills/)** - Agent skills (task-specific workflows)
+3. **[.agent/rules/testing.md](./.agent/rules/testing.md)** - Testing guidelines
+4. **[.agent/rules/coding-style.md](./.agent/rules/coding-style.md)** - Code style rules
+5. **[.agent/rules/security.md](./.agent/rules/security.md)** - Security best practices
+6. **[docs/stage1_raw_teacher_policy.md](./docs/stage1_raw_teacher_policy.md)** - Stage1 teacher policy (raw88 default)
 
 ### Communication Language
 
 **CRITICAL**: Think in English, respond in Japanese (日本語で回答)
+
+---
+
+## Agent Skills
+
+Task-specific skills live in **`.agent/skills/<name>/SKILL.md`** — the single
+source of truth for all AI agents.
+
+- **Claude Code** reads them via the `.claude/skills -> ../.agent/skills` symlink
+  (restart Claude Code after adding a skill)
+- **Codex CLI** reads them via the `.codex/skills -> ../.agent/skills` symlink;
+  run `scripts/development/install_codex_skills.sh` to copy them into `~/.codex/skills/`
+- **Other tools** should reference `.agent/skills/` directly or add a similar symlink
+
+Rules are organized the same way: `.agent/rules/` is the real directory and
+`.claude/rules` is a symlink to it.
+
+Available skills: `worktree-pr-workflow`, `quality-gate`, `stage1-training`,
+`stage1-evaluation`, `stage1-full-workflow`, `pipeline-inference`,
+`model-export-verify`, `distillation`, `audio-visualization`,
+`regression-golden-update`, `abx-protocol`, `de-mirroring-engineering`.
+
+See [.agent/skills/README.md](./.agent/skills/README.md) for conventions
+(frontmatter format, how to add/change skills).
 
 ---
 
@@ -310,20 +335,27 @@ uv run pytest -m "not slow and not gpu" -v
 uv run pytest --cov=totton_audio_de_mirroring --cov-report=html
 ```
 
-### Training
+### Training & Evaluation
+
+Data generation is integrated into training via `configs/data_generation*.yaml`
+(there is no standalone `generate_data.py`). Stage 2 is DSP/C++ (no trainer).
 
 ```bash
-# Generate synthetic data
-uv run python scripts/generate_data.py --num-samples 10000
+# Train Stage 1 (NMSE) — see stage1-training skill
+uv run python scripts/train_stage1.py \
+  --data-config configs/data_generation.yaml \
+  --config configs/training_stage1.yaml
 
-# Train Stage 1 (NMSE)
-uv run python scripts/train_stage1.py --config configs/nmse_base.yaml
+# Evaluate Stage 1 — see stage1-evaluation skill
+uv run python scripts/evaluate_stage1.py --input-dir <in> --output-dir <out> ...
 
-# Train Stage 2 (HIE)
-uv run python scripts/train_stage2.py --config configs/hie_base.yaml
+# End-to-end retrain → evaluate → select — see stage1-full-workflow skill
+uv run python scripts/run_issue63_stage1_workflow.py \
+  --eval-input-dir <in> --imd-naive-dir <naive> ...
 
-# Evaluate model
-uv run python scripts/evaluate.py --checkpoint data/checkpoints/best.pth
+# Stage1→Stage2 inference — see pipeline-inference skill
+uv run python scripts/run_stage1_stage2_pipeline.py --config configs/stage1_stage2_pipeline.yaml ...
+uv run totton-upsample input.wav -o output.wav
 ```
 
 ---
@@ -467,7 +499,7 @@ Consider asking the user when:
 ## Quick Start for New AI Agents
 
 1. **Read [CLAUDE.md](./CLAUDE.md)** - Full development guide
-2. **Check [.claude/rules/](./.claude/rules/)** - Specific guidelines
+2. **Check [.agent/skills/](./.agent/skills/) and [.agent/rules/](./.agent/rules/)** - Skills and guidelines
 3. **Read [docs/stage1_raw_teacher_policy.md](./docs/stage1_raw_teacher_policy.md)** - Stage1 teacher policy
 4. **Review recent commits** - `git log --oneline -10`
 5. **Check open issues** - `gh issue list`
