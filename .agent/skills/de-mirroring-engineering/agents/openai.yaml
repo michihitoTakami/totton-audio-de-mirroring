@@ -1,0 +1,4 @@
+interface:
+  display_name: "De-Mirroring Engineering"
+  short_description: "Repo-specific HNSR architecture and safety-constraint guidance"
+  default_prompt: "Use $de-mirroring-engineering to plan and review a repository-grounded change to the mirror-suppression pipeline for this codebase."

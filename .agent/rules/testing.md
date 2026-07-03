@@ -8,7 +8,7 @@
 
 ```bash
 # Check coverage
-uv run pytest --cov=neural_deringer --cov-report=term --cov-report=html
+uv run pytest --cov=totton_audio_de_mirroring --cov-report=term --cov-report=html
 
 # View HTML report
 open htmlcov/index.html
@@ -26,7 +26,7 @@ Test individual functions in isolation:
 # tests/test_filters.py
 import numpy as np
 import pytest
-from neural_deringer.data.filters import bessel_filter
+from totton_audio_de_mirroring.data.filters import bessel_filter
 
 
 def test_bessel_filter_shape():
@@ -64,8 +64,8 @@ Test multiple components working together:
 # tests/integration/test_data_pipeline.py
 import pytest
 from pathlib import Path
-from neural_deringer.data.generator import SyntheticDataGenerator
-from neural_deringer.data.filters import bessel_filter, sinc_downsample
+from totton_audio_de_mirroring.data.generator import SyntheticDataGenerator
+from totton_audio_de_mirroring.data.filters import bessel_filter, sinc_downsample
 
 
 def test_synthetic_data_generation(tmp_path: Path):
@@ -96,8 +96,8 @@ Test complete workflows:
 import pytest
 import torch
 from pathlib import Path
-from neural_deringer.models.unet import UNet
-from neural_deringer.training.trainer import Trainer
+from totton_audio_de_mirroring.models.unet import UNet
+from totton_audio_de_mirroring.training.trainer import Trainer
 
 
 @pytest.mark.slow
@@ -164,7 +164,7 @@ def test_sinc_interpolate():
 #### Step 2: Implement (GREEN)
 
 ```python
-# src/neural_deringer/data/filters.py
+# src/totton_audio_de_mirroring/data/filters.py
 def sinc_interpolate(
     signal: np.ndarray,
     source_sr: int,
@@ -229,7 +229,7 @@ def sinc_interpolate(
 #### Step 4: Verify Coverage
 
 ```bash
-uv run pytest tests/test_filters.py::test_sinc_interpolate --cov=neural_deringer.data.filters --cov-report=term
+uv run pytest tests/test_filters.py::test_sinc_interpolate --cov=totton_audio_de_mirroring.data.filters --cov-report=term
 ```
 
 ---
@@ -462,7 +462,7 @@ Comprehensive tests run on push:
       stages: [pre-push]
       entry: uv run pytest
       language: system
-      args: [--cov=neural_deringer, --cov-fail-under=80]
+      args: [--cov=totton_audio_de_mirroring, --cov-fail-under=80]
       pass_filenames: false
       always_run: true
 ```
@@ -491,7 +491,7 @@ from unittest.mock import patch, MagicMock
 def test_training_saves_checkpoint(tmp_path: Path):
     """Test that training saves checkpoints."""
     # Mock expensive model training
-    with patch('neural_deringer.training.trainer.train_epoch') as mock_train:
+    with patch('totton_audio_de_mirroring.training.trainer.train_epoch') as mock_train:
         mock_train.return_value = 0.5  # Mock loss
 
         trainer = Trainer(model, tmp_path)
@@ -530,7 +530,7 @@ def test_filter_performance():
 Before merging code, verify:
 
 - [ ] All tests pass: `uv run pytest -v`
-- [ ] Coverage ≥ 80%: `uv run pytest --cov=neural_deringer --cov-report=term`
+- [ ] Coverage ≥ 80%: `uv run pytest --cov=totton_audio_de_mirroring --cov-report=term`
 - [ ] No skipped tests without reason
 - [ ] Tests are deterministic (no random failures)
 - [ ] Edge cases tested (empty input, boundary conditions)
@@ -558,7 +558,7 @@ uv run pytest tests/test_filters.py -v
 uv run pytest tests/test_filters.py::test_bessel_filter -v
 
 # With coverage
-uv run pytest --cov=neural_deringer --cov-report=html
+uv run pytest --cov=totton_audio_de_mirroring --cov-report=html
 
 # Parallel execution (faster)
 uv run pytest -n auto
