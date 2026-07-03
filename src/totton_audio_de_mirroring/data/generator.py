@@ -8,6 +8,10 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import signal as sp_signal
 
+from totton_audio_de_mirroring.data.probe_generators import (
+    PROBE_FAMILY_GENERATORS,
+)
+
 DEFAULT_SAMPLE_RATE = 44_100
 DEFAULT_DURATION_SEC = 1.0
 DEFAULT_AMPLITUDE = 0.9
@@ -706,6 +710,7 @@ _SIGNAL_GENERATORS: dict[str, Callable[..., np.ndarray]] = {
     "pink_noise": generate_pink_noise,
     "band_limited_noise": generate_band_limited_noise,
     "soft_clipped_tone": generate_soft_clipped_tone,
+    **PROBE_FAMILY_GENERATORS,
 }
 
 
