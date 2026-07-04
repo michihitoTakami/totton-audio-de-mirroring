@@ -10,6 +10,8 @@ point on the sharp-vs-gentle trade-off curve over time.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -19,7 +21,10 @@ from totton_audio_de_mirroring.models.proto_bank import (
     DEFAULT_PROTOTYPE_SPECS,
     PrototypeBank,
     build_prototype_bank,
+    prototype_specs_for_target_rate,
 )
+
+DEFAULT_TARGET_SAMPLE_RATE = 88_200
 
 DEFAULT_CONTROL_STRIDE = 64
 DEFAULT_INIT_WEIGHTS = (0.85, 0.10, 0.05)
@@ -227,3 +232,45 @@ class CAPB(nn.Module):
         with torch.no_grad():
             weights = torch.softmax(self.controller(source), dim=1)
         return weights.mean(dim=(0, 2))
+
+
+def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
+    """Build a CAPB with the rate-correct bank and load its weights.
+
+    Args:
+        checkpoint: Loaded checkpoint dictionary (torch.load result).
+
+    Returns:
+        CAPB model in eval mode with the checkpoint weights applied.
+
+    Raises:
+        ValueError: If the checkpoint rate metadata is inconsistent.
+        RuntimeError: If the checkpoint is missing model_state.
+
+    Physical Basis:
+        The prototype bank is deterministic DSP rebuilt from its rate
+        family's design specs; only the controller weights come from the
+        checkpoint. Loading a 48k checkpoint into the default 44.1k bank
+        would silently pair the controller with wrong kernels, so the bank
+        must follow the checkpoint's target_sample_rate.
+    """
+    target_rate = int(checkpoint.get("target_sample_rate", DEFAULT_TARGET_SAMPLE_RATE))
+    expected_input_rate = checkpoint.get("expected_input_rate")
+    bank = build_prototype_bank(
+        prototype_specs_for_target_rate(target_rate), sample_rate=target_rate
+    )
+    if (
+        expected_input_rate is not None
+        and int(expected_input_rate) * bank.upsample_ratio != target_rate
+    ):
+        raise ValueError(
+            f"Checkpoint expected_input_rate {expected_input_rate} Hz is "
+            f"inconsistent with target_sample_rate {target_rate} Hz."
+        )
+    model = CAPB(bank=bank)
+    model_state = checkpoint.get("model_state")
+    if not isinstance(model_state, dict):
+        raise RuntimeError("Invalid checkpoint: model_state is missing.")
+    model.load_state_dict(model_state)
+    model.eval()
+    return model

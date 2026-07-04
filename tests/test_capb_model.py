@@ -151,3 +151,56 @@ def test_losses_shape_validation() -> None:
             loss_weights=CAPBLossWeights(),
             trim=0,
         )
+
+
+def _make_checkpoint(target_rate: int | None, input_rate: int | None) -> dict:
+    from totton_audio_de_mirroring.models.proto_bank import (
+        prototype_specs_for_target_rate,
+    )
+
+    rate = target_rate if target_rate is not None else 88_200
+    bank = build_prototype_bank(prototype_specs_for_target_rate(rate), sample_rate=rate)
+    model = CAPB(bank=bank)
+    checkpoint: dict = {"model_state": model.state_dict()}
+    if target_rate is not None:
+        checkpoint["target_sample_rate"] = target_rate
+    if input_rate is not None:
+        checkpoint["expected_input_rate"] = input_rate
+    return checkpoint
+
+
+def test_capb_from_checkpoint_selects_48k_bank() -> None:
+    """A 48k checkpoint must be paired with the 48k prototype kernels."""
+    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
+
+    checkpoint = _make_checkpoint(target_rate=96_000, input_rate=48_000)
+    model = capb_from_checkpoint(checkpoint)
+    from totton_audio_de_mirroring.models.proto_bank import PROTOTYPE_SPECS_48K
+
+    reference = build_prototype_bank(PROTOTYPE_SPECS_48K, sample_rate=96_000)
+    assert model.kernel_size == reference.kernels.shape[1]
+
+
+def test_capb_from_checkpoint_legacy_defaults_to_44k1() -> None:
+    """run9-era checkpoints without rate keys load with the 44.1k bank."""
+    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
+
+    checkpoint = _make_checkpoint(target_rate=None, input_rate=None)
+    model = capb_from_checkpoint(checkpoint)
+    reference = build_prototype_bank()
+    assert model.kernel_size == reference.kernels.shape[1]
+
+
+def test_capb_from_checkpoint_rejects_inconsistent_rates() -> None:
+    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
+
+    checkpoint = _make_checkpoint(target_rate=96_000, input_rate=44_100)
+    with pytest.raises(ValueError, match="inconsistent"):
+        capb_from_checkpoint(checkpoint)
+
+
+def test_capb_from_checkpoint_requires_model_state() -> None:
+    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
+
+    with pytest.raises(RuntimeError, match="model_state"):
+        capb_from_checkpoint({"target_sample_rate": 96_000})

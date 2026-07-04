@@ -357,10 +357,11 @@ def load_capb_stage1_processor(
         RuntimeError: If checkpoint loading fails.
 
     Physical Basis:
-        The prototype bank is rebuilt deterministically from its design
-        specs; only the controller weights come from the checkpoint.
+        The prototype bank is rebuilt deterministically from the design
+        specs of the checkpoint's rate family (44.1k or 48k); only the
+        controller weights come from the checkpoint.
     """
-    from totton_audio_de_mirroring.models.capb import CAPB
+    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
 
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
@@ -369,12 +370,7 @@ def load_capb_stage1_processor(
     except Exception as exc:
         raise RuntimeError(f"Failed to load checkpoint: {exc}") from exc
 
-    model = CAPB()
-    model_state = checkpoint.get("model_state")
-    if not isinstance(model_state, dict):
-        raise RuntimeError("Invalid checkpoint: model_state is missing.")
-    model.load_state_dict(model_state)
-    model.eval()
+    model = capb_from_checkpoint(checkpoint)
     torch_device = torch.device(device)
     return CAPBStage1Processor(model=model.to(torch_device), device=torch_device)
 
