@@ -22,6 +22,10 @@ from totton_audio_de_mirroring.data.capb_dataset import (
     CAPBUpsampleDataset,
 )
 from totton_audio_de_mirroring.models.capb import CAPB
+from totton_audio_de_mirroring.models.proto_bank import (
+    build_prototype_bank,
+    prototype_specs_for_target_rate,
+)
 from totton_audio_de_mirroring.training.capb_losses import (
     CAPBLossWeights,
     compute_capb_losses,
@@ -168,7 +172,11 @@ def train_capb(
     )
 
     if model is None:
-        model = CAPB()
+        bank = build_prototype_bank(
+            prototype_specs_for_target_rate(data_config.target_sample_rate),
+            sample_rate=data_config.target_sample_rate,
+        )
+        model = CAPB(bank=bank)
     model = model.to(device)
     optimizer = torch.optim.AdamW(
         model.controller.parameters(),
@@ -220,10 +228,10 @@ def train_capb(
             time.monotonic() - start,
         )
 
-        _save_checkpoint(model, training_config, record, last_path)
+        _save_checkpoint(model, training_config, data_config, record, last_path)
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
-            _save_checkpoint(model, training_config, record, best_path)
+            _save_checkpoint(model, training_config, data_config, record, best_path)
 
     return {
         "best_checkpoint": best_path,
@@ -300,6 +308,7 @@ def _run_epoch(
 def _save_checkpoint(
     model: CAPB,
     config: CAPBTrainingConfig,
+    data_config: CAPBDataConfig,
     record: dict[str, float],
     path: Path,
 ) -> None:
@@ -307,6 +316,8 @@ def _save_checkpoint(
         {
             "model_state": model.state_dict(),
             "prototype_names": list(model.prototype_names),
+            "expected_input_rate": data_config.source_sample_rate,
+            "target_sample_rate": data_config.target_sample_rate,
             "training_config": {
                 "learning_rate": config.learning_rate,
                 "epochs": config.epochs,

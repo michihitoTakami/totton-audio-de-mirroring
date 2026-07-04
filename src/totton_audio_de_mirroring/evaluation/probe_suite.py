@@ -327,11 +327,19 @@ def generate_probe(
     raise ValueError(f"Unhandled probe kind: {spec.kind}")
 
 
-def suite_manifest(suite: tuple[ProbeSpec, ...]) -> dict[str, object]:
-    """Serialize a probe suite into a versioned manifest dictionary."""
+def suite_manifest(
+    suite: tuple[ProbeSpec, ...],
+    source_sample_rate: int = DEFAULT_SOURCE_SAMPLE_RATE,
+) -> dict[str, object]:
+    """Serialize a probe suite into a versioned manifest dictionary.
+
+    The probe frequency list is rate-family independent (frequencies are
+    absolute), so a 48 kHz manifest reuses the same specs and differs only
+    in source_sample_rate (and therefore in manifest hash).
+    """
     return {
         "version": MANIFEST_VERSION,
-        "source_sample_rate": DEFAULT_SOURCE_SAMPLE_RATE,
+        "source_sample_rate": source_sample_rate,
         "probes": [asdict(spec) for spec in suite],
     }
 
@@ -356,10 +364,16 @@ def manifest_hash(manifest: dict[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def save_manifest(suite: tuple[ProbeSpec, ...], path: Path) -> None:
+def save_manifest(
+    suite: tuple[ProbeSpec, ...],
+    path: Path,
+    source_sample_rate: int = DEFAULT_SOURCE_SAMPLE_RATE,
+) -> None:
     """Write the suite manifest as pretty JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(suite_manifest(suite), indent=2) + "\n")
+    path.write_text(
+        json.dumps(suite_manifest(suite, source_sample_rate), indent=2) + "\n"
+    )
 
 
 def load_manifest(path: Path) -> tuple[ProbeSpec, ...]:

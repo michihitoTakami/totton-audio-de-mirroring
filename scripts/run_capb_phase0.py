@@ -17,25 +17,27 @@ import numpy as np
 from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
+from totton_audio_de_mirroring.evaluation.gates import image_band_low_hz
 from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
 from totton_audio_de_mirroring.models.proto_bank import (
-    DEFAULT_PROTOTYPE_SPECS,
     PrototypeBank,
     blend_modulation_bounds,
     build_prototype_bank,
+    prototype_specs_for_target_rate,
     summarize_bank,
     upsample_with_kernel,
     validate_bank,
 )
 
-SOURCE_SR = 44_100
-TARGET_SR = 88_200
+RATE_FAMILIES: dict[str, tuple[int, int]] = {
+    "44k1": (44_100, 88_200),
+    "48k": (48_000, 96_000),
+}
 SQUARE_FREQUENCIES_HZ = (50.0, 100.0, 500.0, 1_000.0, 2_000.0, 5_000.0)
 SQUARE_AMPLITUDE = 0.5
 PROBE_DURATION_SEC = 1.0
-IMAGE_BAND_LOW_HZ = 22_550.0
 LB_BAND_HIGH_HZ = 19_000.0
 MAX_PLATEAU_RIPPLE_RATIO = 1.10
 MAX_OVERSHOOT_INCREASE = 5.0e-3
@@ -50,21 +52,27 @@ def main() -> None:
         type=Path,
         default=Path("reports/capb_phase0"),
     )
+    parser.add_argument("--rate-family", choices=sorted(RATE_FAMILIES), default="44k1")
     args = parser.parse_args()
     args.report_dir.mkdir(parents=True, exist_ok=True)
 
-    bank = build_prototype_bank()
+    source_sr, target_sr = RATE_FAMILIES[args.rate_family]
+    specs = prototype_specs_for_target_rate(target_sr)
+    bank = build_prototype_bank(specs, sample_rate=target_sr)
     validation = validate_bank(bank)
     modulation_bounds = blend_modulation_bounds(bank)
     bank_summary = summarize_bank(bank)
 
-    probes = _build_probes()
-    results = _evaluate_bank(bank, probes)
+    probes = _build_probes(source_sr)
+    results = _evaluate_bank(bank, probes, source_sr, target_sr)
 
     payload: dict[str, Any] = {
+        "rate_family": args.rate_family,
+        "source_sample_rate": source_sr,
+        "target_sample_rate": target_sr,
         "validation": validation,
         "blend_modulation_bounds_db": modulation_bounds,
-        "prototype_specs": [asdict(spec) for spec in DEFAULT_PROTOTYPE_SPECS],
+        "prototype_specs": [asdict(spec) for spec in specs],
         "bank_summary": bank_summary,
         "results": results,
     }
@@ -78,8 +86,11 @@ def main() -> None:
     print(f"Wrote {json_path} and {md_path}")
 
 
-def _build_probes() -> dict[str, np.ndarray]:
-    """Build deterministic 44.1 kHz probe signals.
+def _build_probes(source_sr: int) -> dict[str, np.ndarray]:
+    """Build deterministic source-rate probe signals.
+
+    Args:
+        source_sr: Source sample rate in Hz.
 
     Returns:
         Mapping of probe id to source-rate waveform.
@@ -87,10 +98,11 @@ def _build_probes() -> dict[str, np.ndarray]:
     Physical Basis:
         Square waves expose plateau ripple/overshoot; a log sweep and a dense
         multitone exercise the full band so image leakage above the input
-        Nyquist is measurable.
+        Nyquist is measurable. Probe frequencies are absolute (audible-band
+        anchored), so they are shared across rate families.
     """
-    num_samples = int(SOURCE_SR * PROBE_DURATION_SEC)
-    time_axis = np.arange(num_samples, dtype=np.float64) / SOURCE_SR
+    num_samples = int(source_sr * PROBE_DURATION_SEC)
+    time_axis = np.arange(num_samples, dtype=np.float64) / source_sr
 
     probes: dict[str, np.ndarray] = {}
     for freq in SQUARE_FREQUENCIES_HZ:
@@ -116,7 +128,10 @@ def _build_probes() -> dict[str, np.ndarray]:
 
 
 def _evaluate_bank(
-    bank: PrototypeBank, probes: dict[str, np.ndarray]
+    bank: PrototypeBank,
+    probes: dict[str, np.ndarray],
+    source_sr: int,
+    target_sr: int,
 ) -> dict[str, Any]:
     """Evaluate each fixed prototype against the Bessel reference SRC."""
     results: dict[str, Any] = {}
@@ -126,27 +141,30 @@ def _evaluate_bank(
         for probe_id, source in probes.items():
             before = upsample_bessel_reference(
                 signal=source,
-                source_sr=SOURCE_SR,
-                target_sr=TARGET_SR,
+                source_sr=source_sr,
+                target_sr=target_sr,
                 cutoff_hz=20_000.0,
                 order=6,
             )
             after = upsample_with_kernel(source, kernel, bank.upsample_ratio)
-            per_probe[probe_id] = _probe_metrics(probe_id, before, after)
+            per_probe[probe_id] = _probe_metrics(probe_id, before, after, target_sr)
         results[name] = per_probe
     return results
 
 
 def _probe_metrics(
-    probe_id: str, before: np.ndarray, after: np.ndarray
+    probe_id: str, before: np.ndarray, after: np.ndarray, target_sr: int
 ) -> dict[str, Any]:
     """Compute gate-relevant metrics for one probe pair."""
+    image_low_hz = image_band_low_hz(target_sr)
     metrics: dict[str, Any] = {
         "image_band_before_db": _band_level_db(
-            before, IMAGE_BAND_LOW_HZ, TARGET_SR / 2
+            before, image_low_hz, target_sr / 2, target_sr
         ),
-        "image_band_after_db": _band_level_db(after, IMAGE_BAND_LOW_HZ, TARGET_SR / 2),
-        "lb_gain_error_db": _lb_gain_error_db(before, after),
+        "image_band_after_db": _band_level_db(
+            after, image_low_hz, target_sr / 2, target_sr
+        ),
+        "lb_gain_error_db": _lb_gain_error_db(before, after, target_sr),
     }
     metrics["image_band_reduction_db"] = (
         metrics["image_band_before_db"] - metrics["image_band_after_db"]
@@ -156,7 +174,7 @@ def _probe_metrics(
         comparison = compare_edge_aligned_ringing(
             before_signal=before,
             after_signal=after,
-            sample_rate=TARGET_SR,
+            sample_rate=target_sr,
         )
         metrics.update(
             {
@@ -177,18 +195,20 @@ def _probe_metrics(
     return metrics
 
 
-def _band_level_db(signal: np.ndarray, low_hz: float, high_hz: float) -> float:
+def _band_level_db(
+    signal: np.ndarray, low_hz: float, high_hz: float, target_sr: int
+) -> float:
     """Return mean spectral level of a band in dB relative to full scale."""
     spectrum = np.abs(np.fft.rfft(signal * np.hanning(signal.size)))
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / TARGET_SR)
+    freqs = np.fft.rfftfreq(signal.size, d=1.0 / target_sr)
     band = (freqs >= low_hz) & (freqs <= high_hz)
     level = np.sqrt(np.mean(spectrum[band] ** 2)) / signal.size
     return float(20.0 * np.log10(max(level, 1e-300)))
 
 
-def _lb_gain_error_db(before: np.ndarray, after: np.ndarray) -> float:
+def _lb_gain_error_db(before: np.ndarray, after: np.ndarray, target_sr: int) -> float:
     """Return low-band RMS gain error of `after` relative to `before`."""
-    taps = sp_signal.firwin(1025, LB_BAND_HIGH_HZ, fs=TARGET_SR)
+    taps = sp_signal.firwin(1025, LB_BAND_HIGH_HZ, fs=target_sr)
     lb_before = sp_signal.fftconvolve(before, taps, mode="same")
     lb_after = sp_signal.fftconvolve(after, taps, mode="same")
     rms_before = float(np.sqrt(np.mean(lb_before**2)))
@@ -223,7 +243,7 @@ def _render_markdown(
         "## Prototype frequency responses",
         "",
         "| prototype | passband dev (dB) | image band max (dB) |"
-        " >=24k max (dB) | response @20k (dB) |",
+        " deep image max (dB) | response @20k (dB) |",
         "|---|---|---|---|---|",
     ]
     for name, stats in bank_summary.items():

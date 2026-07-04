@@ -102,3 +102,33 @@ def test_spec_validation() -> None:
         ProbeSpec(probe_id="x", kind="square", tier="nope")
     with pytest.raises(ValueError, match="requires frequency_hz"):
         generate_probe(ProbeSpec(probe_id="x", kind="square", tier=TIER_CANONICAL))
+
+
+FIXTURE_PATH_48K = Path("tests/fixtures/probes/probe_manifest_48k.json")
+
+
+def test_48k_manifest_shares_probe_specs(suite) -> None:
+    """Probe frequencies are absolute, so the 48k suite is the same list."""
+    frozen_48k = load_manifest(FIXTURE_PATH_48K)
+    assert frozen_48k == suite
+
+
+def test_48k_manifest_hash_differs_from_44k1(suite) -> None:
+    """source_sample_rate is part of the manifest identity."""
+    hash_44k1 = manifest_hash(suite_manifest(suite))
+    hash_48k = manifest_hash(suite_manifest(suite, 48_000))
+    assert hash_44k1 != hash_48k
+
+
+def test_48k_fixture_records_48k_source_rate() -> None:
+    import json
+
+    manifest = json.loads(FIXTURE_PATH_48K.read_text())
+    assert manifest["source_sample_rate"] == 48_000
+
+
+def test_probes_generate_at_48k(suite) -> None:
+    for spec in suite:
+        wave = generate_probe(spec, sample_rate=48_000)
+        expected = int(round(spec.duration_sec * 48_000))
+        assert wave.shape == (expected,), spec.probe_id

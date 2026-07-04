@@ -45,7 +45,10 @@ GATE_SPEC_VERSION = 1
 _EPSILON = 1e-300
 
 LF_RINGING_MAX_FREQ_HZ = 2_000.0
-IMAGE_BAND_LOW_HZ = 22_550.0
+# Image-band guard offset above the input Nyquist; the actual band edge is
+# rate-dependent (22.55 kHz at 88.2k target, 24.5 kHz at 96k target).
+IMAGE_BAND_NYQUIST_OFFSET_HZ = 500.0
+IMAGE_BAND_LOW_HZ = 22_550.0  # 44.1k-family value, kept for reference.
 MAIN_BAND_HIGH_HZ = 20_000.0
 GAIN_BAND_HIGH_HZ = 10_000.0
 GAIN_APPLICABILITY_HIGH_HZ = 8_000.0
@@ -201,13 +204,14 @@ def evaluate_probe(
             f"{output.shape} vs {bessel_reference.shape}."
         )
 
+    image_low_hz = image_band_low_hz(target_sample_rate)
     metrics: dict[str, float] = {}
     metrics["image_rel_db"] = _image_minus_main_db(output, target_sample_rate)
     metrics["image_abs_db"] = _band_level_db(
-        output, target_sample_rate, IMAGE_BAND_LOW_HZ, target_sample_rate / 2
+        output, target_sample_rate, image_low_hz, target_sample_rate / 2
     )
     metrics["image_before_abs_db"] = _band_level_db(
-        bessel_reference, target_sample_rate, IMAGE_BAND_LOW_HZ, target_sample_rate / 2
+        bessel_reference, target_sample_rate, image_low_hz, target_sample_rate / 2
     )
     metrics["gain_error_db"] = compute_lowband_gain_error_db(
         source,
@@ -682,7 +686,25 @@ def _band_energy_fraction(
     return float(np.sum(spectrum[freqs <= cutoff_hz]) / total)
 
 
+def image_band_low_hz(target_sample_rate: int) -> float:
+    """Return the image-band lower edge for a 2x-upsampled target rate.
+
+    Physical Basis:
+        Mirror images of a 2x upsampler start at the input Nyquist
+        (target_rate / 4); the fixed offset keeps the measurement clear of
+        brickwall transition skirts. Evaluates to 22 550 Hz at 88.2 kHz and
+        24 500 Hz at 96 kHz.
+    """
+    if target_sample_rate <= 0:
+        raise ValueError(
+            f"target_sample_rate must be positive, got {target_sample_rate}."
+        )
+    return target_sample_rate / 4.0 + IMAGE_BAND_NYQUIST_OFFSET_HZ
+
+
 def _image_minus_main_db(signal: np.ndarray, sample_rate: int) -> float:
-    image = _band_level_db(signal, sample_rate, IMAGE_BAND_LOW_HZ, sample_rate / 2)
+    image = _band_level_db(
+        signal, sample_rate, image_band_low_hz(sample_rate), sample_rate / 2
+    )
     main = _band_level_db(signal, sample_rate, 20.0, MAIN_BAND_HIGH_HZ)
     return image - main

@@ -142,3 +142,13 @@ def test_gentle_prototype_passes_lf_ringing_end_to_end() -> None:
     report = evaluate_gates([evaluation])
     gate = next(g for g in report.gates if g.gate_id == "G1_lf_ringing")
     assert gate.passed
+
+
+def test_image_band_low_hz_by_rate_family() -> None:
+    """Image band starts 500 Hz above the input Nyquist (target rate / 4)."""
+    from totton_audio_de_mirroring.evaluation.gates import image_band_low_hz
+
+    assert image_band_low_hz(88_200) == 22_550.0
+    assert image_band_low_hz(96_000) == 24_500.0
+    with pytest.raises(ValueError, match="positive"):
+        image_band_low_hz(0)
