@@ -1,0 +1,120 @@
+"""Tests for the CAPB alias-free dataset."""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
+
+from totton_audio_de_mirroring.data.capb_dataset import (
+    TARGET_SAMPLE_RATE,
+    UPSAMPLE_RATIO,
+    BrickwallConfig,
+    CAPBDataConfig,
+    CAPBUpsampleDataset,
+    load_capb_data_config,
+)
+
+
+@pytest.fixture(scope="module")
+def dataset() -> CAPBUpsampleDataset:
+    config = CAPBDataConfig(num_samples=8, seed=42)
+    return CAPBUpsampleDataset(config)
+
+
+def test_input_is_exact_decimation_of_target(dataset) -> None:
+    """Core consistency: x == target[::2] exactly (alias-free by design)."""
+    for index in range(4):
+        sample = dataset[index]
+        source = sample["source"].numpy()
+        target = sample["target"].numpy()
+        np.testing.assert_array_equal(source, target[::UPSAMPLE_RATIO])
+
+
+def test_sample_shapes(dataset) -> None:
+    sample = dataset[0]
+    chunk_len = int(0.25 * TARGET_SAMPLE_RATE)
+    assert sample["target"].shape == (chunk_len,)
+    assert sample["source"].shape == (chunk_len // UPSAMPLE_RATIO,)
+    assert sample["flat_mask"].shape == (chunk_len,)
+    assert sample["quiet_mask"].shape == (chunk_len,)
+
+
+def test_target_is_band_limited(dataset) -> None:
+    """Target must have no content above the input Nyquist."""
+    for index in range(4):
+        target = dataset[index]["target"].numpy().astype(np.float64)
+        spectrum = np.abs(np.fft.rfft(target * np.hanning(target.size)))
+        freqs = np.fft.rfftfreq(target.size, d=1.0 / TARGET_SAMPLE_RATE)
+        image = spectrum[freqs >= 22_500.0]
+        main = spectrum[freqs <= 20_000.0]
+        ratio_db = 20.0 * np.log10((np.max(image) + 1e-300) / (np.max(main) + 1e-300))
+        assert ratio_db <= -80.0, dataset[index]["signal_type"]
+
+
+def test_deterministic_by_index(dataset) -> None:
+    first = dataset[3]
+    second = dataset[3]
+    torch.testing.assert_close(first["target"], second["target"])
+    assert first["signal_type"] == second["signal_type"]
+
+
+def test_flat_mask_marks_square_plateaus() -> None:
+    """Plateaus of a clean 100 Hz square are flat except near edges."""
+    from scipy import signal as sp_signal
+
+    from totton_audio_de_mirroring.data.capb_dataset import compute_flat_mask
+
+    time_axis = np.arange(TARGET_SAMPLE_RATE // 4) / TARGET_SAMPLE_RATE
+    square = 0.5 * sp_signal.square(2.0 * np.pi * 100.0 * time_axis)
+    mask = compute_flat_mask(square)
+    assert float(np.mean(mask)) > 0.7
+
+
+def test_flat_mask_ignores_tones() -> None:
+    from totton_audio_de_mirroring.data.capb_dataset import compute_flat_mask
+
+    time_axis = np.arange(TARGET_SAMPLE_RATE // 4) / TARGET_SAMPLE_RATE
+    tone = 0.5 * np.sin(2.0 * np.pi * 1_000.0 * time_axis)
+    assert float(np.mean(compute_flat_mask(tone))) < 0.01
+
+
+def test_quiet_mask_marks_click_silence() -> None:
+    from totton_audio_de_mirroring.data.capb_dataset import compute_quiet_mask
+
+    signal = np.zeros(TARGET_SAMPLE_RATE // 4)
+    signal[signal.size // 2] = 0.9
+    mask = compute_quiet_mask(signal)
+    assert float(np.mean(mask)) > 0.95
+    assert mask[signal.size // 2] == 0.0
+
+
+def test_dataset_masks_present_for_edge_family() -> None:
+    config = CAPBDataConfig(num_samples=2, seed=7, signal_mix={"isolated_click": 1.0})
+    dataset = CAPBUpsampleDataset(config)
+    sample = dataset[0]
+    assert float(sample["quiet_mask"].mean()) > 0.5
+
+
+def test_out_of_range_index_raises(dataset) -> None:
+    with pytest.raises(IndexError):
+        dataset[len(dataset)]
+
+
+def test_brickwall_config_validation() -> None:
+    with pytest.raises(ValueError, match="stopband_edge_hz"):
+        BrickwallConfig(passband_edge_hz=22_000.0, stopband_edge_hz=23_000.0)
+
+
+def test_config_validation() -> None:
+    with pytest.raises(ValueError, match="signal_mix"):
+        CAPBDataConfig(signal_mix={})
+    with pytest.raises(ValueError, match="chunk_duration_sec"):
+        CAPBDataConfig(chunk_duration_sec=2.0, source_duration_sec=1.0)
+
+
+def test_load_yaml_config() -> None:
+    config = load_capb_data_config(Path("configs/data_generation_capb.yaml"))
+    assert config.num_samples == 10_000
+    assert config.brickwall.stopband_edge_hz == 22_050.0
+    assert abs(sum(config.signal_mix.values()) - 1.0) < 1e-6

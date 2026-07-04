@@ -301,6 +301,84 @@ class NMSEStage1Processor:
         return np.asarray(output.squeeze(0).detach().cpu().numpy(), dtype=np.float64)
 
 
+@dataclass(frozen=True)
+class CAPBStage1Processor:
+    """Stage 1 processor backed by a CAPB Torch module.
+
+    Args:
+        model: CAPB model instance in eval mode.
+        device: Torch device to run inference on.
+
+    Physical Basis:
+        CAPB consumes the 44.1 kHz waveform directly (no Bessel SRC in the
+        main path) and outputs a convex blend of fixed linear-phase
+        interpolators, so gain, group delay, and low-band content are
+        preserved by construction.
+    """
+
+    model: nn.Module
+    device: torch.device
+
+    def process(
+        self,
+        signal: np.ndarray,
+        source_sample_rate: int,
+        target_sample_rate: int,
+    ) -> np.ndarray:
+        _validate_input_signal(signal)
+        if target_sample_rate != source_sample_rate * 2:
+            raise ValueError("CAPBStage1Processor requires exact 2x upsampling ratio.")
+        tensor = (
+            torch.from_numpy(np.asarray(signal, dtype=np.float32))
+            .unsqueeze(0)
+            .to(self.device)
+        )
+        with torch.no_grad():
+            output = self.model(tensor)
+        return np.asarray(output.squeeze(0).detach().cpu().numpy(), dtype=np.float64)
+
+
+def load_capb_stage1_processor(
+    *,
+    checkpoint_path: Path,
+    device: str = "cpu",
+) -> CAPBStage1Processor:
+    """Build a CAPB Stage 1 processor from a checkpoint.
+
+    Args:
+        checkpoint_path: Path to a CAPB checkpoint (capb_best.pt).
+        device: Torch device string.
+
+    Returns:
+        Initialized CAPBStage1Processor.
+
+    Raises:
+        FileNotFoundError: If the checkpoint is missing.
+        RuntimeError: If checkpoint loading fails.
+
+    Physical Basis:
+        The prototype bank is rebuilt deterministically from its design
+        specs; only the controller weights come from the checkpoint.
+    """
+    from totton_audio_de_mirroring.models.capb import CAPB
+
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load checkpoint: {exc}") from exc
+
+    model = CAPB()
+    model_state = checkpoint.get("model_state")
+    if not isinstance(model_state, dict):
+        raise RuntimeError("Invalid checkpoint: model_state is missing.")
+    model.load_state_dict(model_state)
+    model.eval()
+    torch_device = torch.device(device)
+    return CAPBStage1Processor(model=model.to(torch_device), device=torch_device)
+
+
 def load_nmse_stage1_processor(
     *,
     checkpoint_path: Path,

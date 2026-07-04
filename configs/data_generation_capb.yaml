@@ -1,0 +1,43 @@
+# CAPB Stage 1 training data configuration (teacher policy: capb_bl_88k2).
+#
+# Teacher: native 88.2 kHz synthesis, band-limited below the input Nyquist
+# with a near-brickwall linear-phase FIR. Input: exact 2:1 decimation of the
+# target (alias-free, phase-true). No Bessel degradation path in training.
+
+num_samples: 10000
+source_duration_sec: 1.0
+chunk_duration_sec: 0.25
+random_chunk: true
+seed: 1234
+
+brickwall:
+  passband_edge_hz: 21800.0
+  stopband_edge_hz: 22050.0
+  attenuation_db: 120.0
+
+# Edge-rich families (~30%) cover the ringing-gate probe distribution;
+# tonal/steady families train mirror suppression; music-like mixtures close
+# the domain gap to real audio without real audio.
+signal_mix:
+  square_wave: 0.10
+  step_plateau: 0.10
+  isolated_click: 0.05
+  sawtooth_wave: 0.05
+  tone_burst: 0.10
+  music_like_mixture: 0.15
+  multitone: 0.10
+  sweep_log: 0.05
+  sweep_linear: 0.03
+  am_tone: 0.05
+  fm_tone: 0.05
+  percussive: 0.05
+  pink_noise: 0.04
+  band_limited_noise: 0.04
+  near_nyquist_noise: 0.04
+
+augmentation:
+  gain_range: [0.25, 1.0]
+  polarity_flip_prob: 0.3
+  noise_std_range: [0.0, 0.001]
+  soft_clip_prob: 0.1
+  soft_clip_drive_range: [1.2, 2.0]
