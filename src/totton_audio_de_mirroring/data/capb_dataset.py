@@ -92,6 +92,11 @@ class CAPBDataConfig:
         target_sample_rate: Teacher sample rate in Hz (2x the source rate).
         near_nyquist_high_range_hz: Range the near-Nyquist noise family's
             high edge is drawn from (rate-family dependent).
+        flat_mask_window_ms: Edge-exclusion window of the plateau mask.
+            The ringing gate measures the plateau from 0.1 ms after the
+            edge, so any excess over 0.1 ms is a training-blind zone the
+            gate still sees (48k run2 failed exactly there: the mid
+            prototype's settling tail at 0.10-0.15 ms).
 
     Physical Basis:
         The signal mix intentionally over-weights edge-rich families
@@ -112,6 +117,7 @@ class CAPBDataConfig:
     source_sample_rate: int = SOURCE_SAMPLE_RATE
     target_sample_rate: int = TARGET_SAMPLE_RATE
     near_nyquist_high_range_hz: tuple[float, float] = DEFAULT_NEAR_NYQUIST_HIGH_RANGE_HZ
+    flat_mask_window_ms: float = FLAT_MASK_WINDOW_MS
 
     def __post_init__(self) -> None:
         """Validate the configuration."""
@@ -145,6 +151,8 @@ class CAPBDataConfig:
                 "near_nyquist_high_range_hz must satisfy 0 < low < high <= "
                 f"input Nyquist ({input_nyquist} Hz), got {low}/{high}."
             )
+        if self.flat_mask_window_ms <= 0.0:
+            raise ValueError("flat_mask_window_ms must be positive.")
 
 
 DEFAULT_SIGNAL_MIX: dict[str, float] = {
@@ -229,7 +237,11 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         # noise in silences, but ringing losses need "where the underlying
         # signal is flat/quiet", not where the training target happens to be.
         clean_chunk = clean_full[chunk_start : chunk_start + target_chunk.size]
-        flat_mask = compute_flat_mask(clean_chunk, self._config.target_sample_rate)
+        flat_mask = compute_flat_mask(
+            clean_chunk,
+            self._config.target_sample_rate,
+            window_ms=self._config.flat_mask_window_ms,
+        )
         quiet_mask = compute_quiet_mask(clean_chunk, self._config.target_sample_rate)
         # Note: slope-spike edge detection (clean_chunk argument) is
         # currently disabled - broadband noise legitimately exceeds any
@@ -374,6 +386,7 @@ def load_capb_data_config(path: Path) -> CAPBDataConfig:
         near_nyquist_high_range_hz=_parse_range(
             raw.get("near_nyquist_high_range_hz", DEFAULT_NEAR_NYQUIST_HIGH_RANGE_HZ)
         ),
+        flat_mask_window_ms=float(raw.get("flat_mask_window_ms", FLAT_MASK_WINDOW_MS)),
     )
 
 
@@ -408,13 +421,16 @@ def _apply_brickwall(signal: np.ndarray, taps: np.ndarray) -> np.ndarray:
 
 
 def compute_flat_mask(
-    clean_signal: np.ndarray, sample_rate: int = TARGET_SAMPLE_RATE
+    clean_signal: np.ndarray,
+    sample_rate: int = TARGET_SAMPLE_RATE,
+    window_ms: float = FLAT_MASK_WINDOW_MS,
 ) -> np.ndarray:
     """Mark samples on locally flat regions (plateaus) of the clean signal.
 
     Args:
         clean_signal: Pre-brickwall, pre-augmentation waveform.
         sample_rate: Sample rate of the clean signal in Hz.
+        window_ms: Edge-exclusion half-window in milliseconds.
 
     Returns:
         Float mask (1.0 on plateaus, 0.0 elsewhere).
@@ -424,11 +440,12 @@ def compute_flat_mask(
         content the system emits is interpolation ringing by definition, so
         the probe losses can penalize it without an explicit edge detector.
         The window is defined in milliseconds (gate-aligned), so it holds
-        across rate families.
+        across rate families; shrinking it toward the gate's 0.1 ms plateau
+        start closes the training-blind zone next to each edge.
     """
     peak = max(float(np.max(np.abs(clean_signal))), 1e-12)
     slope = np.abs(np.diff(clean_signal, prepend=clean_signal[:1]))
-    window = max(1, int(round(FLAT_MASK_WINDOW_MS * sample_rate / 1_000.0)))
+    window = max(1, int(round(window_ms * sample_rate / 1_000.0)))
     local_max = _moving_max(slope, window)
     return (local_max < FLAT_MASK_SLOPE_REL * peak).astype(np.float64)
 

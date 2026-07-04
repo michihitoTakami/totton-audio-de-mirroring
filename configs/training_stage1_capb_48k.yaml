@@ -22,8 +22,11 @@ log_interval: 20
 loss_weights:
   wave: 1.0
   stft: 1.0
-  plateau: 300.0
-  quiet: 300.0
+  # Doubled vs the 44.1k run9 recipe (300): the 48k prototypes ring less in
+  # absolute terms, which weakens the plateau gradient against the fidelity
+  # terms; run1 (300) left ~4% mid leakage at edges and failed G1 p2p.
+  plateau: 600.0
+  quiet: 600.0
   tv: 0.1
   entropy_floor: 10.0
   # Entropy floor threshold: 0.05 nats allows ~99% blend purity. The
