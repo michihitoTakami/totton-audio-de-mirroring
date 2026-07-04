@@ -40,13 +40,18 @@ from totton_audio_de_mirroring.evaluation.probe_suite import (
 )
 from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank,
+    prototype_specs_for_target_rate,
     upsample_with_kernel,
 )
 
-SOURCE_SR = 44_100
-TARGET_SR = 88_200
 BESSEL_CUTOFF_HZ = 20_000.0
 BESSEL_ORDER = 6
+# Rate families: source/target sample rates. The Bessel reference cutoff and
+# the gate windows/floors are absolute (audible-band based) and shared.
+RATE_FAMILIES: dict[str, tuple[int, int]] = {
+    "44k1": (44_100, 88_200),
+    "48k": (48_000, 96_000),
+}
 
 ModelFn = Callable[[np.ndarray, np.ndarray], np.ndarray]
 
@@ -58,6 +63,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--data-config", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--rate-family", choices=sorted(RATE_FAMILIES), default="44k1")
     parser.add_argument(
         "--tier", choices=["canonical", "held_out", "both"], default="both"
     )
@@ -66,22 +72,26 @@ def main() -> None:
     parser.add_argument("--no-strict", action="store_true")
     args = parser.parse_args()
 
-    label = args.label or args.backend.replace(":", "_")
+    source_sr, target_sr = RATE_FAMILIES[args.rate_family]
+    default_label = args.backend.replace(":", "_")
+    if args.rate_family != "44k1":
+        default_label += f"_{args.rate_family}"
+    label = args.label or default_label
     report_dir = args.report_dir / label
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    model_fn = _build_backend(args)
+    model_fn = _build_backend(args, target_sr)
     suite = build_default_probe_suite()
     if args.tier != "both":
         suite = tuple(spec for spec in suite if spec.tier == args.tier)
 
     evaluations: list[ProbeEvaluation] = []
     for spec in suite:
-        source = generate_probe(spec, SOURCE_SR)
+        source = generate_probe(spec, source_sr)
         bessel_ref = upsample_bessel_reference(
             signal=source,
-            source_sr=SOURCE_SR,
-            target_sr=TARGET_SR,
+            source_sr=source_sr,
+            target_sr=target_sr,
             cutoff_hz=BESSEL_CUTOFF_HZ,
             order=BESSEL_ORDER,
         )
@@ -91,17 +101,19 @@ def main() -> None:
             evaluate_probe(
                 spec=spec,
                 source=source,
-                source_sample_rate=SOURCE_SR,
+                source_sample_rate=source_sr,
                 bessel_reference=bessel_ref,
                 ideal_reference=ideal_ref,
                 output=output,
-                target_sample_rate=TARGET_SR,
+                target_sample_rate=target_sr,
             )
         )
 
     report = evaluate_gates(
         evaluations,
-        manifest_hash=manifest_hash(suite_manifest(build_default_probe_suite())),
+        manifest_hash=manifest_hash(
+            suite_manifest(build_default_probe_suite(), source_sr)
+        ),
     )
 
     (report_dir / "gate_report.json").write_text(
@@ -116,12 +128,14 @@ def main() -> None:
         sys.exit(1)
 
 
-def _build_backend(args: argparse.Namespace) -> ModelFn:
+def _build_backend(args: argparse.Namespace, target_sr: int) -> ModelFn:
     """Build the candidate model callable: (source, bessel_ref) -> output."""
     backend = args.backend
     if backend.startswith("prototype:"):
         name = backend.split(":", 1)[1]
-        bank = build_prototype_bank()
+        bank = build_prototype_bank(
+            prototype_specs_for_target_rate(target_sr), sample_rate=target_sr
+        )
         if name not in bank.names:
             raise ValueError(f"Unknown prototype '{name}', have {bank.names}.")
         kernel = bank.kernels[bank.names.index(name)]
@@ -147,12 +161,14 @@ def _build_backend(args: argparse.Namespace) -> ModelFn:
         return _build_checkpoint_backend(args.checkpoint, args.data_config, args.device)
 
     if backend == "capb":
-        return _build_capb_backend(args.checkpoint, args.device)
+        return _build_capb_backend(args.checkpoint, args.device, target_sr)
 
     raise ValueError(f"Unknown backend: {backend}")
 
 
-def _build_capb_backend(checkpoint_path: Path | None, device: str) -> ModelFn:
+def _build_capb_backend(
+    checkpoint_path: Path | None, device: str, target_sr: int
+) -> ModelFn:
     """Build a CAPB backend (untrained init blend if no checkpoint given).
 
     Physical Basis:
@@ -163,9 +179,21 @@ def _build_capb_backend(checkpoint_path: Path | None, device: str) -> ModelFn:
 
     from totton_audio_de_mirroring.models.capb import CAPB
 
-    model = CAPB()
+    bank = build_prototype_bank(
+        prototype_specs_for_target_rate(target_sr), sample_rate=target_sr
+    )
+    model = CAPB(bank=bank)
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        expected_input_rate = checkpoint.get("expected_input_rate")
+        if (
+            expected_input_rate is not None
+            and int(expected_input_rate) * bank.upsample_ratio != target_sr
+        ):
+            raise ValueError(
+                f"Checkpoint expects input rate {expected_input_rate} Hz, "
+                f"incompatible with --rate-family target {target_sr} Hz."
+            )
         model.load_state_dict(checkpoint["model_state"])
     model.eval()
     torch_device = torch.device(device)

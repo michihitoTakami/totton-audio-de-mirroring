@@ -82,7 +82,14 @@ class BesselMagnitudePrototypeSpec:
 
 PrototypeSpecType = KaiserPrototypeSpec | BesselMagnitudePrototypeSpec
 
-DEFAULT_PROTOTYPE_SPECS: tuple[PrototypeSpecType, ...] = (
+# Rate-family presets. The 20 kHz audible-band edge is ABSOLUTE, so 48k specs
+# are not frequency-scaled copies of the 44.1k specs: the wider 20-24 kHz
+# transition budget lets the 48k sharp/mid prototypes reach the same image
+# suppression with shorter kernels (less ringing). The gentle prototype keeps
+# the 20 kHz Bessel cutoff (audible-band reference) and only refits at fs=96k;
+# 101 taps matches the validated 44.1k prototype's magnitude-fit quality
+# (~-56 dB max deviation, well under the -50 dB requirement).
+PROTOTYPE_SPECS_44K1: tuple[PrototypeSpecType, ...] = (
     KaiserPrototypeSpec(
         name="sharp",
         passband_edge_hz=21_000.0,
@@ -102,6 +109,62 @@ DEFAULT_PROTOTYPE_SPECS: tuple[PrototypeSpecType, ...] = (
         order=DEFAULT_BESSEL_ORDER,
     ),
 )
+
+PROTOTYPE_SPECS_48K: tuple[PrototypeSpecType, ...] = (
+    KaiserPrototypeSpec(
+        name="sharp",
+        passband_edge_hz=22_000.0,
+        stopband_edge_hz=24_000.0,
+        attenuation_db=90.0,
+    ),
+    KaiserPrototypeSpec(
+        name="mid",
+        passband_edge_hz=20_000.0,
+        stopband_edge_hz=24_000.0,
+        attenuation_db=80.0,
+    ),
+    BesselMagnitudePrototypeSpec(
+        name="gentle",
+        num_taps=101,
+        cutoff_hz=DEFAULT_BESSEL_CUTOFF_HZ,
+        order=DEFAULT_BESSEL_ORDER,
+    ),
+)
+
+DEFAULT_PROTOTYPE_SPECS: tuple[PrototypeSpecType, ...] = PROTOTYPE_SPECS_44K1
+
+_SPECS_BY_TARGET_RATE: dict[int, tuple[PrototypeSpecType, ...]] = {
+    88_200: PROTOTYPE_SPECS_44K1,
+    96_000: PROTOTYPE_SPECS_48K,
+}
+
+
+def prototype_specs_for_target_rate(
+    target_sample_rate: int,
+) -> tuple[PrototypeSpecType, ...]:
+    """Return the prototype preset for a supported target sample rate.
+
+    Args:
+        target_sample_rate: Target (output) sample rate in Hz.
+
+    Returns:
+        Prototype specifications for that rate family.
+
+    Raises:
+        ValueError: If the rate has no validated preset.
+
+    Physical Basis:
+        Prototype band edges encode absolute audible-band constraints, so
+        each rate family needs its own validated preset instead of scaling.
+    """
+    specs = _SPECS_BY_TARGET_RATE.get(target_sample_rate)
+    if specs is None:
+        supported = sorted(_SPECS_BY_TARGET_RATE)
+        raise ValueError(
+            f"No prototype preset for target rate {target_sample_rate} Hz; "
+            f"supported: {supported}."
+        )
+    return specs
 
 
 @dataclass(frozen=True)
@@ -410,15 +473,17 @@ def summarize_bank(bank: PrototypeBank) -> dict[str, dict[str, float]]:
         Mapping of prototype name to response statistics in dB.
 
     Physical Basis:
-        The image band of a 2x upsampler from 44.1 kHz starts at 22.05 kHz;
-        response depth there predicts mirror suppression, while passband
-        deviation below 19 kHz predicts audible-band flatness.
+        The image band of a 2x upsampler starts at the input Nyquist
+        (22.05 kHz from 44.1 kHz, 24 kHz from 48 kHz); response depth there
+        predicts mirror suppression, while passband deviation below 19 kHz
+        predicts audible-band flatness.
     """
     freqs, responses = _bank_responses(bank)
     gain = float(bank.upsample_ratio)
+    input_nyquist = bank.sample_rate / (2.0 * bank.upsample_ratio)
     passband = freqs <= DEFAULT_MATCH_BAND_HIGH_HZ
-    image_band = freqs >= 22_050.0 + 500.0
-    deep_image = freqs >= 24_000.0
+    image_band = freqs >= input_nyquist + 500.0
+    deep_image = freqs >= input_nyquist + 1_950.0
 
     summary: dict[str, dict[str, float]] = {}
     for name, response in zip(bank.names, responses, strict=True):

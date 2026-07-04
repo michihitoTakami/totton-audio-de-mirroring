@@ -1,11 +1,13 @@
 """Dataset for CAPB Stage 1 training (alias-free teacher/input pairs).
 
-Teacher policy ``capb_bl_88k2``: the teacher is synthesized natively at
-88.2 kHz, band-limited with a near-brickwall linear-phase FIR below the
-input Nyquist, and the 44.1 kHz input is its exact 2:1 decimation. Input and
-target are therefore perfectly consistent (x == target[::2]) and no Bessel
-degradation path enters training. Per-sample masks derived from the target
-waveform carry the plateau/silence structure the probe losses need.
+Teacher policy ``capb_bl_<target>`` (default ``capb_bl_88k2``; 48k family
+uses 96 kHz): the teacher is synthesized natively at the target rate,
+band-limited with a near-brickwall linear-phase FIR below the input Nyquist,
+and the source-rate input is its exact 2:1 decimation. Input and target are
+therefore perfectly consistent (x == target[::2]) and no Bessel degradation
+path enters training. Per-sample masks derived from the target waveform
+carry the plateau/silence structure the probe losses need. All mask windows
+are millisecond-based, so they transfer unchanged across rate families.
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ from totton_audio_de_mirroring.data.pipeline_config import AugmentationConfig
 SOURCE_SAMPLE_RATE = 44_100
 TARGET_SAMPLE_RATE = 88_200
 UPSAMPLE_RATIO = 2
+# Near-Nyquist noise band edges: low edge is audible-band absolute; the high
+# edge tops out just below the input Nyquist (97.5% at 44.1k) so the teacher
+# brickwall does not remove the band entirely.
+DEFAULT_NEAR_NYQUIST_HIGH_RANGE_HZ = (20_000.0, 21_500.0)
 # The exclusion window must match the ringing gate, which starts measuring
 # plateau ripple 0.1 ms after the edge: a wider window would let the mid
 # prototype's ~0.3 ms settling tail escape the training loss while still
@@ -58,14 +64,13 @@ class BrickwallConfig:
     attenuation_db: float = 120.0
 
     def __post_init__(self) -> None:
-        """Validate the specification."""
+        """Validate the specification.
+
+        The input-Nyquist bound depends on the configured rates, so it is
+        checked by CAPBDataConfig where both are known.
+        """
         if not 0.0 < self.passband_edge_hz < self.stopband_edge_hz:
             raise ValueError("Require 0 < passband_edge_hz < stopband_edge_hz.")
-        if self.stopband_edge_hz > TARGET_SAMPLE_RATE / 4:
-            raise ValueError(
-                "stopband_edge_hz must not exceed the input Nyquist "
-                f"({TARGET_SAMPLE_RATE / 4} Hz)."
-            )
         if self.attenuation_db <= 0.0:
             raise ValueError("attenuation_db must be positive.")
 
@@ -83,6 +88,15 @@ class CAPBDataConfig:
         signal_mix: Mapping of signal type to sampling weight.
         brickwall: Teacher band-limiting specification.
         augmentation: Augmentation configuration (applied to the teacher).
+        source_sample_rate: Input sample rate in Hz (44.1k or 48k family).
+        target_sample_rate: Teacher sample rate in Hz (2x the source rate).
+        near_nyquist_high_range_hz: Range the near-Nyquist noise family's
+            high edge is drawn from (rate-family dependent).
+        flat_mask_window_ms: Edge-exclusion window of the plateau mask.
+            The ringing gate measures the plateau from 0.1 ms after the
+            edge, so any excess over 0.1 ms is a training-blind zone the
+            gate still sees (48k run2 failed exactly there: the mid
+            prototype's settling tail at 0.10-0.15 ms).
 
     Physical Basis:
         The signal mix intentionally over-weights edge-rich families
@@ -100,6 +114,10 @@ class CAPBDataConfig:
     )
     brickwall: BrickwallConfig = field(default_factory=BrickwallConfig)
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
+    source_sample_rate: int = SOURCE_SAMPLE_RATE
+    target_sample_rate: int = TARGET_SAMPLE_RATE
+    near_nyquist_high_range_hz: tuple[float, float] = DEFAULT_NEAR_NYQUIST_HIGH_RANGE_HZ
+    flat_mask_window_ms: float = FLAT_MASK_WINDOW_MS
 
     def __post_init__(self) -> None:
         """Validate the configuration."""
@@ -113,6 +131,28 @@ class CAPBDataConfig:
             raise ValueError("signal_mix weights must be non-negative.")
         if sum(self.signal_mix.values()) <= 0.0:
             raise ValueError("signal_mix weights must sum to a positive value.")
+        if self.source_sample_rate <= 0:
+            raise ValueError("source_sample_rate must be positive.")
+        if self.target_sample_rate != self.source_sample_rate * UPSAMPLE_RATIO:
+            raise ValueError(
+                "target_sample_rate must equal source_sample_rate * "
+                f"{UPSAMPLE_RATIO}, got {self.target_sample_rate} vs "
+                f"{self.source_sample_rate}."
+            )
+        input_nyquist = self.source_sample_rate / 2.0
+        if self.brickwall.stopband_edge_hz > input_nyquist:
+            raise ValueError(
+                "brickwall stopband_edge_hz must not exceed the input "
+                f"Nyquist ({input_nyquist} Hz)."
+            )
+        low, high = self.near_nyquist_high_range_hz
+        if not 0.0 < low < high <= input_nyquist:
+            raise ValueError(
+                "near_nyquist_high_range_hz must satisfy 0 < low < high <= "
+                f"input Nyquist ({input_nyquist} Hz), got {low}/{high}."
+            )
+        if self.flat_mask_window_ms <= 0.0:
+            raise ValueError("flat_mask_window_ms must be positive.")
 
 
 DEFAULT_SIGNAL_MIX: dict[str, float] = {
@@ -148,7 +188,9 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
 
     def __init__(self, config: CAPBDataConfig) -> None:
         self._config = config
-        self._brickwall_taps = _design_brickwall(config.brickwall)
+        self._brickwall_taps = _design_brickwall(
+            config.brickwall, config.target_sample_rate
+        )
         self._base_seed = (
             config.seed
             if config.seed is not None
@@ -179,7 +221,7 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             signal_type
             if signal_type != "near_nyquist_noise"
             else ("band_limited_noise"),
-            sample_rate=TARGET_SAMPLE_RATE,
+            sample_rate=self._config.target_sample_rate,
             duration_sec=self._config.source_duration_sec,
             seed=int(rng.integers(0, 2**32 - 1)),
             **params,
@@ -195,15 +237,21 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         # noise in silences, but ringing losses need "where the underlying
         # signal is flat/quiet", not where the training target happens to be.
         clean_chunk = clean_full[chunk_start : chunk_start + target_chunk.size]
-        flat_mask = compute_flat_mask(clean_chunk)
-        quiet_mask = compute_quiet_mask(clean_chunk)
+        flat_mask = compute_flat_mask(
+            clean_chunk,
+            self._config.target_sample_rate,
+            window_ms=self._config.flat_mask_window_ms,
+        )
+        quiet_mask = compute_quiet_mask(clean_chunk, self._config.target_sample_rate)
         # Note: slope-spike edge detection (clean_chunk argument) is
         # currently disabled - broadband noise legitimately exceeds any
         # slope threshold, and run8 showed it drags the whole distribution
         # into relaxed-fidelity edge zones (always-gentle collapse).
         # Discriminating "dense edges" from "steady noise" is the
         # controller's job; G2 dense-square coverage is a known follow-up.
-        edge_mask = compute_edge_mask(flat_mask, quiet_mask)
+        edge_mask = compute_edge_mask(
+            flat_mask, quiet_mask, sample_rate=self._config.target_sample_rate
+        )
 
         return {
             "source": torch.from_numpy(source_chunk.astype(np.float32)),
@@ -218,7 +266,9 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
     def _extract_chunk(
         self, target_full: np.ndarray, rng: np.random.Generator
     ) -> tuple[np.ndarray, int]:
-        chunk_len = int(round(self._config.chunk_duration_sec * TARGET_SAMPLE_RATE))
+        chunk_len = int(
+            round(self._config.chunk_duration_sec * self._config.target_sample_rate)
+        )
         margin = self._brickwall_taps.size // 2
         max_start = target_full.size - chunk_len - margin
         if max_start < margin:
@@ -285,7 +335,8 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             }
         elif signal_type == "near_nyquist_noise":
             low = float(rng.uniform(15_000.0, 18_000.0))
-            params = {"low_hz": low, "high_hz": float(rng.uniform(20_000.0, 21_500.0))}
+            high_low, high_high = self._config.near_nyquist_high_range_hz
+            params = {"low_hz": low, "high_hz": float(rng.uniform(high_low, high_high))}
         return signal_type, params
 
     def _rng_for_index(self, index: int) -> np.random.Generator:
@@ -330,20 +381,34 @@ def load_capb_data_config(path: Path) -> CAPBDataConfig:
         signal_mix=dict(raw.get("signal_mix", DEFAULT_SIGNAL_MIX)),
         brickwall=brickwall,
         augmentation=augmentation,
+        source_sample_rate=int(raw.get("source_sample_rate", SOURCE_SAMPLE_RATE)),
+        target_sample_rate=int(raw.get("target_sample_rate", TARGET_SAMPLE_RATE)),
+        near_nyquist_high_range_hz=_parse_range(
+            raw.get("near_nyquist_high_range_hz", DEFAULT_NEAR_NYQUIST_HIGH_RANGE_HZ)
+        ),
+        flat_mask_window_ms=float(raw.get("flat_mask_window_ms", FLAT_MASK_WINDOW_MS)),
     )
 
 
-def _design_brickwall(config: BrickwallConfig) -> np.ndarray:
+def _parse_range(raw_range: object) -> tuple[float, float]:
+    if not isinstance(raw_range, (list, tuple)) or len(raw_range) != 2:
+        raise ValueError(f"Expected a [low, high] pair, got {raw_range!r}.")
+    return float(raw_range[0]), float(raw_range[1])
+
+
+def _design_brickwall(
+    config: BrickwallConfig, target_sample_rate: int = TARGET_SAMPLE_RATE
+) -> np.ndarray:
     width_hz = config.stopband_edge_hz - config.passband_edge_hz
     num_taps, beta = sp_signal.kaiserord(
-        config.attenuation_db, width_hz / (TARGET_SAMPLE_RATE / 2)
+        config.attenuation_db, width_hz / (target_sample_rate / 2)
     )
     if num_taps % 2 == 0:
         num_taps += 1
     cutoff = 0.5 * (config.passband_edge_hz + config.stopband_edge_hz)
     return np.asarray(
         sp_signal.firwin(
-            num_taps, cutoff, window=("kaiser", beta), fs=TARGET_SAMPLE_RATE
+            num_taps, cutoff, window=("kaiser", beta), fs=target_sample_rate
         ),
         dtype=np.float64,
     )
@@ -355,11 +420,17 @@ def _apply_brickwall(signal: np.ndarray, taps: np.ndarray) -> np.ndarray:
     )
 
 
-def compute_flat_mask(clean_signal: np.ndarray) -> np.ndarray:
+def compute_flat_mask(
+    clean_signal: np.ndarray,
+    sample_rate: int = TARGET_SAMPLE_RATE,
+    window_ms: float = FLAT_MASK_WINDOW_MS,
+) -> np.ndarray:
     """Mark samples on locally flat regions (plateaus) of the clean signal.
 
     Args:
         clean_signal: Pre-brickwall, pre-augmentation waveform.
+        sample_rate: Sample rate of the clean signal in Hz.
+        window_ms: Edge-exclusion half-window in milliseconds.
 
     Returns:
         Float mask (1.0 on plateaus, 0.0 elsewhere).
@@ -368,19 +439,25 @@ def compute_flat_mask(clean_signal: np.ndarray) -> np.ndarray:
         On a plateau of the underlying clean signal, any high-frequency
         content the system emits is interpolation ringing by definition, so
         the probe losses can penalize it without an explicit edge detector.
+        The window is defined in milliseconds (gate-aligned), so it holds
+        across rate families; shrinking it toward the gate's 0.1 ms plateau
+        start closes the training-blind zone next to each edge.
     """
     peak = max(float(np.max(np.abs(clean_signal))), 1e-12)
     slope = np.abs(np.diff(clean_signal, prepend=clean_signal[:1]))
-    window = max(1, int(round(FLAT_MASK_WINDOW_MS * TARGET_SAMPLE_RATE / 1_000.0)))
+    window = max(1, int(round(window_ms * sample_rate / 1_000.0)))
     local_max = _moving_max(slope, window)
     return (local_max < FLAT_MASK_SLOPE_REL * peak).astype(np.float64)
 
 
-def compute_quiet_mask(clean_signal: np.ndarray) -> np.ndarray:
+def compute_quiet_mask(
+    clean_signal: np.ndarray, sample_rate: int = TARGET_SAMPLE_RATE
+) -> np.ndarray:
     """Mark samples where the clean signal is silent.
 
     Args:
         clean_signal: Pre-brickwall, pre-augmentation waveform.
+        sample_rate: Sample rate of the clean signal in Hz.
 
     Returns:
         Float mask (1.0 in silence, 0.0 elsewhere).
@@ -391,7 +468,7 @@ def compute_quiet_mask(clean_signal: np.ndarray) -> np.ndarray:
         detection at all.
     """
     peak = max(float(np.max(np.abs(clean_signal))), 1e-12)
-    window = max(1, int(round(FLAT_MASK_WINDOW_MS * TARGET_SAMPLE_RATE / 1_000.0)))
+    window = max(1, int(round(FLAT_MASK_WINDOW_MS * sample_rate / 1_000.0)))
     envelope = _moving_max(np.abs(clean_signal), window)
     return (envelope < QUIET_MASK_LEVEL_REL * peak).astype(np.float64)
 
@@ -400,6 +477,7 @@ def compute_edge_mask(
     flat_mask: np.ndarray,
     quiet_mask: np.ndarray,
     clean_signal: np.ndarray | None = None,
+    sample_rate: int = TARGET_SAMPLE_RATE,
 ) -> np.ndarray:
     """Mark broadband-transient neighborhoods.
 
@@ -409,6 +487,7 @@ def compute_edge_mask(
         clean_signal: Optional clean waveform; when given, large slope
             spikes also count as edges (covers dense-edge signals like
             5 kHz squares whose plateaus are too short for flat_mask).
+        sample_rate: Sample rate of the masks in Hz.
 
     Returns:
         Float mask (1.0 near broadband transients, 0.0 elsewhere).
@@ -438,9 +517,7 @@ def compute_edge_mask(
             np.abs(np.diff(clean_signal)) > EDGE_SLOPE_SPIKE_REL * peak
         ).astype(np.float64)
         transitions = np.maximum(transitions, spikes)
-    half_window = max(
-        1, int(round(EDGE_MASK_DILATION_MS * TARGET_SAMPLE_RATE / 1_000.0))
-    )
+    half_window = max(1, int(round(EDGE_MASK_DILATION_MS * sample_rate / 1_000.0)))
     return (_moving_max(transitions, half_window) > 0.0).astype(np.float64)
 
 

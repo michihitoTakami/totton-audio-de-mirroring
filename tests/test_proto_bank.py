@@ -6,12 +6,15 @@ from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.models.proto_bank import (
     DEFAULT_PROTOTYPE_SPECS,
+    PROTOTYPE_SPECS_44K1,
+    PROTOTYPE_SPECS_48K,
     BesselMagnitudePrototypeSpec,
     KaiserPrototypeSpec,
     blend_modulation_bounds,
     build_prototype_bank,
     design_bessel_magnitude_prototype,
     design_kaiser_prototype,
+    prototype_specs_for_target_rate,
     summarize_bank,
     upsample_with_kernel,
     validate_bank,
@@ -135,3 +138,83 @@ def test_summarize_bank_reports_all_prototypes(bank) -> None:
 def test_specs_default_tuple_is_consistent() -> None:
     names = [spec.name for spec in DEFAULT_PROTOTYPE_SPECS]
     assert names == ["sharp", "mid", "gentle"]
+
+
+def test_default_specs_are_44k1_preset() -> None:
+    """Regression guard: the 44.1k behavior is byte-identical to before."""
+    assert DEFAULT_PROTOTYPE_SPECS is PROTOTYPE_SPECS_44K1
+    assert prototype_specs_for_target_rate(88_200) is PROTOTYPE_SPECS_44K1
+    assert prototype_specs_for_target_rate(96_000) is PROTOTYPE_SPECS_48K
+
+
+def test_unsupported_target_rate_raises() -> None:
+    with pytest.raises(ValueError, match="No prototype preset"):
+        prototype_specs_for_target_rate(192_000)
+
+
+@pytest.fixture(scope="module")
+def bank_48k():
+    """Build the 48k-family prototype bank once per module."""
+    return build_prototype_bank(PROTOTYPE_SPECS_48K, sample_rate=96_000)
+
+
+def test_48k_bank_structure(bank_48k) -> None:
+    assert bank_48k.names == ("sharp", "mid", "gentle")
+    assert bank_48k.sample_rate == 96_000
+    assert bank_48k.kernels.shape[1] % 2 == 1
+
+
+def test_48k_bank_validates(bank_48k) -> None:
+    results = validate_bank(bank_48k)
+    assert results["kernel_symmetry_rel"] <= 1e-12
+    assert results["kaiser_passband_match_db"] <= -70.0
+
+
+def test_48k_sharp_kernel_shorter_than_44k1() -> None:
+    """The 2 kHz (vs 1.05 kHz) transition budget must shrink the kernel."""
+    sharp_44k1 = design_kaiser_prototype(DEFAULT_PROTOTYPE_SPECS[0], 88_200)
+    sharp_48k = design_kaiser_prototype(PROTOTYPE_SPECS_48K[0], 96_000)
+    assert sharp_48k.size < sharp_44k1.size / 1.5
+
+
+def test_48k_sharp_prototype_suppresses_images(bank_48k) -> None:
+    """A 19 kHz tone's 29 kHz image must vanish through the 48k sharp kernel."""
+    source_sr, target_sr = 48_000, 96_000
+    time_axis = np.arange(source_sr // 2) / source_sr
+    tone = 0.5 * np.sin(2.0 * np.pi * 19_000.0 * time_axis)
+    output = upsample_with_kernel(tone, bank_48k.kernels[0], bank_48k.upsample_ratio)
+
+    spectrum = np.abs(np.fft.rfft(output * np.hanning(output.size)))
+    freqs = np.fft.rfftfreq(output.size, d=1.0 / target_sr)
+    tone_level = spectrum[np.argmin(np.abs(freqs - 19_000.0))]
+    image_level = spectrum[np.argmin(np.abs(freqs - 29_000.0))]
+    assert 20.0 * np.log10(image_level / tone_level) <= -80.0
+
+
+def test_48k_summarize_bank_image_band(bank_48k) -> None:
+    """Image band derives from the 24 kHz input Nyquist at 96 kHz."""
+    summary = summarize_bank(bank_48k)
+    assert summary["sharp"]["image_band_max_db"] <= -90.0
+    assert summary["sharp"]["passband_dev_db"] <= -80.0
+
+
+def test_48k_gentle_matches_bessel_magnitude() -> None:
+    """The 96k gentle FIR must track the Bessel6@20k magnitude to -50 dB."""
+    spec = PROTOTYPE_SPECS_48K[2]
+    taps = design_bessel_magnitude_prototype(spec, 96_000)
+    b, a = sp_signal.bessel(
+        spec.order,
+        spec.cutoff_hz,
+        btype="lowpass",
+        analog=False,
+        output="ba",
+        norm="phase",
+        fs=96_000,
+    )
+    dense = np.linspace(0.0, 48_000.0, 1 << 13)
+    _, h_fir = sp_signal.freqz(taps, worN=dense, fs=96_000)
+    _, h_bessel = sp_signal.freqz(b, a, worN=dense, fs=96_000)
+    # Kernels carry the 2x interpolation gain; compare unit-gain shapes.
+    gain = np.abs(h_fir[0])
+    error = np.max(np.abs(np.abs(h_fir) / gain - np.abs(h_bessel)))
+    assert 20.0 * np.log10(error) <= -50.0

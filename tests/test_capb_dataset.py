@@ -102,8 +102,15 @@ def test_out_of_range_index_raises(dataset) -> None:
 
 
 def test_brickwall_config_validation() -> None:
+    """The Nyquist bound is rate-dependent, so it is checked on the config."""
     with pytest.raises(ValueError, match="stopband_edge_hz"):
-        BrickwallConfig(passband_edge_hz=22_000.0, stopband_edge_hz=23_000.0)
+        CAPBDataConfig(
+            brickwall=BrickwallConfig(
+                passband_edge_hz=22_000.0, stopband_edge_hz=23_000.0
+            )
+        )
+    with pytest.raises(ValueError, match="passband_edge_hz"):
+        BrickwallConfig(passband_edge_hz=23_000.0, stopband_edge_hz=22_000.0)
 
 
 def test_config_validation() -> None:
@@ -118,3 +125,66 @@ def test_load_yaml_config() -> None:
     assert config.num_samples == 10_000
     assert config.brickwall.stopband_edge_hz == 22_050.0
     assert abs(sum(config.signal_mix.values()) - 1.0) < 1e-6
+    assert config.source_sample_rate == 44_100
+    assert config.target_sample_rate == 88_200
+    assert config.near_nyquist_high_range_hz == (20_000.0, 21_500.0)
+
+
+def test_load_yaml_config_48k() -> None:
+    config = load_capb_data_config(Path("configs/data_generation_capb_48k.yaml"))
+    assert config.source_sample_rate == 48_000
+    assert config.target_sample_rate == 96_000
+    assert config.brickwall.passband_edge_hz == 23_700.0
+    assert config.brickwall.stopband_edge_hz == 24_000.0
+    assert config.near_nyquist_high_range_hz == (20_000.0, 23_400.0)
+    assert abs(sum(config.signal_mix.values()) - 1.0) < 1e-6
+
+
+def test_config_rejects_inconsistent_rates() -> None:
+    with pytest.raises(ValueError, match="target_sample_rate"):
+        CAPBDataConfig(source_sample_rate=48_000, target_sample_rate=88_200)
+
+
+def test_config_rejects_bad_near_nyquist_range() -> None:
+    with pytest.raises(ValueError, match="near_nyquist_high_range_hz"):
+        CAPBDataConfig(near_nyquist_high_range_hz=(20_000.0, 30_000.0))
+
+
+@pytest.fixture(scope="module")
+def dataset_48k() -> CAPBUpsampleDataset:
+    config = CAPBDataConfig(
+        num_samples=4,
+        seed=42,
+        source_sample_rate=48_000,
+        target_sample_rate=96_000,
+        brickwall=BrickwallConfig(passband_edge_hz=23_700.0, stopband_edge_hz=24_000.0),
+        near_nyquist_high_range_hz=(20_000.0, 23_400.0),
+    )
+    return CAPBUpsampleDataset(config)
+
+
+def test_48k_input_is_exact_decimation_of_target(dataset_48k) -> None:
+    for index in range(2):
+        sample = dataset_48k[index]
+        source = sample["source"].numpy()
+        target = sample["target"].numpy()
+        np.testing.assert_array_equal(source, target[::UPSAMPLE_RATIO])
+
+
+def test_48k_sample_shapes(dataset_48k) -> None:
+    sample = dataset_48k[0]
+    chunk_len = int(0.25 * 96_000)
+    assert sample["target"].shape == (chunk_len,)
+    assert sample["source"].shape == (chunk_len // UPSAMPLE_RATIO,)
+
+
+def test_48k_target_is_band_limited_below_24k(dataset_48k) -> None:
+    """96 kHz teacher must have no content above the 24 kHz input Nyquist."""
+    for index in range(2):
+        target = dataset_48k[index]["target"].numpy().astype(np.float64)
+        spectrum = np.abs(np.fft.rfft(target * np.hanning(target.size)))
+        freqs = np.fft.rfftfreq(target.size, d=1.0 / 96_000)
+        image = spectrum[freqs >= 24_500.0]
+        main = spectrum[freqs <= 20_000.0]
+        ratio_db = 20.0 * np.log10((np.max(image) + 1e-300) / (np.max(main) + 1e-300))
+        assert ratio_db <= -80.0, dataset_48k[index]["signal_type"]
