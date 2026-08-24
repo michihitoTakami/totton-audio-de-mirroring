@@ -45,7 +45,7 @@ std::size_t test_upsampler_zero_stuffing() {
     const std::vector<double> input = {1.0, 2.0, 3.0};
     const auto output = upsampler.process_block(input);
 
-    const std::vector<double> expected = {1.0, 0.0, 2.0, 0.0, 3.0, 0.0};
+    const std::vector<double> expected = {2.0, 0.0, 4.0, 0.0, 6.0, 0.0};
     return check(output == expected, "zero-stuffing output mismatch");
 }
 
@@ -119,7 +119,7 @@ std::size_t test_pointer_api_null_validation() {
 }
 
 std::size_t test_dc_gain() {
-    const std::vector<double> taps = {1.0, 1.0};
+    const std::vector<double> taps = {0.5, 0.5};
     totton_audio_de_mirroring::dsp::FirUpsampler2x upsampler(taps);
     const std::vector<double> input(32, 1.0);
     const auto output = upsampler.process_block(input);
@@ -145,8 +145,8 @@ std::size_t test_impulse_response() {
 
     std::size_t failures = 0;
     for (std::size_t i = 0; i < taps.size(); ++i) {
-        failures +=
-            check(nearly_equal(output[i], taps[i], 1e-12), "impulse response coefficient mismatch");
+        failures += check(nearly_equal(output[i], 2.0 * taps[i], 1e-12),
+                          "impulse response coefficient mismatch");
     }
     for (std::size_t i = taps.size(); i < output.size(); ++i) {
         failures += check(nearly_equal(output[i], 0.0, 1e-12), "impulse response tail mismatch");
@@ -177,7 +177,7 @@ std::size_t test_config_struct_injection() {
     totton_audio_de_mirroring::dsp::FirUpsampler2x upsampler(config);
     const std::vector<double> input = {1.0, 2.0, 3.0};
     const auto output = upsampler.process_block(input);
-    const std::vector<double> expected = {1.0, 0.0, 2.0, 0.0, 3.0, 0.0};
+    const std::vector<double> expected = {2.0, 0.0, 4.0, 0.0, 6.0, 0.0};
     return check(output == expected, "config-struct injected taps mismatch");
 }
 
@@ -199,7 +199,7 @@ std::size_t test_config_file_injection() {
     const auto output = upsampler.process_block(input);
     std::filesystem::remove(taps_path);
 
-    const std::vector<double> expected = {1.0, 0.0, 2.0, 0.0, 3.0, 0.0};
+    const std::vector<double> expected = {2.0, 0.0, 4.0, 0.0, 6.0, 0.0};
     return check(output == expected, "config-file injected taps mismatch");
 }
 
@@ -230,8 +230,8 @@ std::size_t test_multistage_positions() {
     for (std::size_t i = 0; i < output.size(); ++i) {
         if (i % 4 == 0) {
             const std::size_t idx = i / 4;
-            failures +=
-                check(nearly_equal(output[i], input[idx], 1e-12), "multistage alignment mismatch");
+            failures += check(nearly_equal(output[i], 4.0 * input[idx], 1e-12),
+                              "multistage alignment mismatch");
         } else {
             failures +=
                 check(nearly_equal(output[i], 0.0, 1e-12), "multistage zero-stuffing mismatch");

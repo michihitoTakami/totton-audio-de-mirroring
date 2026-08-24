@@ -270,6 +270,26 @@ def test_compute_edge_aligned_ringing_metrics_basic() -> None:
     assert metrics.plateau_ripple_p2p >= 0.0
 
 
+def test_edge_aligned_metrics_are_polarity_invariant() -> None:
+    """Falling and rising edges must measure the same physical ringing."""
+    sample_rate = 88_200
+    rising = np.concatenate([np.zeros(2_000), np.ones(2_000)])
+    ripple = np.zeros_like(rising)
+    ripple[2_010:2_050] = 0.02 * np.sin(np.linspace(0.0, 4.0 * np.pi, 40))
+    rising = rising + ripple
+
+    rising_metrics = compute_edge_aligned_ringing_metrics(rising, sample_rate)
+    falling_metrics = compute_edge_aligned_ringing_metrics(-rising, sample_rate)
+
+    assert falling_metrics.plateau_ripple_rms == pytest.approx(
+        rising_metrics.plateau_ripple_rms
+    )
+    assert falling_metrics.plateau_ripple_p2p == pytest.approx(
+        rising_metrics.plateau_ripple_p2p
+    )
+    assert falling_metrics.overshoot_abs == pytest.approx(rising_metrics.overshoot_abs)
+
+
 def test_compare_edge_aligned_ringing_detects_regression() -> None:
     """Comparison API should report higher ripple ratio on degraded signal."""
     sample_rate = 88_200

@@ -10,23 +10,11 @@ pipeline:
   chunk_duration_sec: 0.25
   overlap_ratio: 0.5
   chunk_window: hann
-  stage1_energy_cap: 0.001
-  evaluate_stage1_metrics: true
+  retain_stage1_signal: false
 
 stage1:
   mode: reference
-  # mode=nmse example:
-  # checkpoint_path: data/checkpoints/stage1_best.pt
-  # data_config_path: configs/data_generation.yaml
+  # Production CAPB example:
+  # mode: capb
+  # checkpoint_path: data/checkpoints/capb/capb_best.pt
   # device: cpu
-  # mode=onnx example:
-  # model_path: data/checkpoints/stage1_best.onnx
-  # data_config_path: configs/data_generation.yaml
-  # device: cuda
-  # allow_cpu_fallback: false
-  # energy_cap: 0.001
-  # mode=tensorrt example:
-  # engine_path: data/checkpoints/tensorrt/stage1_mixed.engine
-  # data_config_path: configs/data_generation.yaml
-  # device: cuda
-  # energy_cap: 0.001

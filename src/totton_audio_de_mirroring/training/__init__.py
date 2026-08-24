@@ -1,15 +1,9 @@
-"""Training utilities for totton-audio-de-mirroring."""
+"""CAPB training utilities."""
 
-from totton_audio_de_mirroring.training.distillation import (
-    DistillationConfig,
-    DistillationResult,
-    load_distillation_config,
-    train_stage1_distillation,
+from totton_audio_de_mirroring.training.capb_trainer import (
+    CAPBTrainingConfig,
+    load_capb_training_config,
+    train_capb,
 )
 
-__all__ = [
-    "DistillationConfig",
-    "DistillationResult",
-    "load_distillation_config",
-    "train_stage1_distillation",
-]
+__all__ = ["CAPBTrainingConfig", "load_capb_training_config", "train_capb"]

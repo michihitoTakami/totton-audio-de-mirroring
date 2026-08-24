@@ -37,7 +37,10 @@ loss_weights:
   # brickwall teacher rings there, and reproducing that ringing is exactly
   # what the plateau/quiet gates forbid.
   edge_fidelity_relax: 0.9
-  # Edge-zone ripple above the gentle prototype's level. Disabled for v1:
-  # with slope-spike edge detection off (see capb_dataset), the remaining
-  # edge zones are already covered by the plateau/quiet losses.
-  edge_ring: 0.0
+  # Edge-zone ripple above the gentle prototype's level. Edge masks now use
+  # generator labels for discontinuous families, so dense squares receive
+  # this loss without misclassifying stationary broadband noise.
+  edge_ring: 10.0
+  # Balanced label supervision prevents the dense-edge loss from finding an
+  # always-gentle optimum while preserving gentle selection at transients.
+  selection: 0.5

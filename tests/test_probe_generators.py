@@ -6,6 +6,7 @@ import pytest
 from totton_audio_de_mirroring.data.generator import generate_signal, list_signal_types
 from totton_audio_de_mirroring.data.probe_generators import (
     PROBE_FAMILY_GENERATORS,
+    generate_dense_square_wave,
     generate_isolated_click,
     generate_square_wave,
     generate_step_plateau,
@@ -40,6 +41,18 @@ def test_square_wave_duty_cycle() -> None:
     signal = generate_square_wave(frequency_hz=100.0, duty=0.3, sample_rate=SAMPLE_RATE)
     positive_fraction = float(np.mean(signal > 0))
     assert positive_fraction == pytest.approx(0.3, abs=0.02)
+
+
+def test_dense_square_wave_covers_high_frequency_edges() -> None:
+    signal = generate_dense_square_wave(
+        frequency_hz=5_500.0,
+        sample_rate=SAMPLE_RATE,
+        duration_sec=0.1,
+        amplitude=0.5,
+    )
+    transitions = np.count_nonzero(np.diff(signal))
+    assert transitions == pytest.approx(1_100, abs=2)
+    assert set(np.round(np.unique(signal), 6)) <= {-0.5, 0.5}
 
 
 def test_step_plateau_has_flat_regions() -> None:

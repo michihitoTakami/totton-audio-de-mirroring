@@ -105,6 +105,17 @@ def test_upsample_output_length(bank) -> None:
     assert output.shape == (2_000,)
 
 
+@pytest.mark.parametrize("prototype_index", [0, 1, 2])
+def test_delay_compensation_aligns_impulse(bank, prototype_index: int) -> None:
+    """Every prototype must align an input impulse to the 2x timeline."""
+    source = np.zeros(2_048, dtype=np.float64)
+    source[800] = 1.0
+    output = upsample_with_kernel(
+        source, bank.kernels[prototype_index], bank.upsample_ratio
+    )
+    assert int(np.argmax(np.abs(output))) == 1_600
+
+
 def test_upsample_rejects_invalid_inputs(bank) -> None:
     with pytest.raises(ValueError, match="non-empty 1D"):
         upsample_with_kernel(np.zeros((2, 2)), bank.kernels[0], 2)

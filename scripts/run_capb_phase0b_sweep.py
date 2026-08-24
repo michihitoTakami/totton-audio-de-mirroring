@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 from scipy import signal as sp_signal
 
-from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
+from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
 from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )

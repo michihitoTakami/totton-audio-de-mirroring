@@ -11,6 +11,7 @@ from totton_audio_de_mirroring.stage2.overshoot import (
     cascade_upsample,
     evaluate_stage2_overshoot,
     load_stage_taps,
+    upsample_2x_fir,
 )
 
 
@@ -34,6 +35,21 @@ def test_cascade_upsample_stage_count_controls_length() -> None:
     output = cascade_upsample(signal, stage_taps)
 
     assert output.shape == (signal.shape[0] * 4,)
+
+
+def test_upsample_2x_fir_preserves_settled_dc_level() -> None:
+    """Unity-sum interpolation taps should preserve a settled input level.
+
+    Physical Basis:
+        Zero stuffing reduces baseband amplitude by two, so the interpolation
+        stage must restore that factor after applying a unity-DC FIR.
+    """
+    signal = np.ones(64, dtype=np.float64)
+    taps = np.array([0.5, 0.5], dtype=np.float64)
+
+    output = upsample_2x_fir(signal, taps)
+
+    np.testing.assert_allclose(output[32:], 1.0, rtol=0.0, atol=1e-12)
 
 
 def test_evaluate_stage2_overshoot_with_known_taps() -> None:

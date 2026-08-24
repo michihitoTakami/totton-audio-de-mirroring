@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import numpy as np
+from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.evaluation.lb_preservation import (
     evaluate_lowband_preservation,
@@ -41,7 +42,7 @@ from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
 
-GATE_SPEC_VERSION = 1
+GATE_SPEC_VERSION = 3
 _EPSILON = 1e-300
 
 LF_RINGING_MAX_FREQ_HZ = 2_000.0
@@ -70,6 +71,7 @@ class Stage1GateConfig:
         pre_echo_energy_ratio_max: Allowed pre-echo energy growth (energy).
         pre_echo_floor_rel: Amplitude-relative pre-echo absolute floor.
         image_rel_max_db: Max image-band level relative to main band (steady).
+        image_peak_rel_max_db: Max swept-ridge image peak relative to main peak.
         added_hf_max_db: Max image-band increase over the Bessel reference.
         flatness_dip_max_db: Max smoothed response dip 100 Hz-18 kHz.
         flatness_boost_max_db: Max smoothed response boost 100 Hz-18 kHz.
@@ -93,6 +95,7 @@ class Stage1GateConfig:
     pre_echo_energy_ratio_max: float = 1.44
     pre_echo_floor_rel: float = 1.0e-3
     image_rel_max_db: float = -65.0
+    image_peak_rel_max_db: float = -65.0
     added_hf_max_db: float = 3.0
     image_negligible_rel_db: float = -70.0
     flatness_dip_max_db: float = 1.0
@@ -207,6 +210,10 @@ def evaluate_probe(
     image_low_hz = image_band_low_hz(target_sample_rate)
     metrics: dict[str, float] = {}
     metrics["image_rel_db"] = _image_minus_main_db(output, target_sample_rate)
+    if spec.kind == KIND_SWEEP_LOG:
+        metrics["image_peak_rel_db"] = _peak_image_minus_main_db(
+            output, target_sample_rate
+        )
     metrics["image_abs_db"] = _band_level_db(
         output, target_sample_rate, image_low_hz, target_sample_rate / 2
     )
@@ -463,6 +470,19 @@ def _gate_mirror(
                 binding="absolute",
             )
         )
+        if evaluation.spec.kind == KIND_SWEEP_LOG:
+            peak_value = evaluation.metrics["image_peak_rel_db"]
+            rows.append(
+                GateRow(
+                    probe_id=evaluation.spec.probe_id,
+                    tier=evaluation.spec.tier,
+                    metric="image_peak_rel_db",
+                    value=peak_value,
+                    threshold=cfg.image_peak_rel_max_db,
+                    passed=peak_value <= cfg.image_peak_rel_max_db,
+                    binding="absolute",
+                )
+            )
     return _finalize("G3_mirror", rows)
 
 
@@ -708,3 +728,33 @@ def _image_minus_main_db(signal: np.ndarray, sample_rate: int) -> float:
     )
     main = _band_level_db(signal, sample_rate, 20.0, MAIN_BAND_HIGH_HZ)
     return image - main
+
+
+def _peak_image_minus_main_db(signal: np.ndarray, sample_rate: int) -> float:
+    """Return peak swept-image ridge relative to the main swept ridge.
+
+    Physical Basis:
+        An integrated image-band average can hide a narrow residual confined
+        to the end of a sweep. The maximum Hann-STFT magnitude over time
+        follows the swept ridge at each frequency and makes that worst-case
+        residual binding.
+    """
+    nperseg = min(2_048, signal.size)
+    if nperseg < 16:
+        raise ValueError("signal is too short for peak image measurement.")
+    frequencies, _, spectrum = sp_signal.stft(
+        signal,
+        fs=sample_rate,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=nperseg * 7 // 8,
+        nfft=nperseg,
+        boundary=None,
+        padded=False,
+    )
+    envelope = np.max(np.abs(spectrum), axis=1)
+    main = (frequencies >= 20.0) & (frequencies <= MAIN_BAND_HIGH_HZ)
+    image = frequencies >= image_band_low_hz(sample_rate)
+    main_peak = float(np.max(envelope[main]))
+    image_peak = float(np.max(envelope[image]))
+    return float(20.0 * np.log10(max(image_peak, _EPSILON) / max(main_peak, _EPSILON)))
