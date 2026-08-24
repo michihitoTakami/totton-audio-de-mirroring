@@ -65,6 +65,17 @@ uv run python scripts/train_capb.py \
 
 学習されるのは約10万parameterのコントローラだけです。FIR prototype bankは固定され、checkpointにはcontroller stateとrate family metadataが保存されます。
 
+### 学習済み成果物
+
+再現確認用に、各rate familyの最新学習候補と対応する学習履歴・probe gate reportを同梱しています。
+
+| rate family | checkpoint | spec v3結果 | 状態 |
+|---|---|---|---|
+| 44.1→88.2 kHz | `data/checkpoints/capb/run12_context_retrain/capb_best.pt` | 全gate合格 | family候補 |
+| 48→96 kHz | `data/checkpoints/capb_48k/run5_context_retrain/capb_best.pt` | G3 image peak不合格 | 未採用・診断用 |
+
+対応する記録は`reports/capb_training/`と`reports/probe_gates/`にあります。CAPBのリリース条件は両familyの全gate合格なので、これらを組み合わせたリリースcheckpoint pairはまだ確定していません。
+
 ## 受入評価
 
 CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両familyでcanonical/held-out probeをすべて通過するまでリリースできません。
@@ -73,13 +84,13 @@ CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両familyでcanonical/held-
 # 44.1 kHz family
 uv run python scripts/evaluate_probe_gates.py \
   --backend capb \
-  --checkpoint data/checkpoints/capb/capb_best.pt \
+  --checkpoint data/checkpoints/capb/run12_context_retrain/capb_best.pt \
   --rate-family 44k1
 
 # 48 kHz family
 uv run python scripts/evaluate_probe_gates.py \
   --backend capb \
-  --checkpoint data/checkpoints/capb_48k/capb_best.pt \
+  --checkpoint data/checkpoints/capb_48k/run5_context_retrain/capb_best.pt \
   --rate-family 48k
 ```
 
@@ -108,7 +119,7 @@ uv run python scripts/run_capb_phase0.py --rate-family 48k
 ```yaml
 stage1:
   mode: capb
-  checkpoint_path: data/checkpoints/capb/capb_best.pt
+  checkpoint_path: data/checkpoints/capb/run12_context_retrain/capb_best.pt
   device: cpu
 ```
 
