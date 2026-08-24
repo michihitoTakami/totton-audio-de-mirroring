@@ -1,43 +1,59 @@
 # totton-audio-de-mirroring
 
-CAPB（Constrained Adaptive Prototype-Blend）を用いた、時間応答優先の音声アップサンプラです。
+CAPB（Constrained Adaptive Prototype-Blend）を用いた、波形の立ち上がりや立ち下がりを重視する音声アップサンプラです。
 
-44.1 kHzまたは48 kHzの入力を、固定された対称FIRプロトタイプの凸結合で2倍に補間します。小さなニューラルコントローラが信号の状態に応じてブレンド比だけを選び、FIR係数そのものや音声波形を自由生成することはありません。
+44.1 kHzまたは48 kHzの入力を、3種類の固定FIRフィルタでそれぞれ2倍に補間します。小さなニューラルネットワークが入力音声を観察し、3つの結果をどの割合で混ぜるかだけを決めます。混合比はすべて0以上で、合計は常に1です。ニューラルネットワークがFIR係数や新しい音声波形を生成することはありません。
+
+基本的な考え方は次のとおりです。
+
+1. 定常的な音では、不要な高域の複製を強く除去するフィルタを多く使う
+2. 急な立ち上がりやクリックでは、前後の振動が少ないフィルタを多く使う
+3. その中間では、3つのフィルタを連続的な割合で混ぜる
+
+### はじめに知っておく用語
+
+- FIRフィルタ: 有限個の係数で入力波形を畳み込むデジタルフィルタ。このリポジトリでは係数を左右対称にし、周波数によって遅延が変わらない直線位相にしています。
+- ナイキスト周波数: sample rateの半分の周波数です。44.1 kHz音源では22.05 kHz、48 kHz音源では24 kHzです。元のデジタル音声は、この周波数を超える情報を持ちません。
+- イメージ成分: sample rateを上げるときに生じる、元のスペクトルの不要な複製です。補間フィルタで十分に減衰させる必要があります。
+- リンギング: stepやクリックのような急変の前後に生じる振動です。周波数を急峻に切るフィルタほど長くなりやすい性質があります。
+- Besselフィルタ: 立ち上がり・立ち下がりの波形を乱しにくい、緩やかな周波数特性のフィルタです。CAPBでは低リンギング側の比較基準に使います。
+- controller: 入力音声から3つのFIRの混合比を計算するニューラルネットワークです。
+- probe / gate: probeは評価用の既知信号、gateはその測定値に対する合格条件です。
 
 ## 設計目標
 
-- 超音波成分を推測・生成しない
+- 入力のナイキスト周波数を超える未知の成分を推測・生成しない
 - 定常信号ではイメージ成分を十分に抑える
-- 不連続点ではBessel基準を超えるリンギングを生じさせない
-- 全プロトタイプを対称・同一長・同一利得・共通群遅延にそろえる
-- 平均値ではなく、canonical/held-out probeの最悪値で合否を決める
+- 不連続点では、低リンギングの比較基準であるBesselフィルタより振動を悪化させない
+- 3つのFIRを対称・同一長・同一利得・共通遅延にそろえる
+- 評価値の平均ではなく、通常probeと未学習条件を模したheld-out probeを含む最悪値で合否を決める
 
-CAPBは旧NMSEのhard 20 kHz band splitを使用しません。急峻な帯域分割自体がGibbsリンギングを戻すためです。低域透明性は構造的な完全バイパスではなく、固定FIR bankの設計とworst-caseの利得・波形・位相・群遅延gateで保証します。
+20 kHzを境に信号を急峻に分割するとGibbsリンギングが生じるため、CAPBは固定的な帯域分割を行いません。可聴帯域の忠実度は、3つのFIRの設計と、利得・波形・位相・群遅延に対する最悪値gateで確認します。
 
 ## パイプライン
 
 | 段 | 変換 | 実装 | 役割 |
 |---|---:|---|---|
-| Stage 1 | 44.1→88.2 kHz / 48→96 kHz | CAPB | リンギングとイメージ抑制のトレードオフを適応選択 |
-| Stage 2 | 88.2→705.6 kHz | DSP（2×を3段） | 時間応答を保った高レート補間 |
+| Stage 1 | 44.1→88.2 kHz / 48→96 kHz | CAPB | リンギングの少なさとイメージ抑制の強さを入力に合わせて調整 |
+| Stage 2 | 88.2→705.6 kHz | 固定DSP（2×を3段） | Stage 1の結果をさらに8倍へ補間 |
 
-Stage 1のFIR bankには`sharp`、`mid`、`gentle`があります。
+Stage 1では、3つのFIRフィルタをまとめたprototype bankを使います。
 
 - `sharp`: 定常信号向け。狭い遷移帯域と強いイメージ除去
-- `mid`: 抑制量と時間応答の中間点
-- `gentle`: Bessel-6の振幅応答へ合わせた低リンギング端点
+- `mid`: イメージ除去とリンギングの少なさの中間
+- `gentle`: 6次Besselフィルタの振幅応答へ合わせた低リンギング側
 
-各プロトタイプは共通中心へパディングされます。44.1 kHz familyは483 taps（未補償遅延241 samples @ 88.2 kHz）、48 kHz familyは277 taps（138 samples @ 96 kHz）です。centered convolutionにより出力タイムライン上の固定遅延を補償します。
+短いFIRの左右へ0を追加して3つの長さと中心位置をそろえます。44.1 kHz系列は483 taps（補償前の遅延は88.2 kHzで241 samples）、48 kHz系列は277 taps（96 kHzで138 samples）です。中心を合わせた畳み込みにより、出力上ではこの固定遅延を補償します。
 
 ## CAPBのアルゴリズム
 
-CAPBを簡単に言うと、特性の異なる3本の固定FIRを並列に動かし、小さなニューラルネットワークが音声の局所的な性質を見て、その混合比だけを時間方向に変える方式です。「3本から1本を選択する」hard switchではなく、3本の出力を連続的にブレンドします。
+CAPBは、特性の異なる3本の固定FIRを並列に動かし、小さなニューラルネットワークが音声の局所的な性質を見て、その混合比だけを時間方向に変える方式です。「3本から1本だけを選ぶ」のではなく、3本の出力を滑らかに混ぜます。
 
 ```text
 入力波形 x
-  ├─ 2x zero-stuff → sharp FIR  ─┐
-  ├─ 2x zero-stuff → mid FIR    ─┼─ 重み付き和 → Stage 1出力 y
-  └─ 2x zero-stuff → gentle FIR ─┘
+  ├─ 2倍用の0挿入 → sharp FIR  ─┐
+  ├─ 2倍用の0挿入 → mid FIR    ─┼─ 混合比を掛けて加算 → Stage 1出力 y
+  └─ 2倍用の0挿入 → gentle FIR ─┘
           │
           └─ 入力波形を解析するcontrollerが
              [sharp, mid, gentle]の混合比を出力
@@ -52,62 +68,62 @@ w_k[m]  = softmax(controller(x))[k, m]
 y[n]    = Σ_k w_k[n] y_k[n]
 ```
 
-`m`はaudio sampleより粗いcontrol frameです。frame単位の重み`w_k[m]`を出力sample数まで線形補間してから、3本のFIR出力へ適用します。softmaxを使うため、常に次の制約が成立します。
+`*`は畳み込み、`k`は3つのFIRの番号です。`m`は音声sampleより間隔の粗い制御時刻を表します。制御時刻ごとの重み`w_k[m]`を出力sample数まで直線的につないでから、3本のFIR出力へ適用します。softmax関数を使うため、常に次の制約が成立します。
 
 ```text
 w_k >= 0
 Σ_k w_k = 1
 ```
 
-つまりcontrollerは、検証済みFIRが作る範囲の外へ自由な係数を出せません。学習されるのは混合比を決めるcontrollerだけで、FIR kernelは学習中もcheckpoint読込後も固定です。
+つまりcontrollerは、検証済みFIRが作る範囲の外へ自由なフィルタ係数を出せません。学習されるのは混合比を決めるcontrollerだけで、FIR係数は学習中もcheckpoint読込後も固定です。
 
 ### 3本のFIRの役割
 
-| prototype | 周波数・時間応答の性格 | 主に使いたい信号 |
+| FIR | 周波数・時間応答の性格 | 主に使う区間 |
 |---|---|---|
-| `sharp` | 狭い遷移帯域、90 dB設計の強いimage抑制。代わりに不連続点の前後でringingが長くなりやすい | 定常tone、noise、緩やかに変化する音 |
-| `mid` | image抑制とringingの中間。48 kHz familyでは疎な過渡に対する安全側prototypeでもある | sharpとgentleの中間的な区間 |
-| `gentle` | Bessel-6の緩やかな振幅応答へ合わせた101-tap FIR。image抑制は弱いがedge ringingを抑えやすい | step、square wave、クリックなどの不連続点 |
+| `sharp` | 狭い遷移帯域、90 dB設計の強いイメージ抑制。代わりに不連続点の前後でリンギングが長くなりやすい | 定常音、ノイズ、緩やかに変化する音 |
+| `mid` | イメージ抑制とリンギングの中間。48 kHz系列では単発の過渡に対する安全側FIRでもある | `sharp`と`gentle`の中間的な区間 |
+| `gentle` | 6次Besselの緩やかな振幅応答へ合わせた101-tap FIR。イメージ抑制は弱いがedgeのリンギングを抑えやすい | step、矩形波、クリックなどの不連続点 |
 
-Kaiser型の`sharp`と`mid`はrate familyごとに遷移帯域を変えます。入力Nyquistが22.05 kHzのfamilyと24 kHzのfamilyでは利用できる遷移幅が異なるため、単純な周波数スケーリングはしません。一方、`gentle`は両familyとも20 kHz cutoffのBessel-6振幅応答を基準にします。
+Kaiser窓を使う`sharp`と`mid`はsample-rate系列ごとに遷移帯域を変えます。入力のナイキスト周波数が22.05 kHzの場合と24 kHzの場合では利用できる遷移幅が異なるため、単純な周波数スケーリングはしません。一方、`gentle`は両系列ともcutoff 20 kHzの6次Bessel振幅応答を基準にします。
 
 全FIRには次の構造制約があります。
 
-- 対称kernelによるlinear phase
-- 低域基準周波数で2倍の補間gainへ正規化
-- 短いkernelを左右対称にzero paddingし、最長kernelと中心を一致
-- 全prototypeで共通のgroup delay
+- 左右対称なFIR係数による直線位相
+- 低域の基準周波数で、2倍補間に必要な利得へ正規化
+- 短いFIRの左右へ0を追加し、最長FIRと中心を一致
+- 3つすべてで共通の群遅延
 
-zero-stuffするとbaseband振幅が1/2になるため、FIR側は補間率2のgainを持ちます。また、全FIRの位相と中心が一致しているので、混合比を変えても異なる遅延の波形同士を足して位相キャンセルを起こす構成にはなりません。
+sample間へ0を挿入すると元の帯域の振幅が1/2になるため、FIR側は補間率2に相当する利得を持ちます。また、全FIRの位相と中心が一致しているので、混合比を変えても異なる遅延の波形同士を足して位相キャンセルを起こす構成にはなりません。
 
 ### Controllerが混合比を決める方法
 
-controllerは入力波形を直接受け取る5段の小さな1次元畳み込みencoderです。各段で時間方向をdownsampleし、合計stride 64、すなわち入力64 samplesごとに3個のlogitを出します。logitへsoftmaxを適用したものが`sharp`、`mid`、`gentle`の重みです。
+controllerは入力波形を直接受け取る5段の小さな1次元畳み込みネットワークです。各段で時間方向の情報を圧縮し、入力64 samplesごとに3個の未正規化スコアを出します。このスコアへsoftmax関数を適用したものが`sharp`、`mid`、`gentle`の重みです。
 
-判定が音量へ依存しないよう、controllerへ入れる波形だけをchunk内peakで正規化します。3本のFIRは正規化前の入力を処理するため、controller用の正規化が出力音量を変えることはありません。chunk端は実波形をreflect paddingしてcontrollerの受容野を満たし、定常信号の端だけ誤って`gentle`へ寄ることを防ぎます。
+判定が音量へ依存しないよう、controllerへ入れる波形だけを処理単位内のpeakで正規化します。3本のFIRは正規化前の入力を処理するため、この正規化が出力音量を変えることはありません。処理単位の端では実波形を鏡写しにして解析に必要な前後関係を補い、定常信号の端だけ誤って`gentle`へ寄ることを防ぎます。
 
-初期混合比は`sharp: 0.85 / mid: 0.10 / gentle: 0.05`です。この固定biasから開始し、学習可能なencoderとhead weightが信号内容に応じた差分を作ります。bias自体は固定し、学習初期に常時sharpまたは常時gentleへ飽和してsoftmax勾配を失うことを防ぎます。
+初期混合比は`sharp: 0.85 / mid: 0.10 / gentle: 0.05`です。ニューラルネットワークはこの初期値を基準に、信号内容に応じて重みを増減する方法を学びます。初期値を表すbiasは固定し、学習開始直後に1本のFIRだけを常時使う状態へ偏って学習が止まることを防ぎます。
 
-学習controllerに加えて、見逃しやすい波形を決定論的に保護する2つのguardがあります。
+学習済みcontrollerに加えて、見逃しやすい波形を決められた規則で保護する2つのguardがあります。
 
-- sparse transient guard: 局所RMSに対するcrest factorが大きいクリックや単発impulseを検出し、その周辺を安全側prototypeへ寄せます。44.1 kHz familyでは`gentle`、48 kHz familyでは`mid`を使用します。
-- discontinuity guard: 大きなsample差分と平坦なplateauの密度を組み合わせ、stepやsquare waveのedgeを検出して`gentle`へ寄せます。単なるGaussian noiseを不連続信号と誤認しないため、傾きだけでは判定しません。
+- sparse transient guard: 局所的な平均音量に比べてpeakが非常に大きいクリックや単発impulseを検出し、その周辺を安全側FIRへ寄せます。44.1 kHz系列では`gentle`、48 kHz系列では`mid`を使用します。
+- discontinuity guard: 大きなsample差分と平坦区間の密度を組み合わせ、stepや矩形波のedgeを検出して`gentle`へ寄せます。単なるGaussian noiseを不連続信号と誤認しないため、傾きだけでは判定しません。
 
-guardもhard switchではなく、検出scoreが0から1へ上がるにつれて通常のcontroller重みから安全側prototypeへ凸結合します。
+guardも瞬間的な切り替えではありません。検出の確信度が0から1へ上がるにつれて、通常のcontroller重みから安全側FIRの重みへ滑らかに移動します。
 
 ### 何を学習しているか
 
-教師波形はtarget rateで生成した帯域制限済み信号です。そこから正確な2:1 decimationで入力を作るため、controllerが入力Nyquistより上の未知成分を推測する教師にはなっていません。損失関数は次の役割を分担します。
+教師波形は出力sample rateで生成した帯域制限済み信号です。そこから1 sampleおきに取り出して入力を作るため、`入力 == 教師波形[::2]`が正確に成立します。controllerへ入力のナイキスト周波数より上の未知成分を推測させる学習にはなっていません。損失関数は次の役割を分担します。
 
-- waveform L1 / multi-resolution STFT: 帯域制限済み教師との基本的な忠実度
-- plateau ripple: stepやsquare waveの平坦部に残る最悪付近のripple
-- quiet energy: impulse前後など、本来無音の領域へ漏れるpre/post-echo
-- edge ringing: `gentle`より悪化したedge近傍のripple
-- prototype selection: 既知の不連続区間では`gentle`、定常区間では強いimage抑制側を選ぶ教師信号
-- weight total variation: 混合比を時間方向に滑らかにし、急激な重み変化によるmodulationを抑える
-- entropy floor: 完全なone-hotへ早期飽和して学習不能になることを防ぐ
+- `waveform L1` / `multi-resolution STFT`: 時間波形と周波数分布を教師へ近づける
+- `plateau ripple`: stepや矩形波の平坦部に残る、特に大きなリンギングを減らす
+- `quiet energy`: impulse前後など、本来無音の領域へ漏れる前後のechoを減らす
+- `edge ringing`: 不連続点の近くで、`gentle`より大きくなったリンギングを罰する
+- `prototype selection`: 既知の不連続区間では`gentle`、定常区間ではイメージ抑制の強いFIRを選ぶよう教える
+- `weight total variation`: 混合比を時間方向に滑らかにし、重みの急変による副作用を抑える
+- `entropy floor`: 1本のFIRへ早期に完全固定され、学習できなくなることを防ぐ
 
-この設計では、ニューラルネットワークは音声sample、スペクトルmask、FIR係数を生成しません。出力に含まれる候補波形は常に固定FIRで入力から計算され、機械学習は「現在の区間ではimage抑制と時間応答のどちらをどの程度優先するか」だけを制御します。最終的な安全性は学習lossではなく、両rate familyのcanonical/held-out probeに対するworst-case gateで判定します。
+この設計では、ニューラルネットワークは音声sample、周波数ごとの加工量、FIR係数を生成しません。候補となる3つの波形は常に固定FIRで入力から計算され、機械学習は「現在の区間ではイメージ抑制と波形の自然さのどちらをどの程度優先するか」だけを制御します。最終的な合否は学習中の誤差ではなく、両sample-rate系列のすべての評価信号に対する最悪値で判定します。
 
 ## 動作環境
 
@@ -141,24 +157,24 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb_48k.yaml
 ```
 
-学習データはtarget rateでネイティブ合成し、入力Nyquist未満へlinear-phase brickwall FIRで帯域制限した後、正確に2:1 decimationして入力を作ります。したがって`source == target[::2]`が成立し、旧Bessel劣化経路は学習に入りません。
+学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。したがって`source == target[::2]`が成立します。
 
-学習されるのは約10万parameterのコントローラだけです。FIR prototype bankは固定され、checkpointにはcontroller stateとrate family metadataが保存されます。
+学習されるのは約10万parameterのcontrollerだけです。3つのFIRは固定され、checkpointにはcontrollerの学習結果と対象sample-rate系列が保存されます。
 
 ### 学習済み成果物
 
-再現確認用に、各rate familyの最新学習候補と対応する学習履歴・probe gate reportを同梱しています。
+再現確認用に、各sample-rate系列の最新学習候補と、対応する学習履歴・評価レポートを同梱しています。
 
-| rate family | checkpoint | spec v3結果 | 状態 |
+| sample-rate系列 | checkpoint | spec v3結果 | 状態 |
 |---|---|---|---|
 | 44.1→88.2 kHz | `data/checkpoints/capb/run12_context_retrain/capb_best.pt` | 全gate合格 | family候補 |
 | 48→96 kHz | `data/checkpoints/capb_48k/run5_context_retrain/capb_best.pt` | G3 image peak不合格 | 未採用・診断用 |
 
-対応する記録は`reports/capb_training/`と`reports/probe_gates/`にあります。CAPBのリリース条件は両familyの全gate合格なので、これらを組み合わせたリリースcheckpoint pairはまだ確定していません。
+対応する記録は`reports/capb_training/`と`reports/probe_gates/`にあります。CAPBのリリース条件は両系列の全gate合格なので、これらを組み合わせた正式なcheckpointの組はまだ確定していません。
 
 ## 受入評価
 
-CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両familyでcanonical/held-out probeをすべて通過するまでリリースできません。
+CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両系列で、通常評価用とheld-out評価用のprobeをすべて通過するまでリリースできません。
 
 ```bash
 # 44.1 kHz family
@@ -174,15 +190,15 @@ uv run python scripts/evaluate_probe_gates.py \
   --rate-family 48k
 ```
 
-主なgate:
+主な合格条件:
 
-- square/step: plateau RMS、P2P、overshootをBessel基準以下に保つ
-- impulse/impulse train/tone burst: pre-echoの増加を制限する
-- sweep/pink noise/multitone: image bandとsweep ridgeを`-65 dB`以下にする
-- 100 Hz–20 kHz: flatness、gain、phase、group delay、waveform errorを制限する
-- no-added-HF: Bessel基準に対する不要な高域増加を制限する
+- 矩形波とstep: 平坦部の振動、最大振幅差、飛び出し量をBessel基準以下に保つ
+- impulse、impulse列、短いtone: 音が始まる前へ漏れるechoの増加を制限する
+- sweep、pink noise、複数tone: イメージ成分を`-65 dB`以下にする
+- 100 Hz–20 kHz: 周波数特性、利得、位相、群遅延、時間波形の誤差を制限する
+- 不要な高域成分: Bessel基準に対する増加を制限する
 
-レポートは`reports/probe_gates/<label>/gate_report.json`と`gate_report.md`へ出力されます。平均値は診断用途のみで、各gateは最悪probeにbindします。
+レポートは`reports/probe_gates/<label>/gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。
 
 固定prototypeだけを検証する場合:
 
