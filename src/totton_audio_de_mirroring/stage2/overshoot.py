@@ -104,9 +104,9 @@ def upsample_2x_fir(signal: np.ndarray, taps: np.ndarray) -> np.ndarray:
         2x upsampled signal.
 
     Physical Basis:
-        Polyphase-style 2x interpolation is approximated here by explicit
-        zero-stuffing followed by FIR filtering, matching the standard DSP
-        operation used for multi-stage sample-rate conversion.
+        Zero stuffing halves the baseband amplitude. The unity-DC FIR output
+        is therefore multiplied by the interpolation ratio so a settled
+        waveform retains its input level at every stage.
     """
     _validate_1d_signal(signal, name="signal")
     _validate_1d_signal(taps, name="taps")
@@ -117,7 +117,7 @@ def upsample_2x_fir(signal: np.ndarray, taps: np.ndarray) -> np.ndarray:
     zero_stuffed = np.zeros(signal_64.shape[0] * 2, dtype=np.float64)
     zero_stuffed[::2] = signal_64
     filtered = sp_signal.lfilter(taps_64, [1.0], zero_stuffed)
-    return np.asarray(filtered, dtype=np.float64)
+    return np.asarray(filtered * 2.0, dtype=np.float64)
 
 
 def cascade_upsample(

@@ -21,9 +21,7 @@ from totton_audio_de_mirroring.inference import (
     PipelineResult,
     ReferenceStage1Processor,
     Stage1Processor,
-    load_nmse_stage1_processor,
-    load_onnx_stage1_processor,
-    load_tensorrt_stage1_processor,
+    load_capb_stage1_processor,
     run_stage1_stage2_pipeline,
 )
 
@@ -85,7 +83,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="totton-upsample",
         description=(
-            "Batch upsample audio via Stage1 (44.1kHz->88.2kHz) and "
+            "Batch upsample audio via CAPB Stage1 (44.1kHz->88.2kHz) and "
             "Stage2 (88.2kHz->705.6kHz)."
         ),
     )
@@ -302,8 +300,7 @@ def _build_pipeline_config(raw: Any) -> PipelineConfig:
         crossfade_duration_sec=_coerce_optional_float(
             raw.get("crossfade_duration_sec")
         ),
-        stage1_energy_cap=float(raw.get("stage1_energy_cap", 1.0e-3)),
-        evaluate_stage1_metrics=bool(raw.get("evaluate_stage1_metrics", True)),
+        retain_stage1_signal=bool(raw.get("retain_stage1_signal", False)),
     )
 
 
@@ -321,56 +318,14 @@ def _build_stage1_processor(
     mode = str(raw.get("mode", "reference")).strip().lower()
     if mode == "reference":
         return ReferenceStage1Processor()
-    if mode == "nmse":
+    if mode == "capb":
         checkpoint_raw = raw.get("checkpoint_path")
         if checkpoint_raw is None:
-            raise ValueError("stage1.mode=nmse requires checkpoint_path.")
+            raise ValueError("stage1.mode=capb requires checkpoint_path.")
         device = str(device_override or raw.get("device", "cpu"))
-        data_config_path = Path(
-            str(raw.get("data_config_path", "configs/data_generation.yaml"))
-        )
-        return load_nmse_stage1_processor(
+        return load_capb_stage1_processor(
             checkpoint_path=Path(str(checkpoint_raw)),
-            data_config_path=data_config_path,
             device=device,
-        )
-    if mode == "onnx":
-        model_raw = raw.get("model_path")
-        if model_raw is None:
-            raise ValueError("stage1.mode=onnx requires model_path.")
-        device = str(device_override or raw.get("device", "cuda"))
-        data_config_path = Path(
-            str(raw.get("data_config_path", "configs/data_generation.yaml"))
-        )
-        energy_cap_raw = raw.get("energy_cap")
-        energy_cap = None if energy_cap_raw is None else float(energy_cap_raw)
-        iir_order = int(raw.get("iir_order", 6))
-        allow_cpu_fallback = bool(raw.get("allow_cpu_fallback", False))
-        return load_onnx_stage1_processor(
-            model_path=Path(str(model_raw)),
-            data_config_path=data_config_path,
-            device=device,
-            energy_cap=energy_cap,
-            iir_order=iir_order,
-            allow_cpu_fallback=allow_cpu_fallback,
-        )
-    if mode == "tensorrt":
-        engine_raw = raw.get("engine_path")
-        if engine_raw is None:
-            raise ValueError("stage1.mode=tensorrt requires engine_path.")
-        device = str(device_override or raw.get("device", "cuda"))
-        data_config_path = Path(
-            str(raw.get("data_config_path", "configs/data_generation.yaml"))
-        )
-        energy_cap_raw = raw.get("energy_cap")
-        energy_cap = None if energy_cap_raw is None else float(energy_cap_raw)
-        iir_order = int(raw.get("iir_order", 6))
-        return load_tensorrt_stage1_processor(
-            engine_path=Path(str(engine_raw)),
-            data_config_path=data_config_path,
-            device=device,
-            energy_cap=energy_cap,
-            iir_order=iir_order,
         )
     raise ValueError(f"Unsupported stage1.mode: {mode}")
 
@@ -564,8 +519,6 @@ def _write_metadata(
         "num_output_samples": int(result.output_signal.shape[0]),
         "performance": asdict(result.performance),
     }
-    if result.stage1_metrics is not None:
-        payload["stage1_metrics"] = asdict(result.stage1_metrics)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

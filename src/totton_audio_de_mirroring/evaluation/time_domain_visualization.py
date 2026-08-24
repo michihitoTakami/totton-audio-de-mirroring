@@ -25,7 +25,7 @@ class SquareWaveMetrics:
     Physical Basis:
         Bessel filters have maximally flat group delay, resulting in
         zero overshoot and no ringing on step response. This property
-        should be preserved through NMSE processing.
+        should be preserved through CAPB processing.
     """
 
     time_ms: np.ndarray
@@ -200,23 +200,27 @@ def compute_edge_aligned_ringing_metrics(
     plateau_end_index = min(signal.size, plateau_end_index)
     if plateau_end_index <= plateau_start_index:
         raise ValueError("plateau window is empty for detected edge")
+    orientation = _edge_orientation(
+        signal, edge_index, plateau_start_offset, plateau_end_offset
+    )
+    oriented_signal = signal * orientation
 
-    plateau = signal[plateau_start_index:plateau_end_index]
+    plateau = oriented_signal[plateau_start_index:plateau_end_index]
     plateau_reference = float(np.median(plateau))
     plateau_error = plateau - plateau_reference
     plateau_ripple_rms = float(np.sqrt(np.mean(np.square(plateau_error))))
     plateau_ripple_p2p = float(np.max(plateau) - np.min(plateau))
 
-    post_window = signal[edge_index:plateau_end_index]
+    post_window = oriented_signal[edge_index:plateau_end_index]
     overshoot_abs = float(max(float(np.max(post_window) - plateau_reference), 0.0))
     undershoot_abs = float(max(float(plateau_reference - np.min(post_window)), 0.0))
 
     ringing_window_samples = int(round(ringing_window_ms * sample_rate / 1000.0))
     ringing_window_samples = max(1, ringing_window_samples)
     pre_start = max(0, edge_index - ringing_window_samples)
-    pre_window = signal[pre_start:edge_index]
+    pre_window = oriented_signal[pre_start:edge_index]
     post_end = min(signal.size, edge_index + ringing_window_samples)
-    post_ringing_window = signal[edge_index:post_end]
+    post_ringing_window = oriented_signal[edge_index:post_end]
     if pre_window.size == 0 or post_ringing_window.size == 0:
         raise ValueError("ringing windows are empty around detected edge")
 
@@ -553,14 +557,14 @@ def plot_square_wave_response(
     """Plot square wave response comparison.
 
     Args:
-        before_metrics: Metrics before NMSE processing.
-        after_metrics: Metrics after NMSE processing.
+        before_metrics: Bessel reference metrics.
+        after_metrics: CAPB output metrics.
         output_path: Path to save PNG.
         title: Plot title.
 
     Physical Basis:
         Visual inspection reveals overshoot and ringing. Bessel filters
-        maintain zero overshoot; NMSE should preserve this property.
+        maintain low overshoot; CAPB must not regress this property.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -616,8 +620,8 @@ def plot_impulse_response(
     """Plot impulse response comparison.
 
     Args:
-        before_metrics: Metrics before NMSE processing.
-        after_metrics: Metrics after NMSE processing.
+        before_metrics: Bessel reference metrics.
+        after_metrics: CAPB output metrics.
         output_path: Path to save PNG.
         title: Plot title.
 
@@ -698,7 +702,7 @@ def plot_waveform_comparison(
     ax1.plot(
         metrics.time_ms,
         metrics.output_signal,
-        label="Output (NMSE)",
+        label="CAPB output",
         alpha=0.7,
         linewidth=1.5,
     )
@@ -746,6 +750,22 @@ def _detect_edge_index(signal: np.ndarray) -> int:
     center_index = signal.size // 2
     nearest = int(np.argmin(np.abs(transitions - center_index)))
     return int(transitions[nearest])
+
+
+def _edge_orientation(
+    signal: np.ndarray,
+    edge_index: int,
+    plateau_start_offset: int,
+    plateau_end_offset: int,
+) -> float:
+    """Return +1 for rising and -1 for falling detected edges."""
+    pre_start = max(0, edge_index - plateau_end_offset)
+    pre_end = max(pre_start + 1, edge_index - plateau_start_offset)
+    post_start = min(signal.size - 1, edge_index + plateau_start_offset)
+    post_end = min(signal.size, edge_index + plateau_end_offset)
+    before = float(np.median(signal[pre_start:pre_end]))
+    after = float(np.median(signal[post_start:post_end]))
+    return 1.0 if after >= before else -1.0
 
 
 def _window_ripple_energy(window: np.ndarray) -> float:

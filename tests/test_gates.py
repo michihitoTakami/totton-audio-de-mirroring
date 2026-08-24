@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy import signal as sp_signal
 
-from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
+from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
 from totton_audio_de_mirroring.evaluation.gates import (
     ProbeEvaluation,
     Stage1GateConfig,
@@ -105,6 +105,29 @@ def test_config_override_tightens_gate() -> None:
     strict = Stage1GateConfig(plateau_rms_floor_rel=1.0e-5)
     report = evaluate_gates([evaluation], config=strict)
     gate = next(g for g in report.gates if g.gate_id == "G1_lf_ringing")
+    assert not gate.passed
+
+
+def test_sweep_peak_image_metric_is_worst_case_binding() -> None:
+    evaluation = ProbeEvaluation(
+        spec=ProbeSpec(
+            probe_id="sweep",
+            kind="sweep_log",
+            tier=TIER_CANONICAL,
+        ),
+        metrics={
+            "image_rel_db": -100.0,
+            "image_peak_rel_db": -45.0,
+            "image_abs_db": -150.0,
+            "image_before_abs_db": -40.0,
+            "gain_error_db": 0.0,
+            "gain_band_fraction": 1.0,
+        },
+    )
+    report = evaluate_gates([evaluation])
+    gate = next(g for g in report.gates if g.gate_id == "G3_mirror")
+    peak_row = next(r for r in gate.rows if r.metric == "image_peak_rel_db")
+    assert not peak_row.passed
     assert not gate.passed
 
 

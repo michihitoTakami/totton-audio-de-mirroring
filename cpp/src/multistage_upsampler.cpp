@@ -52,8 +52,11 @@ std::vector<double> FirUpsampler2x::process_block(const double* input, std::size
             history_[history_pos_] = input[n];
         }
 
-        const double even = dot(even_taps_);
-        const double odd = dot(odd_taps_);
+        // Unity-DC FIR taps operate on a stream containing one inserted zero
+        // per input sample. Compensate the resulting 1/2 baseband gain so
+        // every 2x interpolation stage preserves the settled signal level.
+        const double even = 2.0 * dot(even_taps_);
+        const double odd = 2.0 * dot(odd_taps_);
         output.push_back(even);
         output.push_back(odd);
     }
@@ -83,11 +86,11 @@ std::size_t FirUpsampler2x::output_length_for_input(std::size_t input_length) co
 }
 
 double FirUpsampler2x::steady_state_dc_gain_even() const {
-    return std::accumulate(even_taps_.begin(), even_taps_.end(), 0.0);
+    return 2.0 * std::accumulate(even_taps_.begin(), even_taps_.end(), 0.0);
 }
 
 double FirUpsampler2x::steady_state_dc_gain_odd() const {
-    return std::accumulate(odd_taps_.begin(), odd_taps_.end(), 0.0);
+    return 2.0 * std::accumulate(odd_taps_.begin(), odd_taps_.end(), 0.0);
 }
 
 double FirUpsampler2x::dot(const std::vector<double>& taps) const {

@@ -55,3 +55,32 @@ def test_cpp_stage2_backend_rejects_missing_config_dir(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="config directory not found"):
         _ = CppStage2Upsampler(runtime)
+
+
+def test_cpp_stage2_backend_preserves_settled_dc_level(tmp_path: Path) -> None:
+    """Three unity-gain stages should not attenuate a settled waveform.
+
+    Physical Basis:
+        Each 2x zero-stuff stage requires interpolation-ratio gain
+        compensation; otherwise three stages reduce level by 18.06 dB.
+    """
+    if shutil.which("cmake") is None:
+        pytest.skip("cmake not available")
+
+    config_dir = tmp_path / "gain_taps"
+    config_dir.mkdir()
+    for index in range(1, 4):
+        (config_dir / f"stage{index}_taps.txt").write_text(
+            "0.5\n0.5\n", encoding="utf-8"
+        )
+    runtime = CppStage2RuntimeConfig(
+        config_dir=config_dir,
+        num_stages=3,
+        cpp_project_dir=Path("cpp"),
+        cpp_build_dir=tmp_path / "gain_build",
+    )
+
+    with CppStage2Upsampler(runtime) as upsampler:
+        output = upsampler.process(np.ones(128, dtype=np.float64))
+
+    np.testing.assert_allclose(output[256:], 1.0, rtol=0.0, atol=1e-12)

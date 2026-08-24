@@ -31,6 +31,17 @@ DEFAULT_INIT_WEIGHTS = (0.85, 0.10, 0.05)
 _CONTROLLER_CHANNELS = (24, 32, 40, 48, 48)
 _CONTROLLER_STRIDES = (2, 2, 2, 2, 4)
 _CONTROLLER_KERNEL = 9
+_TRANSIENT_RMS_WINDOW = 257
+_TRANSIENT_CREST_START = 6.0
+_TRANSIENT_CREST_FULL = 12.0
+_TRANSIENT_FRAME_DILATION = 5
+_CONTROLLER_CONTEXT_PAD = 128
+_DISCONTINUITY_WINDOW = 257
+_DISCONTINUITY_FLAT_EPSILON = 1.0e-4
+_DISCONTINUITY_FLAT_START = 0.70
+_DISCONTINUITY_FLAT_FULL = 0.90
+_DISCONTINUITY_SLOPE_START = 0.25
+_DISCONTINUITY_SLOPE_FULL = 0.50
 
 
 class CAPBController(nn.Module):
@@ -131,6 +142,7 @@ class CAPB(nn.Module):
         if bank is None:
             bank = build_prototype_bank(DEFAULT_PROTOTYPE_SPECS)
         self.upsample_ratio = bank.upsample_ratio
+        self.target_sample_rate = bank.sample_rate
         self.num_prototypes = len(bank.names)
         self.prototype_names = bank.names
         self.kernel_size = int(bank.kernels.shape[1])
@@ -164,9 +176,7 @@ class CAPB(nn.Module):
             raise ValueError("source must be a non-empty (batch, time) tensor.")
 
         prototype_outputs = self._prototype_outputs(source)
-        peak = source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
-        logits = self.controller(source / peak)
-        weights = torch.softmax(logits, dim=1)
+        weights = self.blend_weights(source)
         weights_up = F.interpolate(
             weights,
             size=prototype_outputs.shape[-1],
@@ -175,6 +185,137 @@ class CAPB(nn.Module):
         )
         output = (weights_up * prototype_outputs).sum(dim=1)
         return output, weights, prototype_outputs
+
+    def blend_weights(self, source: torch.Tensor) -> torch.Tensor:
+        """Return convex weights with deterministic sparse-event safety.
+
+        Args:
+            source: Input waveform (batch, time) at the source rate.
+
+        Returns:
+            Guarded blend weights (batch, prototypes, control frames).
+
+        Physical Basis:
+            A single-sample impulse is too sparse for corpus-averaged losses
+            to classify reliably, yet the sharp FIR's symmetric support can
+            create measurable pre-echo. A local crest-factor guard detects
+            only sparse high-peak events and biases their surrounding frames
+            toward the rate-family prototype that satisfies both pre-echo and
+            gain gates. Stationary tones, squares, and Gaussian noise remain
+            below the crest threshold. A separate discontinuity-density guard
+            sends square/step edges to gentle without selecting Gaussian noise.
+        """
+        peak = source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
+        normalized = source / peak
+        logits = self._context_padded_controller(normalized)
+        weights = torch.softmax(logits, dim=1)
+        transient_score = self._sparse_transient_score(normalized, logits.shape[-1])
+        discontinuity_score = self._discontinuity_score(normalized, logits.shape[-1])
+        gentle_score = discontinuity_score
+        gentle_index = self.prototype_names.index("gentle")
+        gentle = torch.zeros_like(weights)
+        gentle[:, gentle_index] = 1.0
+        weights = weights * (
+            1.0 - gentle_score.unsqueeze(1)
+        ) + gentle * gentle_score.unsqueeze(1)
+        return self._apply_sparse_transient_guard(weights, transient_score)
+
+    def _apply_sparse_transient_guard(
+        self, weights: torch.Tensor, score: torch.Tensor
+    ) -> torch.Tensor:
+        """Blend sparse events toward the rate-family-safe prototype."""
+        safe_name = "mid" if self.target_sample_rate == 96_000 else "gentle"
+        safe = torch.zeros_like(weights)
+        safe[:, self.prototype_names.index(safe_name)] = 1.0
+        return weights * (1.0 - score.unsqueeze(1)) + safe * score.unsqueeze(1)
+
+    def _context_padded_controller(self, normalized: torch.Tensor) -> torch.Tensor:
+        """Run the controller with signal-derived boundary context.
+
+        Physical Basis:
+            Forcing incomplete boundary frames to the gentle prototype avoids
+            ringing but weakens image rejection at chunk ends. Reflecting real
+            waveform context across each boundary fills the controller's
+            receptive field without changing the FIR blend policy, allowing a
+            steady high-frequency sweep to retain the sharp stopband response.
+        """
+        mode = (
+            "reflect" if normalized.shape[-1] > _CONTROLLER_CONTEXT_PAD else "replicate"
+        )
+        padded = F.pad(
+            normalized.unsqueeze(1),
+            (_CONTROLLER_CONTEXT_PAD, _CONTROLLER_CONTEXT_PAD),
+            mode=mode,
+        ).squeeze(1)
+        padded_logits = self.controller(padded)
+        crop_frames = _CONTROLLER_CONTEXT_PAD // self.control_stride
+        return torch.as_tensor(padded_logits[..., crop_frames:-crop_frames])
+
+    @staticmethod
+    def _sparse_transient_score(
+        normalized_source: torch.Tensor, num_frames: int
+    ) -> torch.Tensor:
+        """Return a frame-rate sparse-event score in [0, 1]."""
+        squared = normalized_source.unsqueeze(1).square()
+        local_rms = torch.sqrt(
+            F.avg_pool1d(
+                squared,
+                kernel_size=_TRANSIENT_RMS_WINDOW,
+                stride=1,
+                padding=_TRANSIENT_RMS_WINDOW // 2,
+            ).clamp_min(1.0e-12)
+        )
+        crest = normalized_source.abs().unsqueeze(1) / local_rms
+        score = (
+            (crest - _TRANSIENT_CREST_START)
+            / (_TRANSIENT_CREST_FULL - _TRANSIENT_CREST_START)
+        ).clamp(0.0, 1.0)
+        frames = F.adaptive_max_pool1d(score, num_frames)
+        dilated = F.max_pool1d(
+            frames,
+            kernel_size=_TRANSIENT_FRAME_DILATION,
+            stride=1,
+            padding=_TRANSIENT_FRAME_DILATION // 2,
+        )
+        return dilated.squeeze(1)
+
+    @staticmethod
+    def _discontinuity_score(
+        normalized_source: torch.Tensor, num_frames: int
+    ) -> torch.Tensor:
+        """Return a guard score for sparse, large waveform discontinuities.
+
+        Physical Basis:
+            Square/step signals have large sample differences separated by
+            exactly flat plateaus. Gaussian noise and multitone signals do not
+            have a high density of equal adjacent samples. Combining a large
+            slope with plateau density therefore protects discontinuities
+            without repeating the former noise false positive.
+        """
+        difference = F.pad(normalized_source.diff(dim=-1), (1, 0)).abs()
+        flat = (difference <= _DISCONTINUITY_FLAT_EPSILON).to(difference.dtype)
+        flat_density = F.avg_pool1d(
+            flat.unsqueeze(1),
+            kernel_size=_DISCONTINUITY_WINDOW,
+            stride=1,
+            padding=_DISCONTINUITY_WINDOW // 2,
+        )
+        plateau_score = (
+            (flat_density - _DISCONTINUITY_FLAT_START)
+            / (_DISCONTINUITY_FLAT_FULL - _DISCONTINUITY_FLAT_START)
+        ).clamp(0.0, 1.0)
+        slope_score = (
+            (difference.unsqueeze(1) - _DISCONTINUITY_SLOPE_START)
+            / (_DISCONTINUITY_SLOPE_FULL - _DISCONTINUITY_SLOPE_START)
+        ).clamp(0.0, 1.0)
+        score = plateau_score * slope_score
+        frames = F.adaptive_max_pool1d(score, num_frames)
+        return F.max_pool1d(
+            frames,
+            kernel_size=_TRANSIENT_FRAME_DILATION,
+            stride=1,
+            padding=_TRANSIENT_FRAME_DILATION // 2,
+        ).squeeze(1)
 
     def forward(
         self, source: torch.Tensor, return_weights: bool = False
@@ -230,7 +371,7 @@ class CAPB(nn.Module):
             immediately in the mean weight statistics during training.
         """
         with torch.no_grad():
-            weights = torch.softmax(self.controller(source), dim=1)
+            weights = self.blend_weights(source)
         return weights.mean(dim=(0, 2))
 
 

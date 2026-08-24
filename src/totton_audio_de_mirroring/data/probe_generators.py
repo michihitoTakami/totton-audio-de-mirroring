@@ -58,6 +58,43 @@ def generate_square_wave(
     return (amplitude * np.asarray(wave, dtype=np.float64)).astype(np.float32)
 
 
+def generate_dense_square_wave(
+    frequency_hz: float = 5_000.0,
+    duty: float = 0.5,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+    duration_sec: float = DEFAULT_DURATION_SEC,
+    amplitude: float = DEFAULT_AMPLITUDE,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Generate a dense-edge square wave for CAPB transient training.
+
+    Args:
+        frequency_hz: Fundamental frequency in Hz.
+        duty: Duty cycle in (0, 1).
+        sample_rate: Sample rate in Hz.
+        duration_sec: Signal duration in seconds.
+        amplitude: Peak amplitude.
+        rng: Optional RNG (unused; squares are deterministic).
+
+    Returns:
+        Dense square-wave signal as float32.
+
+    Physical Basis:
+        Above roughly 4 kHz the intervals between edges are too short for
+        the plateau mask to expose settling ripple. Keeping this family
+        distinct lets the dataset apply generator-labelled edge supervision
+        without enabling a slope detector on stationary broadband noise.
+    """
+    return generate_square_wave(
+        frequency_hz=frequency_hz,
+        duty=duty,
+        sample_rate=sample_rate,
+        duration_sec=duration_sec,
+        amplitude=amplitude,
+        rng=rng,
+    )
+
+
 def generate_sawtooth_wave(
     frequency_hz: float = 500.0,
     width: float = 1.0,
@@ -163,6 +200,7 @@ def generate_step_plateau(
 def generate_tone_burst(
     frequency_hz: float = 5_000.0,
     burst_ms: float = 20.0,
+    center_fraction: float | None = None,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     duration_sec: float = DEFAULT_DURATION_SEC,
     amplitude: float = DEFAULT_AMPLITUDE,
@@ -173,6 +211,7 @@ def generate_tone_burst(
     Args:
         frequency_hz: Carrier frequency in Hz.
         burst_ms: Burst length in milliseconds.
+        center_fraction: Optional normalized burst-center position in [0, 1].
         sample_rate: Sample rate in Hz.
         duration_sec: Signal duration in seconds.
         amplitude: Peak amplitude.
@@ -194,10 +233,15 @@ def generate_tone_burst(
         raise ValueError(f"frequency_hz must be in (0, Nyquist), got {frequency_hz}.")
     if burst_ms <= 0.0:
         raise ValueError(f"burst_ms must be positive, got {burst_ms}.")
+    if center_fraction is not None and not 0.0 <= center_fraction <= 1.0:
+        raise ValueError("center_fraction must be in [0, 1].")
 
     num_samples = _num_samples(sample_rate, duration_sec)
     burst_len = min(num_samples, max(3, int(burst_ms * sample_rate / 1_000.0)))
-    if rng is None:
+    if center_fraction is not None:
+        center = int(round(center_fraction * (num_samples - 1)))
+        start = int(np.clip(center - burst_len // 2, 0, num_samples - burst_len))
+    elif rng is None:
         start = (num_samples - burst_len) // 2
     else:
         start = int(rng.integers(0, max(1, num_samples - burst_len)))
@@ -367,6 +411,7 @@ def _validate_common(sample_rate: int, duration_sec: float, amplitude: float) ->
 
 PROBE_FAMILY_GENERATORS: dict[str, Callable[..., np.ndarray]] = {
     "square_wave": generate_square_wave,
+    "dense_square_wave": generate_dense_square_wave,
     "sawtooth_wave": generate_sawtooth_wave,
     "step_plateau": generate_step_plateau,
     "tone_burst": generate_tone_burst,

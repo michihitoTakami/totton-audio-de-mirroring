@@ -4,13 +4,12 @@ Backends:
 - ``prototype:<name>``: a fixed kernel from the CAPB prototype bank.
 - ``bessel``: the Bessel reference SRC itself (sanity baseline).
 - ``ideal``: an ideal polyphase resampler (upper fidelity baseline).
-- ``checkpoint``: an NMSE checkpoint fed with the Bessel reference signal.
+- ``capb``: a CAPB checkpoint, or the untrained structural baseline.
 
 Usage examples:
     uv run python scripts/evaluate_probe_gates.py --backend prototype:gentle
-    uv run python scripts/evaluate_probe_gates.py --backend checkpoint \
-        --checkpoint data/checkpoints/stage1_best.pt \
-        --data-config configs/data_generation.yaml
+    uv run python scripts/evaluate_probe_gates.py --backend capb \
+        --checkpoint data/checkpoints/capb/capb_best.pt
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from pathlib import Path
 import numpy as np
 from scipy import signal as sp_signal
 
-from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
+from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
 from totton_audio_de_mirroring.evaluation.gates import (
     ProbeEvaluation,
     evaluate_gates,
@@ -61,7 +60,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", type=str, required=True)
     parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--data-config", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--rate-family", choices=sorted(RATE_FAMILIES), default="44k1")
     parser.add_argument(
@@ -153,13 +151,6 @@ def _build_backend(args: argparse.Namespace, target_sr: int) -> ModelFn:
             sp_signal.resample_poly(source, 2, 1), dtype=np.float64
         )
 
-    if backend == "checkpoint":
-        if args.checkpoint is None or args.data_config is None:
-            raise ValueError(
-                "checkpoint backend requires --checkpoint and --data-config."
-            )
-        return _build_checkpoint_backend(args.checkpoint, args.data_config, args.device)
-
     if backend == "capb":
         return _build_capb_backend(args.checkpoint, args.device, target_sr)
 
@@ -210,72 +201,6 @@ def _build_capb_backend(
         return np.asarray(output.squeeze(0).cpu().numpy(), dtype=np.float64)
 
     return capb_fn
-
-
-def _build_checkpoint_backend(
-    checkpoint_path: Path, data_config_path: Path, device: str
-) -> ModelFn:
-    """Restore an NMSE checkpoint for Stage 1-domain inference.
-
-    Physical Basis:
-        Matching training-time band-split filters and energy cap keeps
-        checkpoint inference aligned with NMSE safety constraints; the
-        model consumes the Bessel reference signal exactly as in training.
-    """
-    import torch
-
-    from totton_audio_de_mirroring.data.filters import design_band_split_filters
-    from totton_audio_de_mirroring.data.pipeline_config import load_data_config
-    from totton_audio_de_mirroring.models.nmse import NMSE
-
-    data_config = load_data_config(data_config_path)
-    lowpass_taps, highpass_taps = design_band_split_filters(
-        cutoff_hz=data_config.band_split.cutoff_hz,
-        sample_rate=data_config.band_split.sample_rate,
-        num_taps=data_config.band_split.num_taps,
-        window=data_config.band_split.window,
-    )
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    training_config_raw = checkpoint.get("training_config", {})
-    energy_cap = float(
-        training_config_raw.get("energy_cap", data_config.hb_target.energy_cap)
-    )
-    model = NMSE(
-        sample_rate=data_config.target_sample_rate,
-        cutoff_hz=data_config.band_split.cutoff_hz,
-        energy_cap=energy_cap,
-        envelope_floor=data_config.hb_target.envelope_min,
-        lowpass_taps=lowpass_taps,
-        highpass_taps=highpass_taps,
-    )
-    model_state = checkpoint.get("model_state")
-    if not isinstance(model_state, dict):
-        raise RuntimeError(f"Invalid checkpoint model_state: {checkpoint_path}")
-    incompatible = model.load_state_dict(model_state, strict=False)
-    if incompatible.unexpected_keys:
-        raise RuntimeError(
-            f"Unexpected checkpoint keys: {incompatible.unexpected_keys}"
-        )
-    if incompatible.missing_keys:
-        print(
-            "Warning: checkpoint predates buffers "
-            f"{incompatible.missing_keys}; using model defaults."
-        )
-    model.eval()
-    torch_device = torch.device(device)
-    model = model.to(torch_device)
-
-    def checkpoint_fn(_source: np.ndarray, bessel_ref: np.ndarray) -> np.ndarray:
-        with torch.no_grad():
-            tensor = (
-                torch.from_numpy(np.asarray(bessel_ref, dtype=np.float32))
-                .unsqueeze(0)
-                .to(torch_device)
-            )
-            output = model(tensor)
-        return np.asarray(output.squeeze(0).detach().cpu().numpy(), dtype=np.float64)
-
-    return checkpoint_fn
 
 
 if __name__ == "__main__":

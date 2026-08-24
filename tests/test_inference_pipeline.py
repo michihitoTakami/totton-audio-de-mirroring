@@ -16,7 +16,6 @@ from totton_audio_de_mirroring.inference.chunk_processor import (
 from totton_audio_de_mirroring.inference.pipeline import (
     PipelineConfig,
     ReferenceStage1Processor,
-    _build_unet_from_model_config,
     run_stage1_stage2_pipeline,
 )
 
@@ -73,39 +72,12 @@ def test_run_pipeline_reference_mode_outputs_16x_rate(tmp_path: Path) -> None:
 
     assert result.output_signal.ndim == 1
     assert result.output_signal.shape[0] == signal.shape[0] * 16
-    assert result.stage1_signal is not None
-    assert result.stage1_reference is not None
-    assert result.stage1_metrics is not None
+    assert result.stage1_signal is None
+    assert result.stage1_reference is None
     assert result.performance.latency_sec >= 0.0
     assert result.performance.throughput_x_realtime > 0.0
     assert result.performance.num_chunks >= 1
     assert result.performance.chunk_latency_ms >= 0.0
-
-
-def test_pipeline_stage1_energy_cap_violation_detectable(tmp_path: Path) -> None:
-    """Hard-metric payload should flag cap violations under tiny cap."""
-    config_dir = tmp_path / "taps_cap"
-    config_dir.mkdir()
-    for i in range(1, 4):
-        (config_dir / f"stage{i}_taps.txt").write_text("1.0\n", encoding="utf-8")
-
-    config = PipelineConfig(
-        stage2_config_dir=config_dir,
-        stage2_backend="python",
-        chunk_duration_sec=0.02,
-        overlap_ratio=0.5,
-        chunk_window="hann",
-        stage1_energy_cap=1.0e-10,
-    )
-    processor = ReferenceStage1Processor()
-    noise = np.random.default_rng(0).standard_normal(4410).astype(np.float64) * 0.1
-
-    result = run_stage1_stage2_pipeline(
-        noise, stage1_processor=processor, config=config
-    )
-
-    assert result.stage1_metrics is not None
-    assert result.stage1_metrics.hb_energy_cap_violated
 
 
 def test_run_pipeline_cpp_backend_outputs_16x_rate(tmp_path: Path) -> None:
@@ -122,7 +94,7 @@ def test_run_pipeline_cpp_backend_outputs_16x_rate(tmp_path: Path) -> None:
         chunk_duration_sec=0.02,
         overlap_ratio=0.5,
         chunk_window="hann",
-        evaluate_stage1_metrics=False,
+        retain_stage1_signal=False,
     )
     processor = ReferenceStage1Processor()
     signal = np.sin(2.0 * np.pi * 440.0 * np.arange(2205, dtype=np.float64) / 44_100.0)
@@ -135,7 +107,6 @@ def test_run_pipeline_cpp_backend_outputs_16x_rate(tmp_path: Path) -> None:
     assert result.output_signal.shape[0] == signal.shape[0] * 16
     assert result.stage1_signal is None
     assert result.stage1_reference is None
-    assert result.stage1_metrics is None
     assert result.performance.num_chunks >= 1
     assert result.performance.chunk_latency_ms >= 0.0
 
@@ -154,20 +125,3 @@ def test_chunk_processing_config_matches_issue_defaults() -> None:
     assert config.chunk_samples == 11_025
     assert config.overlap_samples in {5_512, 5_513}
     assert config.hop_samples == config.chunk_samples - config.overlap_samples
-
-
-def test_build_unet_from_model_config_restores_custom_shape() -> None:
-    """Inference loader should restore U-Net topology from checkpoint metadata."""
-    model = _build_unet_from_model_config(
-        {
-            "model_type": "nmse",
-            "base_channels": 24,
-            "num_downsamples": 3,
-            "channel_multiplier": 2,
-            "activation": "relu",
-            "use_batch_norm": "false",
-            "output_activation": "sigmoid",
-        }
-    )
-    assert len(model.down_blocks) == 3
-    assert model.input_conv.net[0].out_channels == 24

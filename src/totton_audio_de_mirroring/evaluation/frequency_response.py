@@ -109,8 +109,8 @@ def plot_frequency_response(
     """Plot frequency response comparison before/after processing.
 
     Args:
-        before_metrics: Frequency response before NMSE processing.
-        after_metrics: Frequency response after NMSE processing.
+        before_metrics: Reference frequency response.
+        after_metrics: CAPB frequency response.
         output_path: Path to save PNG image.
         title: Plot title.
         max_freq_khz: Maximum frequency to display in kHz (None = Nyquist).
@@ -146,7 +146,7 @@ def plot_frequency_response(
     ax1.plot(
         freq_after_khz,
         after_metrics.magnitude_db,
-        label="After (NMSE)",
+        label="CAPB output",
         alpha=0.7,
         linewidth=1.5,
     )
@@ -218,8 +218,8 @@ def evaluate_frequency_response_pair(
     """Evaluate and plot frequency response for signal pair.
 
     Args:
-        before_signal: Signal before NMSE processing.
-        after_signal: Signal after NMSE processing.
+        before_signal: Reference signal.
+        after_signal: CAPB output signal.
         sample_rate: Sample rate in Hz.
         output_path: Path to save visualization.
         n_fft: FFT size for analysis.
@@ -233,7 +233,7 @@ def evaluate_frequency_response_pair(
         ValueError: If signals are incompatible.
 
     Physical Basis:
-        Comparing frequency response before/after NMSE processing verifies
+        Comparing the reference and CAPB frequency responses verifies
         that the network suppresses mirror artifacts while preserving
         the 0-20kHz passband and not generating ultrasonic content.
     """

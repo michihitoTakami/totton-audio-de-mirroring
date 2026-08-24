@@ -3,34 +3,21 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Protocol
 
 import numpy as np
 import torch
 from torch import nn
 
-from totton_audio_de_mirroring.data.degradation import upsample_bessel_reference
-from totton_audio_de_mirroring.data.filters import design_band_split_filters
-from totton_audio_de_mirroring.data.pipeline_config import load_data_config
-from totton_audio_de_mirroring.evaluation.metrics import (
-    Stage1HardMetrics,
-    evaluate_stage1_hard_metrics,
-)
+from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
 from totton_audio_de_mirroring.inference.chunk_processor import (
     ChunkProcessingConfig,
     HannOverlapAddStreamer,
     iterate_chunk_frames,
 )
-from totton_audio_de_mirroring.models.nmse import NMSE
-from totton_audio_de_mirroring.models.nmse_light import (
-    MODEL_TYPE_NMSE_LIGHT,
-    NMSELight,
-    NMSELightConfig,
-)
-from totton_audio_de_mirroring.models.unet import UNet2D
 from totton_audio_de_mirroring.stage2.cpp_backend import (
     CppStage2RuntimeConfig,
     CppStage2Upsampler,
@@ -55,8 +42,8 @@ class PipelineConfig:
         overlap_ratio: Chunk overlap ratio (fixed to 0.5).
         chunk_window: Stitching window type (fixed to "hann").
         crossfade_duration_sec: Legacy option converted to overlap_ratio.
-        stage1_energy_cap: Energy cap used for Stage 1 hard-metric checks.
-        evaluate_stage1_metrics: Whether to compute Stage 1 hard metrics.
+        retain_stage1_signal: Whether to retain the assembled CAPB output and
+            Bessel comparison reference in the result.
 
     Physical Basis:
         Chunked processing with Hann-window overlap-add prevents boundary artifacts
@@ -75,8 +62,7 @@ class PipelineConfig:
     overlap_ratio: float = 0.5
     chunk_window: str = "hann"
     crossfade_duration_sec: float | None = None
-    stage1_energy_cap: float = 1.0e-3
-    evaluate_stage1_metrics: bool = True
+    retain_stage1_signal: bool = False
 
     def __post_init__(self) -> None:
         if self.source_sample_rate <= 0:
@@ -106,9 +92,6 @@ class PipelineConfig:
         window = self.chunk_window.strip().lower()
         if window != "hann":
             raise ValueError("chunk_window must be 'hann'.")
-        if self.stage1_energy_cap <= 0.0:
-            raise ValueError("stage1_energy_cap must be positive.")
-
         if self.stage1_sample_rate != self.source_sample_rate * 2:
             raise ValueError("stage1_sample_rate must be source_sample_rate * 2.")
         expected_output = self.stage1_sample_rate * (2**self.stage2_num_stages)
@@ -154,7 +137,6 @@ class PipelineResult:
         output_signal: Final 705.6kHz output.
         stage1_signal: Optional assembled Stage 1 output at 88.2kHz.
         stage1_reference: Optional baseline 2x SRC signal at 88.2kHz.
-        stage1_metrics: Optional hard-metric evaluation payload.
         performance: Performance summary.
 
     Physical Basis:
@@ -165,7 +147,6 @@ class PipelineResult:
     output_signal: np.ndarray
     stage1_signal: np.ndarray | None
     stage1_reference: np.ndarray | None
-    stage1_metrics: Stage1HardMetrics | None
     performance: PipelinePerformance
 
 
@@ -255,53 +236,6 @@ class ReferenceStage1Processor:
 
 
 @dataclass(frozen=True)
-class NMSEStage1Processor:
-    """Stage 1 processor backed by a loaded NMSE Torch module.
-
-    Args:
-        model: NMSE model instance in eval mode.
-        device: Torch device to run inference on.
-        cutoff_hz: Cutoff used by Bessel reference SRC.
-        iir_order: Bessel IIR order for reference SRC.
-
-    Physical Basis:
-        Stage 1 keeps low-band identity by structure and only suppresses
-        high-band mirror patterns before handing the signal to Stage 2.
-    """
-
-    model: nn.Module
-    device: torch.device
-    cutoff_hz: float = 20_000.0
-    iir_order: int = 6
-
-    def process(
-        self,
-        signal: np.ndarray,
-        source_sample_rate: int,
-        target_sample_rate: int,
-    ) -> np.ndarray:
-        _validate_input_signal(signal)
-        if target_sample_rate != source_sample_rate * 2:
-            raise ValueError("NMSEStage1Processor requires exact 2x upsampling ratio.")
-
-        stage1_input = upsample_bessel_reference(
-            signal=np.asarray(signal, dtype=np.float64),
-            source_sr=source_sample_rate,
-            target_sr=target_sample_rate,
-            cutoff_hz=self.cutoff_hz,
-            order=self.iir_order,
-        )
-        tensor = (
-            torch.from_numpy(np.asarray(stage1_input, dtype=np.float32))
-            .unsqueeze(0)
-            .to(self.device)
-        )
-        with torch.no_grad():
-            output = self.model(tensor)
-        return np.asarray(output.squeeze(0).detach().cpu().numpy(), dtype=np.float64)
-
-
-@dataclass(frozen=True)
 class CAPBStage1Processor:
     """Stage 1 processor backed by a CAPB Torch module.
 
@@ -312,8 +246,9 @@ class CAPBStage1Processor:
     Physical Basis:
         CAPB consumes the 44.1 kHz waveform directly (no Bessel SRC in the
         main path) and outputs a convex blend of fixed linear-phase
-        interpolators, so gain, group delay, and low-band content are
-        preserved by construction.
+        interpolators. Common centering preserves time alignment by
+        construction; low-band transparency is enforced by worst-case gain,
+        waveform, phase, and group-delay gates.
     """
 
     model: nn.Module
@@ -375,191 +310,6 @@ def load_capb_stage1_processor(
     return CAPBStage1Processor(model=model.to(torch_device), device=torch_device)
 
 
-def load_nmse_stage1_processor(
-    *,
-    checkpoint_path: Path,
-    data_config_path: Path,
-    device: str = "cpu",
-) -> NMSEStage1Processor:
-    """Build an NMSE Stage 1 processor from checkpoint and data config.
-
-    Args:
-        checkpoint_path: Path to Stage 1 checkpoint.
-        data_config_path: Data config used to define NMSE filter settings.
-        device: Torch device string.
-
-    Returns:
-        Initialized NMSEStage1Processor.
-
-    Raises:
-        FileNotFoundError: If required files are missing.
-        RuntimeError: If checkpoint loading fails.
-
-    Physical Basis:
-        Checkpoint restoration must preserve original band-split and safety
-        parameters to keep Stage 1 guarantees valid during inference.
-    """
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    if not data_config_path.exists():
-        raise FileNotFoundError(f"Data config not found: {data_config_path}")
-
-    data_config = load_data_config(data_config_path)
-    lowpass_taps, highpass_taps = design_band_split_filters(
-        cutoff_hz=data_config.band_split.cutoff_hz,
-        sample_rate=data_config.band_split.sample_rate,
-        num_taps=data_config.band_split.num_taps,
-        window=data_config.band_split.window,
-    )
-
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load checkpoint: {exc}") from exc
-
-    training_config_raw = checkpoint.get("training_config", {})
-    energy_cap = float(
-        training_config_raw.get("energy_cap", data_config.hb_target.energy_cap)
-    )
-    model = _build_nmse_model(
-        checkpoint=checkpoint,
-        sample_rate=data_config.target_sample_rate,
-        cutoff_hz=data_config.band_split.cutoff_hz,
-        energy_cap=energy_cap,
-        envelope_floor=data_config.hb_target.envelope_min,
-        lowpass_taps=lowpass_taps,
-        highpass_taps=highpass_taps,
-    )
-    model_state = checkpoint.get("model_state")
-    if not isinstance(model_state, dict):
-        raise RuntimeError("Invalid checkpoint: model_state is missing.")
-    model.load_state_dict(model_state)
-    model.eval()
-
-    torch_device = torch.device(device)
-    model = model.to(torch_device)
-    return NMSEStage1Processor(model=model, device=torch_device)
-
-
-def _build_nmse_model(
-    *,
-    checkpoint: Mapping[str, object],
-    sample_rate: int,
-    cutoff_hz: float,
-    energy_cap: float,
-    envelope_floor: float,
-    lowpass_taps: np.ndarray,
-    highpass_taps: np.ndarray,
-) -> nn.Module:
-    """Build Stage 1 model from checkpoint metadata.
-
-    Physical Basis:
-        Restoring the exact student architecture keeps suppression behavior
-        and energy-control characteristics aligned with training.
-    """
-    raw_model_config = checkpoint.get("model_config")
-    if isinstance(raw_model_config, Mapping):
-        model_type = str(raw_model_config.get("model_type", "")).strip().lower()
-        if model_type == MODEL_TYPE_NMSE_LIGHT:
-            light_config = NMSELightConfig.from_mapping(raw_model_config)
-            return NMSELight(
-                sample_rate=sample_rate,
-                cutoff_hz=cutoff_hz,
-                energy_cap=energy_cap,
-                envelope_floor=envelope_floor,
-                lowpass_taps=lowpass_taps,
-                highpass_taps=highpass_taps,
-                model_config=light_config,
-            )
-        if model_type == "nmse":
-            unet = _build_unet_from_model_config(raw_model_config)
-            return NMSE(
-                sample_rate=sample_rate,
-                cutoff_hz=cutoff_hz,
-                unet=unet,
-                energy_cap=energy_cap,
-                envelope_floor=envelope_floor,
-                lowpass_taps=lowpass_taps,
-                highpass_taps=highpass_taps,
-            )
-    return NMSE(
-        sample_rate=sample_rate,
-        cutoff_hz=cutoff_hz,
-        energy_cap=energy_cap,
-        envelope_floor=envelope_floor,
-        lowpass_taps=lowpass_taps,
-        highpass_taps=highpass_taps,
-    )
-
-
-def _build_unet_from_model_config(model_config: Mapping[str, object]) -> UNet2D:
-    """Build UNet from checkpoint model_config metadata.
-
-    Physical Basis:
-        Restoring the exact U-Net topology is required for deterministic
-        high-band suppression behavior and checkpoint compatibility.
-    """
-    base_channels = _parse_int(model_config.get("base_channels", 32), "base_channels")
-    num_downsamples = _parse_int(
-        model_config.get("num_downsamples", 4), "num_downsamples"
-    )
-    channel_multiplier = _parse_int(
-        model_config.get("channel_multiplier", 2), "channel_multiplier"
-    )
-    activation_raw = str(model_config.get("activation", "leaky_relu")).strip().lower()
-    if activation_raw not in {"relu", "leaky_relu"}:
-        raise ValueError(f"Unsupported activation in model_config: {activation_raw}.")
-    use_batch_norm = _parse_bool(model_config.get("use_batch_norm", True))
-    output_activation_raw = (
-        str(model_config.get("output_activation", "sigmoid")).strip().lower()
-    )
-    if output_activation_raw not in {"sigmoid", "none"}:
-        raise ValueError(
-            f"Unsupported output_activation in model_config: {output_activation_raw}."
-        )
-    activation = cast(Literal["relu", "leaky_relu"], activation_raw)
-    output_activation = cast(Literal["sigmoid", "none"], output_activation_raw)
-    return UNet2D(
-        base_channels=base_channels,
-        num_downsamples=num_downsamples,
-        channel_multiplier=channel_multiplier,
-        activation=activation,
-        use_batch_norm=use_batch_norm,
-        output_activation=output_activation,
-    )
-
-
-def _parse_bool(value: object) -> bool:
-    """Parse bool-like model metadata value."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "y", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "n", "off"}:
-            return False
-    raise ValueError(f"Expected boolean-like value, got {value!r}.")
-
-
-def _parse_int(value: object, name: str) -> int:
-    """Parse integer-like model metadata values."""
-    if isinstance(value, bool):
-        raise ValueError(f"{name} must be integer-like, got boolean.")
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise ValueError(f"{name} must be an integer value, got {value}.")
-        return int(value)
-    if isinstance(value, str):
-        text = value.strip()
-        if text == "":
-            raise ValueError(f"{name} cannot be empty.")
-        return int(text)
-    raise ValueError(f"{name} must be integer-like, got {value!r}.")
-
-
 def run_stage1_stage2_pipeline(
     signal: np.ndarray,
     *,
@@ -611,7 +361,7 @@ def run_stage1_stage2_pipeline(
     stage1_ref_segments: list[np.ndarray] = []
     stage1_streamer: HannOverlapAddStreamer | None = None
     stage1_ref_streamer: HannOverlapAddStreamer | None = None
-    if config.evaluate_stage1_metrics:
+    if config.retain_stage1_signal:
         stage1_streamer = HannOverlapAddStreamer(
             chunk_samples=stage1_chunk_samples,
             overlap_samples=stage1_overlap_samples,
@@ -642,7 +392,7 @@ def run_stage1_stage2_pipeline(
             )
             if output_piece.size > 0:
                 output_segments.append(np.asarray(output_piece, dtype=np.float64))
-            if config.evaluate_stage1_metrics:
+            if config.retain_stage1_signal:
                 reference_chunk = upsample_bessel_reference(
                     signal=np.asarray(chunk, dtype=np.float64),
                     source_sr=config.source_sample_rate,
@@ -675,7 +425,7 @@ def run_stage1_stage2_pipeline(
 
     stage1_assembled = np.zeros(0, dtype=np.float64)
     stage1_ref_assembled = np.zeros(0, dtype=np.float64)
-    if config.evaluate_stage1_metrics:
+    if config.retain_stage1_signal:
         if stage1_streamer is None or stage1_ref_streamer is None:
             raise RuntimeError("Stage1 streamers must be initialized.")
         stage1_tail = stage1_streamer.finalize()
@@ -699,19 +449,11 @@ def run_stage1_stage2_pipeline(
         peak_memory_mb=float(_get_peak_memory_mb()),
     )
 
-    metrics: Stage1HardMetrics | None = None
-    if config.evaluate_stage1_metrics:
-        metrics = evaluate_stage1_hard_metrics(
-            input_signal=np.asarray(stage1_ref_assembled, dtype=np.float64),
-            output_signal=np.asarray(stage1_assembled, dtype=np.float64),
-            sample_rate=config.stage1_sample_rate,
-            energy_cap=config.stage1_energy_cap,
-        )
+    if config.retain_stage1_signal:
         return PipelineResult(
             output_signal=np.asarray(output_assembled, dtype=np.float64),
             stage1_signal=np.asarray(stage1_assembled, dtype=np.float64),
             stage1_reference=np.asarray(stage1_ref_assembled, dtype=np.float64),
-            stage1_metrics=metrics,
             performance=performance,
         )
 
@@ -719,7 +461,6 @@ def run_stage1_stage2_pipeline(
         output_signal=np.asarray(output_assembled, dtype=np.float64),
         stage1_signal=None,
         stage1_reference=None,
-        stage1_metrics=None,
         performance=performance,
     )
 

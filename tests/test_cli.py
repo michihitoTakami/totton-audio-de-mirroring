@@ -24,7 +24,6 @@ def _fake_pipeline_result(output_length: int = 2048) -> PipelineResult:
         output_signal=np.zeros(output_length, dtype=np.float64),
         stage1_signal=None,
         stage1_reference=None,
-        stage1_metrics=None,
         performance=PipelinePerformance(
             latency_sec=0.01,
             input_duration_sec=0.01,
@@ -151,69 +150,28 @@ def test_cli_continues_on_error_by_default(
     assert not (output_dir / "bad.wav").exists()
 
 
-def test_build_stage1_processor_nmse_uses_device_override(
+def test_build_stage1_processor_capb_uses_device_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Device override should be forwarded to NMSE loader."""
+    """Device override should be forwarded to the CAPB loader."""
     calls: list[dict[str, object]] = []
 
-    def _fake_loader(
-        *, checkpoint_path: Path, data_config_path: Path, device: str
-    ) -> object:
+    def _fake_loader(*, checkpoint_path: Path, device: str) -> object:
         calls.append(
             {
                 "checkpoint_path": checkpoint_path,
-                "data_config_path": data_config_path,
                 "device": device,
             }
         )
         return object()
 
     monkeypatch.setattr(
-        "totton_audio_de_mirroring.cli.load_nmse_stage1_processor",
+        "totton_audio_de_mirroring.cli.load_capb_stage1_processor",
         _fake_loader,
     )
 
     _ = _build_stage1_processor(
-        {"mode": "nmse", "checkpoint_path": "model.pt"},
-        device_override="cuda",
-    )
-
-    assert calls[0]["device"] == "cuda"
-
-
-def test_build_stage1_processor_tensorrt_uses_device_override(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Device override should be forwarded to TensorRT loader."""
-    calls: list[dict[str, object]] = []
-
-    def _fake_loader(
-        *,
-        engine_path: Path,
-        data_config_path: Path,
-        device: str,
-        energy_cap: float | None,
-        iir_order: int,
-    ) -> object:
-        calls.append(
-            {
-                "engine_path": engine_path,
-                "data_config_path": data_config_path,
-                "device": device,
-                "energy_cap": energy_cap,
-                "iir_order": iir_order,
-            }
-        )
-        return object()
-
-    monkeypatch.setattr(
-        "totton_audio_de_mirroring.cli.load_tensorrt_stage1_processor",
-        _fake_loader,
-    )
-
-    _ = _build_stage1_processor(
-        {"mode": "tensorrt", "engine_path": "stage1.engine"},
+        {"mode": "capb", "checkpoint_path": "model.pt"},
         device_override="cuda",
     )
 

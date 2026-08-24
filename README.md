@@ -1,626 +1,182 @@
 # totton-audio-de-mirroring
-# Hybrid Neural SR (HNSR) – Updated Specification (Mirror-Removal & Time-Response Preservation)
 
-Target Platform: **Jetson Orin Nano (8GB)**
-Target Output: **705.6kHz (16× Upsampling)**
-Input: **44.1kHz / 16bit or 24bit PCM**
-Latency: **数秒オーダー許容（非リアルタイムでも可）**
+CAPB（Constrained Adaptive Prototype-Blend）を用いた、時間応答優先の音声アップサンプラです。
 
----
+44.1 kHzまたは48 kHzの入力を、固定された対称FIRプロトタイプの凸結合で2倍に補間します。小さなニューラルコントローラが信号の状態に応じてブレンド比だけを選び、FIR係数そのものや音声波形を自由生成することはありません。
 
-## 0. Design Intent / Success Criteria
+## 設計目標
 
-本システムの狙いは「超高域の積極的生成」ではなく、**リンギングを増やさずに時間応答（過渡・位相・群遅延）を維持しつつ、折り返し（ミラー）由来の聴覚的不自然さを除去する**ことに置く。
-44.1kHz入力から22.05kHz超の成分は一意に復元できないため、20kHz以上帯域は「復元」ではなく、**不自然成分の抑制と安全な整形（必要ならゼロでも可）**として扱う。
+- 超音波成分を推測・生成しない
+- 定常信号ではイメージ成分を十分に抑える
+- 不連続点ではBessel基準を超えるリンギングを生じさせない
+- 全プロトタイプを対称・同一長・同一利得・共通群遅延にそろえる
+- 平均値ではなく、canonical/held-out probeの最悪値で合否を決める
 
-### Hard Requirements（満たせない場合は失敗）
+CAPBは旧NMSEのhard 20 kHz band splitを使用しません。急峻な帯域分割自体がGibbsリンギングを戻すためです。低域透明性は構造的な完全バイパスではなく、固定FIR bankの設計とworst-caseの利得・波形・位相・群遅延gateで保証します。
 
-1. **0–20kHzは入力と同一**（波形・位相・群遅延の改変禁止）
-2. **折り返し（ミラー）パターンを抑制**し、可聴上の“デジタル臭さ/ジャリつき”を低減
-3. **20–44kHzはゼロ近傍でもOK**（無理に倍音を作らない）
-4. 20–44kHzの**高域総エネルギーは固定上限（energy cap）**を常に遵守（IMD安全側）
-5. **リンギング回帰を禁止**（矩形波プローブで before 比悪化を許容しない）
+## パイプライン
 
-### 0.1 Stage1教師方針（EPIC #103）
+| 段 | 変換 | 実装 | 役割 |
+|---|---:|---|---|
+| Stage 1 | 44.1→88.2 kHz / 48→96 kHz | CAPB | リンギングとイメージ抑制のトレードオフを適応選択 |
+| Stage 2 | 88.2→705.6 kHz | DSP（2×を3段） | 時間応答を保った高レート補間 |
 
-Stage1（44.1kHz → 88.2kHz）の教師定義は、今後 **raw 88.2kHz（純粋SRC出力）を第一選択**とする。
+Stage 1のFIR bankには`sharp`、`mid`、`gentle`があります。
 
-* 目的: 原信号忠実度を優先し、0-20kHz保全とmirror抑制を両立する
-* 旧方式: Bessel教師は廃止ではなく、**比較ベースライン**として維持する
-* 運用: 実験・成果物には教師種別（`raw88` / `bessel`）を必ず明記する
+- `sharp`: 定常信号向け。狭い遷移帯域と強いイメージ除去
+- `mid`: 抑制量と時間応答の中間点
+- `gentle`: Bessel-6の振幅応答へ合わせた低リンギング端点
 
-raw教師運用の詳細は `docs/stage1_raw_teacher_policy.md` を参照。
+各プロトタイプは共通中心へパディングされます。44.1 kHz familyは483 taps（未補償遅延241 samples @ 88.2 kHz）、48 kHz familyは277 taps（138 samples @ 96 kHz）です。centered convolutionにより出力タイムライン上の固定遅延を補償します。
 
-### Stage1 Quantitative Acceptance Criteria
+## 動作環境
 
-以下の定量基準を満たさない Stage1 チェックポイントは不採用とする。
+- Python 3.13
+- PyTorch 2.5+
+- NumPy / SciPy / torchaudio
+- `uv`
+- 推論ターゲット: Jetson Orin Nano 8GB
 
-1. **Mirror Reduction**: `symmetry_reduction_ratio >= 0.70`
-2. **Energy Cap**: `hb_energy_cap_violation_rate == 0.0`
-3. **Ringing Regression Gate**（square-wave, edge-aligned）:
-   * `plateau_ripple_rms_after / before <= 1.10`
-   * `plateau_ripple_p2p_after / before <= 1.10`
-   * `overshoot_abs_after - overshoot_abs_before <= 5e-3`
-   * `ringing_ratio_after - ringing_ratio_before <= 0.0`
-
----
-
-## 1. System Overview (Two-Stage Hybrid)
-
-本システムは2段構成とする。
-
-* **Stage 1: Neural Mirror Suppression Engine (NMSE)**
-  44.1kHz → 88.2kHz（2×）
-  目的：
-
-  * **0–20kHz完全保持**（構造で保証）
-  * 20–44kHzに存在する**折り返し/ミラー由来の不自然成分を検出・抑制**
-  * **高域エネルギーを固定上限で管理**しIMDリスクを抑える
-
-* **Stage 2: DSP High-Rate Interpolation Engine (HIE)**
-  88.2kHz → 705.6kHz（8×）
-  目的：
-
-  * Stage 1で得られた“安全な88.2kHz信号”を高レート化し、アナログLPF設計を容易にする
-  * 時間応答を壊しにくい補間（最小位相寄り・緩スロープ）
-
----
-
-## 2. Stage 1: Neural Mirror Suppression Engine (44.1kHz → 88.2kHz)
-
-### 2.1 Core Strategy: Band Split + Low-Band Bypass
-
-Stage 1は全帯域生成を行わず、**帯域分割**して低域を完全バイパスする。
-
-* `x_full`: 44.1kHz入力を基準SRCで88.2kHzへ2×アップサンプルした信号
-* `LB_in = LPF(20kHz, x_full)`（0–20kHz）
-* `HB_in = HPF(20kHz, x_full)`（20–44.1kHz）
-
-出力は
-
-* `LB_out = LB_in`（固定、改変不可）
-* `HB_out = Suppress(HB_in)`（AIが抑制）
-* `y_full = LB_out + HB_out`
-
-> LBの同一性は“損失で祈る”のではなく、**構造で保証**する。
-
-### 2.2 Model Output: Suppression Mask (Recommended)
-
-AIは高域を生成するのではなく、**抑制マスク（ゲイン）**を推定する。
-
-* 出力：`M ∈ [0, 1]`（時間-周波数マスク、または時間領域ゲイン系列）
-* 適用：`HB_out = HB_in ⊙ M`
-
-意図：
-
-* 折り返しパターンを含む成分を強く抑制
-* それ以外は保持
-* 必要ならHBはゼロに近くても正解（“創作”を避ける）
-
-### 2.3 Representation Options
-
-本仕様では以下のいずれかで実装可能（推奨はA）。
-
-* **A. STFT Masking (推奨)**
-
-  * HBのみSTFT → マスク推定 → iSTFTでHB_out再合成
-  * 折り返しの幾何学パターン（帯状・対称性）に対して学習が安定
-* **B. Time-Domain Gain Control**
-
-  * HBを時間領域で直接抑制（TCN等）
-  * 周波数選択性を獲得しづらく、学習難度は上がる
-
-### 2.4 Fixed Safety Constraints (Post-Processing)
-
-ネット出力の後に必ず以下を適用し、一般化と安全性を担保する。
-
-1. **Energy Cap（固定上限）**
-
-   * 20–44kHzの総エネルギーが上限を超えたらスケーリング/クランプ
-2. **Envelope Target（固定包絡）**
-
-   * 20kHz以降が“なだらかに減衰する”形状へ投影（過剰な山を抑える）
-3. **DC/Leak対策**
-
-   * HBがLB側へ漏れないようHPF側で再確認（境界漏れの抑制）
-
----
-
-## 3. Dataset Pipeline (Ideal Master Not Required)
-
-理想マスターを前提にせず、**合成データ生成と規格化ターゲット**で学習を成立させる。
-
-### 3.0 Stage1 Input/Target Path Spec（固定仕様）
-
-`configs/data_generation.yaml` の `stage1_path` は、実装経路と1:1で対応する固定仕様とする。
-
-* `input_route = source_chunk_44k1_to_x_full_88k2_via_degradation`
-  * 意味: 44.1kHzチャンク (`source`) を劣化SRC経路で2xして `x_full` を作る
-* `target_route = high_band_to_hb_target_via_mirror_detection`
-  * 意味: `high_band = HPF(20kHz, x_full)` から mirror検出+抑制で `hb_target` を作る
-* `strict_route_validation = true`
-  * 意味: Stage1の学習データ経路を `44.1kHz -> 88.2kHz (2x)` に固定する
-
-この仕様は `MirrorSuppressionDataset` で検証され、経路が一致しない設定はエラーとする。
-
-### 3.1 Source Material (Synthetic / Procedural)
-
-学習に用いる“元音源”は実音源でなくてもよい。一般化目的のため、以下を広く混ぜる：
-
-* マルチトーン（和音/非整数倍を含む）
-* 周波数スイープ、インパルス列、パーカッション風トランジェント
-* AM/FM変調、ノイズ（白色/ピンク/帯域ノイズ）
-* クリップ/ソフトサチュ等の軽微非線形を含む波形（任意）
-
-### 3.2 Degradation Diversity (Key to Generalization)
-
-同一のSourceから、異なる劣化SRCをランダム適用して `x_full` を作る（過適合防止）。
-
-例（混合セット）：
-
-* ZOH / 線形補間 / 短・長窓sinc / IIR系（Bessel/Butter）等
-* カットオフ：18–22kHzでランダム
-* 位相：線形位相/最小位相/アナログ風群遅延
-* 量子化：16/24bit、複数ディザ
-
-### 3.3 Training Target (Normalized “Anti-Mirror” Target)
-
-全帯域の「理想クリーン波形」を教師にせず、**折り返し由来の不自然成分のみ抑制したHBターゲット**を作る。
-
-* まず `HB_in` を得る
-* ルールベース/解析ベースで **折り返し特徴を持つ成分**を検出して減衰し、`HB_target` を作る
-* 最後に `HB_target` に対して **Energy Cap / Envelope Target** を適用して規格化する
-
-注意:
-`HB_target` は「高域抑制のための規格化ターゲット」であり、全帯域の物理的グラウンドトゥルースではない。
-0–20kHzの同一性は `LB_out = LB_in` の構造保証で担保する。
-
-Stage1教師が`raw 88.2`の場合も、`HB_target`の意味は同じである。違いは教師参照経路のみで、
-Bessel教師は比較用ベースラインとして扱う。
-`raw 88.2` では教師信号を最初から88.2kHzで生成し、同一教師チャンクを44.1kHzへダウンサンプルした
-`source` から劣化SRCで `x_full` を合成する。
-
-このとき、学習は
-
-* 「折り返しっぽい形だけを消す」
-* 「それ以外は触らない」
-  に寄るため、一般化しやすい。
-
----
-
-## 4. Loss Strategy (Mirror Removal Oriented)
-
-GANで質感生成を狙うのではなく、**抑制の正確さと“不用意に触らないこと”**を中心にする。
-
-* `L_mask`: マスク/抑制量の教師（HB_target）への一致（L1/L2）
-* `L_stft`: MR-STFT（HBのみ、構造変化の最小化）
-* `L_preserve`: “触りすぎ”罰則（HB_inとHB_outの差分に対する正則化、ただしミラー検出領域は例外）
-* `L_energy`: energy cap違反を強罰（固定上限の厳守）
-* `L_subtract`: HBでの加算方向変化のみを罰則化し、減算的学習を優先
-* `L_cap_strict`: cap超過を正規化二乗で強罰し、違反率0維持を強制
-
-※ Adversarial（GAN）は原則使用しない（必要なら最終調整で弱く導入可）。
-
----
-
-## 5. Stage 2: DSP High-Rate Interpolation Engine (88.2kHz → 705.6kHz)
-
-### 5.1 Multi-Stage Upsampling
-
-8×を一発でなく、**2××2××2×**の多段とする。
-
-### 5.2 Filter Policy (Time Response Priority)
-
-* 推奨：**最小位相寄りFIR（短め・緩スロープ）** または **低次IIR多段**
-* 仕様上の目標：
-
-  * 可聴帯過渡の悪化を最小化
-  * 測定で“プリエコー相当”が無視できるレベル
-
-### 5.3 Cutoff
-
-* Stage 1でHBは安全側に整形されている前提のため、Stage 2では急峻カットを不要とし
-
-  * **40–50kHz付近を緩やかに通す**設計を基本とする（段ごとに最適化可）
-
----
-
-## 6. Expected Output Characteristics
-
-* **0–20kHz**：入力同一（波形・位相・群遅延）
-* **20–44kHz**：折り返し/ミラー由来の不自然成分が抑制され、必要ならゼロ近傍
-* **>44kHz**：ノイズ床へ自然減衰
-* **聴感**：高域のジャリつき/金属感/不自然なザラつきが減り、過渡が鈍らない
-
----
-
-## 7. Evaluation (PoC Minimum Set)
-
-### 7.1 Hard Metrics
-
-1. **LB差分（0–20kHz）**：振幅/位相誤差が測定限界近傍
-2. **Mirror Pattern Reduction**：STFTで折り返し特徴（対称性・帯状成分）が低減
-3. **HB Energy Cap**：20–44kHzエネルギーが常に固定上限以下
-4. **Touch-Minimization**：ミラー以外のHBが不要に変形していない
-
-### 7.2 IMD Proxy (Recommended)
-
-* 簡易非線形（軽いクリップ/2次歪等）通過後の可聴帯ノイズ/歪みが増えないこと
-
-### 7.3 Listening
-
-* ABXで“ジャリつき/刺さり/金属感”が減り、アタックが維持されること
-* 実施手順・記録様式は `docs/abx_listening_protocol.md` を使用する
-
-### 7.4 Automated Stage 1 Hard Metrics
-
-`scripts/evaluate_stage1.py` で、README 7.1 のHard Metricsを自動評価する。
+セットアップ:
 
 ```bash
-uv run python scripts/evaluate_stage1.py \
-  --input-dir data/eval/stage1/input \
-  --output-dir data/eval/stage1/output \
-  --sample-rate 88200 \
-  --energy-cap 1e-3 \
-  --json reports/stage1_metrics.json \
-  --csv reports/stage1_metrics.csv
+uv sync --extra dev
 ```
 
-raw教師移行後の統合評価（Issue #108）では、1コマンドで `json + md + 図` を生成できる:
+## 学習
+
+44.1 kHz family:
 
 ```bash
-uv run python scripts/evaluate_stage1.py \
-  --input-dir data/eval/stage1/input \
-  --output-dir data/eval/stage1/output \
-  --target-dir data/eval/stage1/target_raw88 \
-  --evaluation-target raw88.2 \
-  --imd-naive-dir data/eval/stage1/imd_naive \
-  --report-dir reports/stage1/integrated_eval \
-  --mirror-visual-limit 8
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb.yaml \
+  --config configs/training_stage1_capb.yaml
 ```
 
-`--evaluation-target` は `input` / `raw88.2` / `bessel88.2` を選択可能。
-`raw88.2` または `bessel88.2` を使う場合は `--target-dir` が必須。
-
-主な出力指標:
-
-1. LB振幅差分（0–20kHz）
-2. LB位相差分（0–20kHz）
-3. LB群遅延差（0–20kHz）
-4. Mirror低減率（STFT対称性ベース）
-5. HB energy cap違反率
-6. Touch指標（非ミラーHB変形量）
-7. Ringing / pre-ringing / overshoot 集約指標
-8. IMD proxy（naive対比）
-
-`--json` 出力には `gates` オブジェクトが含まれ、以下の判定根拠（threshold / observed / passed）を追跡できる:
-
-1. `energy_cap`
-2. `mirror_reduction`
-3. `lowband_preservation`
-4. `ringing_regression`
-5. `imd_proxy`（`--imd-naive-dir` 指定時）
-
-strict判定時の終了コードは固定:
-
-1. `2`: energy cap gate fail (`--strict-energy-cap`)
-2. `3`: mirror reduction gate fail (`--strict-mirror-reduction`)
-3. `4`: ringing regression gate fail (`--strict-ringing-regression`)
-4. `5`: strict複数指定時に2つ以上 fail
-5. `6`: lowband preservation gate fail (`--strict-lowband-preservation`)
-6. `7`: IMD proxy gate fail (`--strict-imd-proxy`)
-
-回帰テスト（golden samples）:
+48 kHz family:
 
 ```bash
-uv run --extra dev pytest tests/regression/test_stage1_regression.py -v
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb_48k.yaml \
+  --config configs/training_stage1_capb_48k.yaml
 ```
 
-### 7.5 Issue #63 Workflow (Retrain + Checkpoint Selection)
+学習データはtarget rateでネイティブ合成し、入力Nyquist未満へlinear-phase brickwall FIRで帯域制限した後、正確に2:1 decimationして入力を作ります。したがって`source == target[::2]`が成立し、旧Bessel劣化経路は学習に入りません。
 
-`scripts/run_issue63_stage1_workflow.py` は以下を一括実行する。
+学習されるのは約10万parameterのコントローラだけです。FIR prototype bankは固定され、checkpointにはcontroller stateとrate family metadataが保存されます。
 
-1. 学習条件固定（config hash / seed / gate 設定を `run_manifest.json` へ保存）
-2. `scripts/train_stage1.py` による Stage 1 再学習
-3. Hard Metrics / Mirror Metrics 評価
-4. IMD proxy（naive vs NMSE）比較
-5. hard + mirror + IMD + ringing gate通過候補からベストcheckpoint選定とレポート保存
+## 受入評価
+
+CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両familyでcanonical/held-out probeをすべて通過するまでリリースできません。
 
 ```bash
-uv run python scripts/run_issue63_stage1_workflow.py \
-  --data-config configs/data_generation.yaml \
-  --train-config configs/training_stage1.yaml \
-  --eval-input-dir tests/fixtures/golden_samples/stage1/input \
-  --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
-  --checkpoint-dir data/checkpoints/issue63 \
-  --report-dir reports/issue63 \
-  --seed 1234
+# 44.1 kHz family
+uv run python scripts/evaluate_probe_gates.py \
+  --backend capb \
+  --checkpoint data/checkpoints/capb/capb_best.pt \
+  --rate-family 44k1
+
+# 48 kHz family
+uv run python scripts/evaluate_probe_gates.py \
+  --backend capb \
+  --checkpoint data/checkpoints/capb_48k/capb_best.pt \
+  --rate-family 48k
 ```
 
-主な成果物:
+主なgate:
 
-* `reports/issue63/run_manifest.json`
-* `reports/issue63/selected/selection_report.json`
-* `reports/issue63/selected/stage1_best_selected.pt`
+- square/step: plateau RMS、P2P、overshootをBessel基準以下に保つ
+- impulse/impulse train/tone burst: pre-echoの増加を制限する
+- sweep/pink noise/multitone: image bandとsweep ridgeを`-65 dB`以下にする
+- 100 Hz–20 kHz: flatness、gain、phase、group delay、waveform errorを制限する
+- no-added-HF: Bessel基準に対する不要な高域増加を制限する
 
-### 7.6 Issue #64 Workflow (Freeze Golden / Regression / ABX Pairs)
+レポートは`reports/probe_gates/<label>/gate_report.json`と`gate_report.md`へ出力されます。平均値は診断用途のみで、各gateは最悪probeにbindします。
 
-Issue #63で確定したcheckpointを基準に、回帰/ABX基準を固定化する。
+固定prototypeだけを検証する場合:
 
 ```bash
-uv run python scripts/run_issue63_stage1_workflow.py \
-  --data-config configs/data_generation.yaml \
-  --train-config configs/training_stage1.yaml \
-  --eval-input-dir tests/fixtures/golden_samples/stage1/input \
-  --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
-  --checkpoint-dir data/checkpoints \
-  --report-dir reports/issue64 \
-  --seed 1234 \
-  --device cuda \
-  --energy-cap 1e-3 \
-  --skip-training \
-  --candidate-checkpoints stage1_best.pt stage1_last.pt stage1_emergency.pt
+uv run python scripts/evaluate_probe_gates.py --backend prototype:gentle
+uv run python scripts/run_capb_phase0.py --rate-family 44k1
+uv run python scripts/run_capb_phase0.py --rate-family 48k
 ```
 
-固定化対象（リポジトリ追跡）:
+## Stage 1 → Stage 2推論
 
-* `tests/fixtures/golden_samples/stage1/output/*.npy`
-* `tests/fixtures/golden_samples/imd/nmse/*.npy`
-* `tests/fixtures/golden_samples/regression_baseline.json`
-* `tests/fixtures/golden_samples/abx_pairs.json`
-* `tests/fixtures/golden_samples/issue64_model_selection.json`
-* `docs/abx_listening_protocol.md`
+`totton-upsample`はCAPB checkpointを直接ロードできます。`configs/stage1_stage2_pipeline.yaml`の`stage1`を次のように設定してください。
 
-### 7.6.1 RAW176k4 Stage1 Training (44.1kHz -> 176.4kHz)
-
-RAW176k4教師（`raw_176k4`）で Stage1 を学習する場合は、4x専用configを使用する。
-入力劣化経路は `zero_stuff` 固定、教師側の downsampling は
-`polyphase` / `sinc_short` / `sinc_long` の多様化を使う。
-
-```bash
-uv run python scripts/train_stage1.py \
-  --data-config configs/data_generation_176k4.yaml \
-  --train-config configs/training_stage1_176k4.yaml \
-  --batch-size 16 \
-  --num-workers 4 \
-  --checkpoint-dir data/checkpoints/stage1/raw176k4
+```yaml
+stage1:
+  mode: capb
+  checkpoint_path: data/checkpoints/capb/capb_best.pt
+  device: cpu
 ```
 
-必要に応じて teacher を明示:
+単一ファイル:
 
 ```bash
-uv run python scripts/train_stage1.py \
-  --data-config configs/data_generation_176k4.yaml \
-  --train-config configs/training_stage1_176k4.yaml \
-  --teacher-type raw_176k4
+uv run totton-upsample input.wav \
+  -o output.wav \
+  -c configs/stage1_stage2_pipeline.yaml
 ```
 
-### 7.7 Issue #75 Workflow (Frequency/THD+N/Time-Domain Visualization)
-
-Issue #75では、Hard Metricsの数値だけでなく、周波数応答・THD+Nスペクトル・時間領域応答を画像で確認できるようにする。
+バッチ:
 
 ```bash
-uv run python scripts/visualize_audio_quality.py \
-  --input-dir tests/fixtures/golden_samples/stage1/input \
-  --output-dir tests/fixtures/golden_samples/stage1/output \
-  --visual-dir reports/issue75/visualizations \
-  --sample-rate 88200 \
-  --n-fft 8192 \
-  --cutoff-hz 20000 \
-  --num-taps 1025 \
-  --summary-json reports/issue75/visualization_summary.json
-```
-
-主な成果物:
-
-* `reports/issue75/visualizations/*_frequency_response.png`
-* `reports/issue75/visualizations/*_thdn_spectrum.png`
-* `reports/issue75/visualizations/*_waveform_comparison.png`
-* `reports/issue75/visualizations/*_square_wave.png`
-* `reports/issue75/visualizations/*_impulse_response.png`
-* `reports/issue75/visualization_summary.json`
-
----
-
-## 8. Jetson Orin Nano Implementation Notes
-
-### 8.1 Training Device Policy (Stage 1)
-
-* **Stage 1学習はGPU実行を必須**とする（CUDA利用可能環境ではCPU学習を許可しない）
-* 学習ログに`device`（GPU名/CUDA index）を必ず記録し、再現性を担保する
-* CPU実行はデバッグ用途の最小確認のみに限定し、学習結果の評価対象に含めない
-
-### 8.2 Inference / Deployment Notes
-
-* **Chunk Processing**：長時間音声はチャンク推論で処理（デフォルト `0.25秒/chunk`）
-* **Boundary Handling**：**Hann窓 + 50% Overlap-Add**（Issue #33仕様）
-* **Optimization**：TensorRT（FP16推奨）
-* Stage 2は軽量のためCPU/GPUいずれでも可（全体最適で選択）
-
-### 8.3 Stage1->Stage2 統合CLI
-
-```bash
-uv run python scripts/run_stage1_stage2_pipeline.py \
-  --config configs/stage1_stage2_pipeline.yaml \
-  --input-wav path/to/input_44k1.wav \
-  --output-wav path/to/output_705k6.wav
-```
-
-ベンチマーク/仕様詳細は `docs/stage1_stage2_pipeline_integration.md` を参照。
-
-### 8.3.1 End-user Batch CLI (`totton-upsample`)
-
-```bash
-# 単一ファイル処理
-uv run totton-upsample input.wav -o output.wav
-
-# 設定ファイル指定
-uv run totton-upsample input.wav -o output.wav -c configs/stage1_stage2_pipeline.yaml
-
-# バッチ処理 + WAV/FLAC/metadata 同時出力
-uv run totton-upsample \"audio_dir/*.wav\" -o reports/batch_out \
+uv run totton-upsample "audio/*.wav" \
+  -o reports/batch_out \
+  -c configs/stage1_stage2_pipeline.yaml \
   --output-format wav \
-  --output-format flac \
   --output-format metadata
-
-# デバイス上書き
-uv run totton-upsample input.wav -o output.wav --device cuda
 ```
 
-### 8.4 ONNX Runtime Stage1
+設定の`stage1.mode=reference`は配線確認用のBessel比較経路です。リリース出力には`capb`を使用してください。Stage 2の既定backendはC++で、テスト用に`pipeline.stage2_backend=python`も選べます。
 
-Stage1 NMSEのU-Net部分をONNX化し、ONNX Runtime推論を利用できる。
+## テストと品質チェック
 
 ```bash
-uv run --with onnx --with onnxruntime python scripts/export_to_onnx.py \
-  --checkpoint-path data/checkpoints/stage1_best.pt \
-  --data-config-path configs/data_generation.yaml \
-  --output-path data/checkpoints/stage1_best.onnx \
-  --opset-version 17 \
-  --check-model \
-  --verify-ort \
-  --tolerance 1e-5
+# 高速テスト
+uv run pytest -m "not slow and not gpu" -v
+
+# format / lint / type check / test
+uv run ruff format --check src tests scripts
+uv run ruff check src tests scripts
+uv run mypy src
+uv run pytest -v
 ```
 
-`configs/stage1_stage2_pipeline.yaml` の `stage1.mode=onnx` 例:
+## 主要ファイル
 
-```yaml
-stage1:
-  mode: onnx
-  model_path: data/checkpoints/stage1_best.onnx
-  data_config_path: configs/data_generation.yaml
-  device: cuda
-  allow_cpu_fallback: false
+```text
+configs/
+  data_generation_capb.yaml
+  data_generation_capb_48k.yaml
+  training_stage1_capb.yaml
+  training_stage1_capb_48k.yaml
+  stage1_stage2_pipeline.yaml
+src/totton_audio_de_mirroring/
+  data/capb_dataset.py
+  data/probe_generators.py
+  data/reference.py
+  models/capb.py
+  models/proto_bank.py
+  training/capb_losses.py
+  training/capb_trainer.py
+  evaluation/gates.py
+  evaluation/probe_suite.py
+  inference/pipeline.py
+  stage2/
+scripts/
+  train_capb.py
+  evaluate_probe_gates.py
+  run_capb_phase0.py
 ```
 
-`device: cuda` 時は、CUDA providerが無ければデフォルトでエラー終了する
-（意図しないCPU推論へのフォールバックを防止）。
+## 非目標
 
-GPU前提のベンチマーク手順は `docs/onnx_runtime_benchmark.md` を参照。
+- 22.05 kHzまたは24 kHzを超える原音成分の復元
+- GAN等による倍音・超音波成分の生成
+- 平均metricだけによるcheckpoint採用
+- probe gateを通していない学習loss改善の品質主張
 
-### 8.5 TensorRT Stage1（Mixed Precision優先）
-
-Stage1 U-Net ONNX から TensorRT engine を生成し、`stage1.mode=tensorrt` で実行できる。
-
-```bash
-# FP32 / Pure FP16 / Mixed の3モードを一括生成
-uv run python scripts/export_to_tensorrt.py \
-  --onnx-path data/checkpoints/stage1_best.onnx \
-  --output-dir data/checkpoints/tensorrt \
-  --modes fp32,pure_fp16,mixed \
-  --strict-mixed-io-fp32
-```
-
-デフォルトの動的shapeプロファイルは、Stage1チャンク長 **0.25s / 1.0s / 2.0s**
-（@88.2kHz）に対応する `min/opt/max` time frames を前提にしている。
-
-`configs/stage1_stage2_pipeline.yaml` の `stage1.mode=tensorrt` 例:
-
-```yaml
-stage1:
-  mode: tensorrt
-  engine_path: data/checkpoints/tensorrt/stage1_mixed.engine
-  data_config_path: configs/data_generation.yaml
-  device: cuda
-  energy_cap: 0.001
-```
-
-### 8.6 FP16量子化ノイズ確認
-
-Mixed Precision採用前に、HB帯域（20-44kHz）想定信号でFP16丸めノイズを確認する。
-
-```bash
-uv run python scripts/check_fp16_quantization_noise.py \
-  --sample-rate 88200 \
-  --duration-sec 1.0 \
-  --min-snr-db 70 \
-  --max-error-rms-dbfs -80 \
-  --json
-```
-
----
-
-## 9. Implementation Roadmap
-
-1. **Phase 1：合成データ生成基盤**
-
-   * 多様な劣化SRCの実装とサンプリング
-   * Mirror検出→抑制→規格化（HB_target生成）
-2. **Phase 2：Stage 1 PoC（Masking）**
-
-   * LB同一性、ミラー低減、energy cap遵守を評価
-3. **Phase 3：Stage 2統合（2××2××2×）**
-
-   * 過渡保護・IMD proxyで確認
-4. **Phase 4：Jetson実装**
-
-   * TensorRT化、チャンク長/オーバーラップ最適化、スループット測定
-
----
-
-## 10. 実験命名規則・保存先規約（raw教師移行版）
-
-### 10.1 命名規則
-
-実験IDは以下を推奨する。
-
-* `stage1_<teacher>_<model>_<yyyymmdd>_s<seed>`
-* 例: `stage1_raw88_nmse_20260210_s1234`
-* 例: `stage1_bessel_nmse_20260210_s1234`（比較ベースライン）
-
-`teacher` は以下のどちらかに固定する。
-
-* `raw88`: raw 88.2kHz教師（本方針の標準）
-* `bessel`: 旧教師（比較ベースライン）
-
-### 10.2 保存先規約
-
-Stage1関連成果物は教師種別ごとに分離して保存する。
-
-* checkpoint: `data/checkpoints/stage1/<teacher>/<run_id>/`
-* report: `reports/stage1/<teacher>/<run_id>/`
-* 回帰fixture更新候補: `reports/stage1/<teacher>/<run_id>/candidate_outputs/`
-
-運用例:
-
-```bash
-uv run python scripts/run_issue63_stage1_workflow.py \
-  --data-config configs/data_generation.yaml \
-  --train-config configs/training_stage1.yaml \
-  --eval-input-dir tests/fixtures/golden_samples/stage1/input \
-  --imd-naive-dir tests/fixtures/golden_samples/imd/naive \
-  --run-id stage1_raw88_nmse_20260210_s1234 \
-  --seed 1234
-```
-
-`--checkpoint-dir` / `--report-dir` を省略した場合は、
-`data/checkpoints/stage1/<teacher>/<run_id>/` と
-`reports/stage1/<teacher>/<run_id>/` が自動で使用される。
-
-同条件比較レポート（raw88 vs bessel）の生成例:
-
-```bash
-uv run python scripts/report_raw_teacher_comparison.py \
-  --raw-run-dir reports/stage1/raw88/stage1_raw88_nmse_20260210_s1234 \
-  --bessel-run-dir reports/stage1/bessel/stage1_bessel_nmse_20260210_s1234 \
-  --output-md reports/stage1/comparison/raw88_vs_bessel_20260210.md \
-  --output-csv reports/stage1/comparison/raw88_vs_bessel_20260210.csv
-```
-
-### 10.3 raw教師移行チェックリスト
-
-- [ ] ドキュメントに「raw88が標準、besselは比較ベースライン」を明記した
-- [ ] 実験IDと保存先に`teacher`を含め、混在保存を防止した
-- [ ] 評価レポートで`raw88` vs `bessel`の比較条件を同一化した
-- [ ] `run_manifest.json`（または同等メタデータ）に教師種別・seed・config hashを記録した
-- [ ] 回帰fixture更新時にABX/Hard/Mirror/Ringing/IMDの判定根拠をPR本文へ記載した
-
----
-
-## Explicit Statement of Scope (Non-Hallucination by Design)
-
-* 本システムは **“超音波の創作”を目的としない**。
-* 20–44kHzは **折り返し不自然成分の除去と安全整形**を主目的とし、必要ならゼロでも正しい。
-* 可聴帯（0–20kHz）の時間応答・位相保護を最優先とする。
-* 本PRの実装スコープは **Stage1（44.1->88.2 / 44.1->176.4）まで**。
-* **16×最終系（705.6kHz出力アルゴリズム）拡張は本スコープ外**。
+このプロジェクトの優先順位は、帯域を広く見せることではなく、入力にない情報を作らず、イメージ成分と時間領域artifactを測定可能な制約内に収めることです。

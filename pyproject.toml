@@ -1,7 +1,7 @@
 [project]
 name = "totton-audio-de-mirroring"
 version = "0.1.0"
-description = "Hybrid Neural Bessel SR (HNB-SR) system for mirror/aliasing artifact suppression"
+description = "Constrained adaptive FIR upsampling with worst-case audio gates"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = { text = "MIT" }

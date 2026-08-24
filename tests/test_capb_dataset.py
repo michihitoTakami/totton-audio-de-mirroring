@@ -9,9 +9,13 @@ import torch
 from totton_audio_de_mirroring.data.capb_dataset import (
     TARGET_SAMPLE_RATE,
     UPSAMPLE_RATIO,
+    AugmentationConfig,
     BrickwallConfig,
     CAPBDataConfig,
     CAPBUpsampleDataset,
+    compute_edge_mask,
+    compute_flat_mask,
+    compute_quiet_mask,
     load_capb_data_config,
 )
 
@@ -38,6 +42,7 @@ def test_sample_shapes(dataset) -> None:
     assert sample["source"].shape == (chunk_len // UPSAMPLE_RATIO,)
     assert sample["flat_mask"].shape == (chunk_len,)
     assert sample["quiet_mask"].shape == (chunk_len,)
+    assert sample["selection_mask"].shape == (chunk_len,)
 
 
 def test_target_is_band_limited(dataset) -> None:
@@ -96,6 +101,62 @@ def test_dataset_masks_present_for_edge_family() -> None:
     assert float(sample["quiet_mask"].mean()) > 0.5
 
 
+@pytest.mark.parametrize("signal_type", ["isolated_click", "tone_burst"])
+def test_sparse_event_chunk_keeps_event_near_center(signal_type: str) -> None:
+    config = CAPBDataConfig(
+        num_samples=8,
+        seed=17,
+        signal_mix={signal_type: 1.0},
+        augmentation=AugmentationConfig(
+            gain_range=(1.0, 1.0),
+            polarity_flip_prob=0.0,
+            noise_std_range=(0.0, 0.0),
+            soft_clip_prob=0.0,
+        ),
+    )
+    focused_dataset = CAPBUpsampleDataset(config)
+    for index in range(len(focused_dataset)):
+        source = focused_dataset[index]["source"].numpy()
+        peak_index = int(np.argmax(np.abs(source)))
+        assert source.size // 4 <= peak_index <= 3 * source.size // 4
+
+
+def test_dense_square_uses_labelled_edge_mask() -> None:
+    from scipy import signal as sp_signal
+
+    time_axis = np.arange(TARGET_SAMPLE_RATE // 20) / TARGET_SAMPLE_RATE
+    dense_square = 0.5 * sp_signal.square(2.0 * np.pi * 5_000.0 * time_axis)
+    flat = compute_flat_mask(dense_square)
+    quiet = compute_quiet_mask(dense_square)
+
+    unlabelled = compute_edge_mask(flat, quiet)
+    labelled = compute_edge_mask(flat, quiet, clean_signal=dense_square)
+
+    assert float(unlabelled.mean()) < 0.01
+    assert float(labelled.mean()) > 0.9
+
+
+def test_periodic_edge_family_selects_gentle_for_full_chunk() -> None:
+    config = CAPBDataConfig(num_samples=1, seed=3, signal_mix={"square_wave": 1.0})
+    sample = CAPBUpsampleDataset(config)[0]
+    assert float(sample["selection_mask"].mean()) == pytest.approx(1.0)
+
+
+def test_stationary_family_rejects_gentle_for_full_chunk() -> None:
+    config = CAPBDataConfig(num_samples=1, seed=3, signal_mix={"multitone": 1.0})
+    sample = CAPBUpsampleDataset(config)[0]
+    assert float(sample["selection_mask"].mean()) == pytest.approx(0.0)
+
+
+def test_stationary_noise_does_not_receive_slope_edge_mask() -> None:
+    rng = np.random.default_rng(9)
+    noise = rng.standard_normal(TARGET_SAMPLE_RATE // 20)
+    flat = compute_flat_mask(noise)
+    quiet = compute_quiet_mask(noise)
+    mask = compute_edge_mask(flat, quiet)
+    assert float(mask.mean()) < 0.01
+
+
 def test_out_of_range_index_raises(dataset) -> None:
     with pytest.raises(IndexError):
         dataset[len(dataset)]
@@ -128,6 +189,8 @@ def test_load_yaml_config() -> None:
     assert config.source_sample_rate == 44_100
     assert config.target_sample_rate == 88_200
     assert config.near_nyquist_high_range_hz == (20_000.0, 21_500.0)
+    assert config.signal_mix["dense_square_wave"] == pytest.approx(0.08)
+    assert config.signal_mix["isolated_click"] == pytest.approx(0.10)
 
 
 def test_load_yaml_config_48k() -> None:

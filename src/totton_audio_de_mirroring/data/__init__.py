@@ -1,79 +1,17 @@
-"""Data processing utilities."""
+"""CAPB datasets, probes, signal generators, and reference SRC utilities."""
 
-from totton_audio_de_mirroring.data.degradation import (
-    DegradationConfig,
-    DegradationProfile,
-    DegradationProfileManager,
-    apply_degradation_profile,
-    apply_quantization,
-    apply_random_degradation,
-    upsample_bessel_reference,
+from totton_audio_de_mirroring.data.capb_dataset import (
+    CAPBDataConfig,
+    CAPBUpsampleDataset,
+    load_capb_data_config,
 )
-from totton_audio_de_mirroring.data.filters import (
-    apply_fir_filter,
-    band_split,
-    design_band_split_filters,
-    design_bessel_fir,
-)
-from totton_audio_de_mirroring.data.generator import (
-    GeneratorConfig,
-    SignalRequest,
-    SyntheticSignalGenerator,
-    apply_soft_clip,
-    generate_am_tone,
-    generate_band_limited_noise,
-    generate_fm_tone,
-    generate_impulse_train,
-    generate_linear_sweep,
-    generate_log_sweep,
-    generate_multitone,
-    generate_percussive_transient,
-    generate_pink_noise,
-    generate_signal,
-    generate_soft_clipped_tone,
-    generate_white_noise,
-    list_signal_types,
-)
-from totton_audio_de_mirroring.data.mirror_detection import (
-    HBTargetResult,
-    MirrorDetectionConfig,
-    MirrorDetectionResult,
-    detect_mirror_artifacts,
-    generate_hb_target,
-)
+from totton_audio_de_mirroring.data.generator import generate_signal
+from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
 
 __all__ = [
-    "DegradationConfig",
-    "DegradationProfile",
-    "DegradationProfileManager",
-    "apply_degradation_profile",
-    "apply_quantization",
-    "apply_random_degradation",
-    "upsample_bessel_reference",
-    "apply_fir_filter",
-    "band_split",
-    "design_band_split_filters",
-    "design_bessel_fir",
-    "GeneratorConfig",
-    "SignalRequest",
-    "SyntheticSignalGenerator",
-    "apply_soft_clip",
-    "generate_am_tone",
-    "generate_band_limited_noise",
-    "generate_fm_tone",
-    "generate_impulse_train",
-    "generate_linear_sweep",
-    "generate_log_sweep",
-    "generate_multitone",
-    "generate_percussive_transient",
-    "generate_pink_noise",
+    "CAPBDataConfig",
+    "CAPBUpsampleDataset",
     "generate_signal",
-    "generate_soft_clipped_tone",
-    "generate_white_noise",
-    "list_signal_types",
-    "HBTargetResult",
-    "MirrorDetectionConfig",
-    "MirrorDetectionResult",
-    "detect_mirror_artifacts",
-    "generate_hb_target",
+    "load_capb_data_config",
+    "upsample_bessel_reference",
 ]
