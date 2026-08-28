@@ -103,7 +103,6 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         entropy_floor=float(weights_raw.get("entropy_floor", 10.0)),
         edge_fidelity_relax=float(weights_raw.get("edge_fidelity_relax", 0.9)),
         edge_ring=float(weights_raw.get("edge_ring", 300.0)),
-        selection=float(weights_raw.get("selection", 0.5)),
         min_entropy=float(weights_raw.get("min_entropy", 0.05)),
     )
     return CAPBTrainingConfig(
@@ -261,7 +260,6 @@ def _run_epoch(
         flat_mask = batch["flat_mask"].to(device)
         quiet_mask = batch["quiet_mask"].to(device)
         edge_mask = batch["edge_mask"].to(device)
-        selection_mask = batch["selection_mask"].to(device)
 
         with torch.set_grad_enabled(train):
             output, weights, prototypes = model.forward_with_details(source)
@@ -278,9 +276,7 @@ def _run_epoch(
                 loss_weights=config.loss_weights,
                 trim=config.border_trim,
                 edge_mask=edge_mask,
-                selection_mask=selection_mask,
                 gentle_output=gentle_output,
-                gentle_index=model.prototype_names.index("gentle"),
             )
 
         if train:
