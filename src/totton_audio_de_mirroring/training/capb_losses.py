@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 from totton_audio_de_mirroring.training.stft_loss import (
     STFTLossConfig,
@@ -36,7 +35,6 @@ class CAPBLossWeights:
             inside edge zones (0.9 keeps 10% of the wave loss there).
         edge_ring: Penalty for edge-zone ripple exceeding the gentle
             prototype's ripple (covers dense-edge content with no plateaus).
-        selection: Generator-labelled prototype-selection supervision.
         min_entropy: Per-frame entropy floor in nats (~0.05 allows a max
             blend weight of roughly 0.99).
 
@@ -55,7 +53,6 @@ class CAPBLossWeights:
     entropy_floor: float = 10.0
     edge_fidelity_relax: float = 0.9
     edge_ring: float = 300.0
-    selection: float = 0.5
     min_entropy: float = 0.05
 
 
@@ -69,9 +66,7 @@ def compute_capb_losses(
     loss_weights: CAPBLossWeights,
     trim: int = 512,
     edge_mask: torch.Tensor | None = None,
-    selection_mask: torch.Tensor | None = None,
     gentle_output: torch.Tensor | None = None,
-    gentle_index: int = -1,
 ) -> dict[str, torch.Tensor]:
     """Compute all CAPB loss terms.
 
@@ -86,10 +81,8 @@ def compute_capb_losses(
         trim: Samples trimmed at each chunk border (filter edge effects).
         edge_mask: Broadband-transient neighborhoods where waveform
             fidelity is relaxed (see edge_fidelity_relax).
-        selection_mask: Frame target for gentle prototype selection.
         gentle_output: The gentle prototype's output for the same input;
             enables the edge_ring loss when given with edge_mask.
-        gentle_index: Index of the gentle weight in weights_frames.
 
     Returns:
         Mapping with per-term losses and the weighted "total".
@@ -123,9 +116,6 @@ def compute_capb_losses(
             raise ValueError("edge_mask must share the output shape.")
         relax = loss_weights.edge_fidelity_relax
         wave_error = wave_error * (1.0 - relax * edge_mask[:, sl])
-    if selection_mask is not None and selection_mask.shape != output.shape:
-        raise ValueError("selection_mask must share the output shape.")
-
     losses = {
         "wave": torch.mean(wave_error),
         "stft": multi_resolution_stft_loss(out, tgt, stft_configs),
@@ -140,13 +130,8 @@ def compute_capb_losses(
         losses["edge_ring"] = edge_ring_loss(
             out, gentle_output[:, sl], edge_mask[:, sl]
         )
-        target_mask = selection_mask if selection_mask is not None else edge_mask
-        losses["selection"] = prototype_selection_loss(
-            weights_frames, target_mask[:, sl], gentle_index
-        )
     else:
         losses["edge_ring"] = output.new_zeros(())
-        losses["selection"] = output.new_zeros(())
     losses["total"] = (
         loss_weights.wave * losses["wave"]
         + loss_weights.stft * losses["stft"]
@@ -155,7 +140,6 @@ def compute_capb_losses(
         + loss_weights.tv * losses["tv"]
         + loss_weights.entropy_floor * losses["entropy_floor"]
         + loss_weights.edge_ring * losses["edge_ring"]
-        + loss_weights.selection * losses["selection"]
     )
     return losses
 
@@ -258,50 +242,6 @@ def edge_ring_loss(
     excess = torch.relu(ripple - gentle_ripple)
     mask = edge_mask[:, 1:] * edge_mask[:, :-1]
     return _top_k_masked_mean(excess, mask, top_fraction)
-
-
-def prototype_selection_loss(
-    weights_frames: torch.Tensor,
-    edge_mask: torch.Tensor,
-    gentle_index: int = -1,
-) -> torch.Tensor:
-    """Teach edge frames to select gentle and steady frames to reject it.
-
-    Args:
-        weights_frames: Blend weights (batch, prototypes, frames).
-        edge_mask: Generator-labelled edge mask (batch, output time).
-        gentle_index: Index of the gentle prototype.
-
-    Returns:
-        Frame-weighted edge/steady binary cross-entropy.
-
-    Raises:
-        ValueError: If shapes or the gentle index are invalid.
-
-    Physical Basis:
-        Ringing losses alone can make an always-gentle solution locally
-        attractive. Generator labels provide an unambiguous control target:
-        use gentle only around known discontinuities and retain the
-        high-rejection Kaiser endpoints elsewhere. Frame weighting preserves
-        the corpus' actual transient duty cycle, preventing sparse labelled
-        events from imposing an artificial 50/50 gentle prior.
-    """
-    if weights_frames.dim() != 3 or edge_mask.dim() != 2:
-        raise ValueError("weights_frames and edge_mask must be 3D/2D tensors.")
-    if weights_frames.shape[0] != edge_mask.shape[0]:
-        raise ValueError("weights_frames and edge_mask batch sizes must match.")
-    num_prototypes = weights_frames.shape[1]
-    if not -num_prototypes <= gentle_index < num_prototypes:
-        raise ValueError(f"gentle_index out of range: {gentle_index}.")
-
-    frame_edges = F.adaptive_max_pool1d(
-        edge_mask.unsqueeze(1), weights_frames.shape[-1]
-    ).squeeze(1)
-    frame_edges = (frame_edges > 0.0).to(weights_frames.dtype)
-    gentle = weights_frames[:, gentle_index].clamp(1.0e-6, 1.0 - 1.0e-6)
-    return torch.mean(
-        -frame_edges * torch.log(gentle) - (1.0 - frame_edges) * torch.log1p(-gentle)
-    )
 
 
 def entropy_floor_loss(

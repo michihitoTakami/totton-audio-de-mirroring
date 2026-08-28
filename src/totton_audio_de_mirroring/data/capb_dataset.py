@@ -41,23 +41,6 @@ QUIET_MASK_LEVEL_REL = 1.0e-3
 EDGE_MASK_DILATION_MS = 3.0
 EDGE_SLOPE_SPIKE_REL = 0.25
 
-# These labels are generator metadata, not waveform heuristics. Restricting
-# slope-based edge marking to known discontinuous families avoids the run8
-# failure where stationary broadband noise was misclassified as transient.
-LABELED_EDGE_SIGNAL_TYPES = frozenset(
-    {
-        "dense_square_wave",
-        "isolated_click",
-        "sawtooth_wave",
-        "square_wave",
-        "step_plateau",
-    }
-)
-FOCUSED_CHUNK_SIGNAL_TYPES = frozenset({"isolated_click", "tone_burst"})
-FULL_GENTLE_SIGNAL_TYPES = frozenset(
-    {"dense_square_wave", "sawtooth_wave", "square_wave", "step_plateau"}
-)
-
 
 @dataclass(frozen=True)
 class AugmentationConfig:
@@ -207,21 +190,20 @@ class CAPBDataConfig:
 
 DEFAULT_SIGNAL_MIX: dict[str, float] = {
     "square_wave": 0.10,
-    "dense_square_wave": 0.08,
     "step_plateau": 0.10,
-    "isolated_click": 0.10,
+    "isolated_click": 0.05,
     "sawtooth_wave": 0.05,
     "tone_burst": 0.10,
-    "music_like_mixture": 0.10,
-    "multitone": 0.08,
+    "music_like_mixture": 0.15,
+    "multitone": 0.10,
     "sweep_log": 0.05,
-    "sweep_linear": 0.02,
+    "sweep_linear": 0.03,
     "am_tone": 0.05,
     "fm_tone": 0.05,
-    "percussive": 0.04,
-    "pink_noise": 0.03,
-    "band_limited_noise": 0.03,
-    "near_nyquist_noise": 0.02,
+    "percussive": 0.05,
+    "pink_noise": 0.04,
+    "band_limited_noise": 0.04,
+    "near_nyquist_noise": 0.04,
 }
 
 
@@ -280,10 +262,7 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         augmented = apply_augmentations(clean_full, self._config.augmentation, rng)
 
         target_full = _apply_brickwall(augmented, self._brickwall_taps)
-        focus_signal = clean_full if signal_type in FOCUSED_CHUNK_SIGNAL_TYPES else None
-        target_chunk, chunk_start = self._extract_chunk(
-            target_full, rng, focus_signal=focus_signal
-        )
+        target_chunk, chunk_start = self._extract_chunk(target_full, rng)
         source_chunk = target_chunk[::UPSAMPLE_RATIO].copy()
 
         # Masks come from the CLEAN pre-brickwall signal: the band-limited
@@ -297,16 +276,13 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             window_ms=self._config.flat_mask_window_ms,
         )
         quiet_mask = compute_quiet_mask(clean_chunk, self._config.target_sample_rate)
-        labelled_edge_signal = (
-            clean_chunk if signal_type in LABELED_EDGE_SIGNAL_TYPES else None
-        )
+        # Slope-spike edge detection remains disabled because stationary
+        # broadband noise legitimately exceeds a simple slope threshold.
         edge_mask = compute_edge_mask(
             flat_mask,
             quiet_mask,
-            clean_signal=labelled_edge_signal,
             sample_rate=self._config.target_sample_rate,
         )
-        selection_mask = _selection_mask(signal_type, edge_mask)
 
         return {
             "source": torch.from_numpy(source_chunk.astype(np.float32)),
@@ -314,33 +290,13 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             "flat_mask": torch.from_numpy(flat_mask.astype(np.float32)),
             "quiet_mask": torch.from_numpy(quiet_mask.astype(np.float32)),
             "edge_mask": torch.from_numpy(edge_mask.astype(np.float32)),
-            "selection_mask": torch.from_numpy(selection_mask.astype(np.float32)),
             "signal_type": signal_type,
             "chunk_start": int(chunk_start),
         }
 
     def _extract_chunk(
-        self,
-        target_full: np.ndarray,
-        rng: np.random.Generator,
-        focus_signal: np.ndarray | None = None,
+        self, target_full: np.ndarray, rng: np.random.Generator
     ) -> tuple[np.ndarray, int]:
-        """Extract a ratio-aligned chunk, optionally containing an event.
-
-        Args:
-            target_full: Full-rate band-limited teacher signal.
-            rng: Per-sample random generator.
-            focus_signal: Clean waveform whose active event must be retained.
-
-        Returns:
-            Tuple of target chunk and its even start index.
-
-        Physical Basis:
-            Sparse clicks and bursts otherwise land outside a random 0.25 s
-            chunk roughly three quarters of the time. Centering their active
-            support keeps transient supervision present without changing the
-            alias-free target/source relationship.
-        """
         chunk_len = int(
             round(self._config.chunk_duration_sec * self._config.target_sample_rate)
         )
@@ -350,35 +306,12 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             raise ValueError(
                 "source_duration_sec too short for chunk plus filter margins."
             )
-        if focus_signal is not None:
-            start = self._focused_chunk_start(
-                focus_signal, chunk_len, margin, max_start, rng
-            )
-        elif self._config.random_chunk:
+        if self._config.random_chunk:
             start = int(rng.integers(margin, max_start + 1))
         else:
             start = margin
         start -= start % UPSAMPLE_RATIO
         return target_full[start : start + chunk_len], start
-
-    @staticmethod
-    def _focused_chunk_start(
-        focus_signal: np.ndarray,
-        chunk_len: int,
-        min_start: int,
-        max_start: int,
-        rng: np.random.Generator,
-    ) -> int:
-        """Choose a chunk start whose central region contains active audio."""
-        if focus_signal.ndim != 1 or focus_signal.size == 0:
-            raise ValueError("focus_signal must be a non-empty 1D array.")
-        peak = float(np.max(np.abs(focus_signal)))
-        active = np.flatnonzero(np.abs(focus_signal) >= max(peak * 1.0e-3, 1.0e-12))
-        if active.size == 0:
-            return int(rng.integers(min_start, max_start + 1))
-        focus_index = int(active[active.size // 2])
-        jitter = int(rng.integers(-chunk_len // 8, chunk_len // 8 + 1))
-        return int(np.clip(focus_index - chunk_len // 2 + jitter, min_start, max_start))
 
     def _sample_request(self, rng: np.random.Generator) -> tuple[str, dict[str, Any]]:
         signal_type = str(rng.choice(self._mix_names, p=self._mix_probs))
@@ -386,11 +319,6 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         if signal_type == "square_wave":
             params = {
                 "frequency_hz": _log_uniform(rng, 40.0, 5_000.0),
-                "duty": float(rng.uniform(0.3, 0.7)),
-            }
-        elif signal_type == "dense_square_wave":
-            params = {
-                "frequency_hz": float(rng.uniform(4_000.0, 6_000.0)),
                 "duty": float(rng.uniform(0.3, 0.7)),
             }
         elif signal_type == "sawtooth_wave":
@@ -402,7 +330,6 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             params = {
                 "frequency_hz": _log_uniform(rng, 100.0, 19_000.0),
                 "burst_ms": float(rng.uniform(5.0, 50.0)),
-                "center_fraction": float(rng.uniform(0.2, 0.8)),
             }
         elif signal_type == "multitone":
             count = int(rng.integers(2, 9))
@@ -682,23 +609,6 @@ def compute_edge_mask(
         transitions = np.maximum(transitions, spikes)
     half_window = max(1, int(round(EDGE_MASK_DILATION_MS * sample_rate / 1_000.0)))
     return (_moving_max(transitions, half_window) > 0.0).astype(np.float64)
-
-
-def _selection_mask(signal_type: str, edge_mask: np.ndarray) -> np.ndarray:
-    """Return the gentle-selection target for one generated signal family.
-
-    Physical Basis:
-        Repeated discontinuities require a consistently gentle interpolator:
-        returning to a sharp FIR between low-rate square edges reintroduces
-        the plateau ripple measured by G1. Sparse clicks and bursts need
-        gentle only near their events, while stationary families stay on the
-        high-rejection Kaiser endpoints.
-    """
-    if signal_type in FULL_GENTLE_SIGNAL_TYPES:
-        return np.ones_like(edge_mask)
-    if signal_type in FOCUSED_CHUNK_SIGNAL_TYPES:
-        return edge_mask.copy()
-    return np.zeros_like(edge_mask)
 
 
 def _moving_max(values: np.ndarray, half_window: int) -> np.ndarray:

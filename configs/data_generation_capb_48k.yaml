@@ -33,26 +33,25 @@ near_nyquist_high_range_hz: [20000.0, 23400.0]
 # plateau loss but measured by the G1 gate (run2 failed exactly there).
 flat_mask_window_ms: 0.10
 
-# Edge/transient-rich families cover the ringing-gate probe distribution;
+# Edge-rich families (~30%) cover the ringing-gate probe distribution;
 # tonal/steady families train mirror suppression; music-like mixtures close
 # the domain gap to real audio without real audio. Identical to 44.1k.
 signal_mix:
   square_wave: 0.10
-  dense_square_wave: 0.08
   step_plateau: 0.10
-  isolated_click: 0.10
+  isolated_click: 0.05
   sawtooth_wave: 0.05
   tone_burst: 0.10
-  music_like_mixture: 0.10
-  multitone: 0.08
+  music_like_mixture: 0.15
+  multitone: 0.10
   sweep_log: 0.05
-  sweep_linear: 0.02
+  sweep_linear: 0.03
   am_tone: 0.05
   fm_tone: 0.05
-  percussive: 0.04
-  pink_noise: 0.03
-  band_limited_noise: 0.03
-  near_nyquist_noise: 0.02
+  percussive: 0.05
+  pink_noise: 0.04
+  band_limited_noise: 0.04
+  near_nyquist_noise: 0.04
 
 augmentation:
   gain_range: [0.25, 1.0]

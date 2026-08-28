@@ -88,7 +88,7 @@ w_k >= 0
 | FIR | 周波数・時間応答の性格 | 主に使う区間 |
 |---|---|---|
 | `sharp` | 狭い遷移帯域、90 dB設計の強いイメージ抑制。代わりに不連続点の前後でリンギングが長くなりやすい | 定常音、ノイズ、緩やかに変化する音 |
-| `mid` | イメージ抑制とリンギングの中間。48 kHz系列では単発の過渡に対する安全側FIRでもある | `sharp`と`gentle`の中間的な区間 |
+| `mid` | イメージ抑制とリンギングの中間 | `sharp`と`gentle`の中間的な区間 |
 | `gentle` | 6次Besselの緩やかな振幅応答へ合わせた101-tap FIR。イメージ抑制は弱いがedgeのリンギングを抑えやすい | step、矩形波、クリックなどの不連続点 |
 
 Kaiser窓を使う`sharp`と`mid`はsample-rate系列ごとに遷移帯域を変えます。入力のナイキスト周波数が22.05 kHzの場合と24 kHzの場合では利用できる遷移幅が異なるため、単純な周波数スケーリングはしません。一方、`gentle`は両系列ともcutoff 20 kHzの6次Bessel振幅応答を基準にします。
@@ -106,16 +106,9 @@ sample間へ0を挿入すると元の帯域の振幅が1/2になるため、FIR�
 
 controllerは入力波形を直接受け取る5段の小さな1次元畳み込みネットワークです。各段で時間方向の情報を圧縮し、入力64 samplesごとに3個の未正規化スコアを出します。このスコアへsoftmax関数を適用したものが`sharp`、`mid`、`gentle`の重みです。
 
-判定が音量へ依存しないよう、controllerへ入れる波形だけを処理単位内のpeakで正規化します。3本のFIRは正規化前の入力を処理するため、この正規化が出力音量を変えることはありません。処理単位の端では実波形を鏡写しにして解析に必要な前後関係を補い、定常信号の端だけ誤って`gentle`へ寄ることを防ぎます。
+判定が音量へ依存しないよう、controllerへ入れる波形だけを処理単位内のpeakで正規化します。3本のFIRは正規化前の入力を処理するため、この正規化が出力音量を変えることはありません。
 
 初期混合比は`sharp: 0.85 / mid: 0.10 / gentle: 0.05`です。ニューラルネットワークはこの初期値を基準に、信号内容に応じて重みを増減する方法を学びます。初期値を表すbiasは固定し、学習開始直後に1本のFIRだけを常時使う状態へ偏って学習が止まることを防ぎます。
-
-学習済みcontrollerに加えて、見逃しやすい波形を決められた規則で保護する2つのguardがあります。
-
-- sparse transient guard: 局所的な平均音量に比べてpeakが非常に大きいクリックや単発impulseを検出し、その周辺を安全側FIRへ寄せます。44.1 kHz系列では`gentle`、48 kHz系列では`mid`を使用します。
-- discontinuity guard: 大きなsample差分と平坦区間の密度を組み合わせ、stepや矩形波のedgeを検出して`gentle`へ寄せます。単なるGaussian noiseを不連続信号と誤認しないため、傾きだけでは判定しません。
-
-guardも瞬間的な切り替えではありません。検出の確信度が0から1へ上がるにつれて、通常のcontroller重みから安全側FIRの重みへ滑らかに移動します。
 
 ### 何を学習しているか
 
@@ -125,7 +118,6 @@ guardも瞬間的な切り替えではありません。検出の確信度が0�
 - `plateau ripple`: stepや矩形波の平坦部に残る、特に大きなリンギングを減らす
 - `quiet energy`: impulse前後など、本来無音の領域へ漏れる前後のechoを減らす
 - `edge ringing`: 不連続点の近くで、`gentle`より大きくなったリンギングを罰する
-- `prototype selection`: 既知の不連続区間では`gentle`、定常区間ではイメージ抑制の強いFIRを選ぶよう教える
 - `weight total variation`: 混合比を時間方向に滑らかにし、重みの急変による副作用を抑える
 - `entropy floor`: 1本のFIRへ早期に完全固定され、学習できなくなることを防ぐ
 
@@ -169,14 +161,7 @@ uv run python scripts/train_capb.py \
 
 ### 学習済み成果物
 
-再現確認用に、各sample-rate系列の最新学習候補と、対応する学習履歴・評価レポートを同梱しています。
-
-| sample-rate系列 | checkpoint | spec v3結果 | 状態 |
-|---|---|---|---|
-| 44.1→88.2 kHz | `data/checkpoints/capb/run12_context_retrain/capb_best.pt` | 全gate合格 | family候補 |
-| 48→96 kHz | `data/checkpoints/capb_48k/run5_context_retrain/capb_best.pt` | G3 image peak不合格 | 未採用・診断用 |
-
-対応する記録は`reports/capb_training/`と`reports/probe_gates/`にあります。CAPBのリリース条件は両系列の全gate合格なので、これらを組み合わせた正式なcheckpointの組はまだ確定していません。
+後続実験の学習履歴と評価結果は`reports/capb_training/`と`reports/probe_gates/`へ診断記録として残しています。対応するcheckpointは採用対象ではなく、リポジトリには同梱しません。CAPBのリリース条件は両系列の全gate合格なので、正式なcheckpointの組はまだ確定していません。
 
 ## 受入評価
 
@@ -186,13 +171,13 @@ CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両系列で、通常評価
 # 44.1 kHz family
 uv run python scripts/evaluate_probe_gates.py \
   --backend capb \
-  --checkpoint data/checkpoints/capb/run12_context_retrain/capb_best.pt \
+  --checkpoint <44k1-checkpoint> \
   --rate-family 44k1
 
 # 48 kHz family
 uv run python scripts/evaluate_probe_gates.py \
   --backend capb \
-  --checkpoint data/checkpoints/capb_48k/run5_context_retrain/capb_best.pt \
+  --checkpoint <48k-checkpoint> \
   --rate-family 48k
 ```
 
@@ -221,7 +206,7 @@ uv run python scripts/run_capb_phase0.py --rate-family 48k
 ```yaml
 stage1:
   mode: capb
-  checkpoint_path: data/checkpoints/capb/run12_context_retrain/capb_best.pt
+  checkpoint_path: <checkpoint>
   device: cpu
 ```
 
