@@ -1,5 +1,6 @@
 #include "totton_audio_de_mirroring/dsp/fir_config.h"
 #include "totton_audio_de_mirroring/dsp/fir_design.h"
+#include "totton_audio_de_mirroring/dsp/hirate_fir_design.h"
 
 #include <filesystem>
 #include <iomanip>
@@ -17,6 +18,22 @@ void print_metrics(const totton_audio_de_mirroring::dsp::FirDesignMetrics& metri
     std::cout << "post_ringing_ms=" << metrics.post_ringing_ms << "\n";
 }
 
+std::vector<double> design_stage(const totton_audio_de_mirroring::dsp::FirDesignSpec& spec,
+                                 totton_audio_de_mirroring::dsp::FirDesignMetrics* metrics) {
+    using namespace totton_audio_de_mirroring::dsp;
+    if (spec.design_kind == "minimum_phase") {
+        return design_minimum_phase_lowpass(spec, metrics);
+    }
+
+    auto taps =
+        hirate_fir::design_runtime_storage_taps(spec.num_taps, spec.cutoff_hz, spec.sample_rate_hz);
+    if (taps.empty()) {
+        throw std::runtime_error("failed to design HiRate linear-phase FIR");
+    }
+    *metrics = analyze_fir(taps, spec.sample_rate_hz, spec.passband_hz, spec.stopband_hz);
+    return taps;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -32,8 +49,7 @@ int main(int argc, char** argv) {
         for (const auto& stage : config.stages) {
             std::cout << "[" << stage.name << "]\n";
             totton_audio_de_mirroring::dsp::FirDesignMetrics metrics;
-            auto taps = totton_audio_de_mirroring::dsp::design_minimum_phase_lowpass(stage.design,
-                                                                                     &metrics);
+            auto taps = design_stage(stage.design, &metrics);
 
             const auto tap_dir = stage.taps_path.parent_path();
             if (!tap_dir.empty()) {

@@ -36,7 +36,7 @@ add_executable(tadm_dsp_tests
 target_link_libraries(tadm_dsp_tests PRIVATE tadm_dsp)
 
 add_executable(tadm_fir_tests
-    tests/test_min_phase_fir.cpp
+    tests/test_hirate_fir_design.cpp
 )
 
 target_link_libraries(tadm_fir_tests PRIVATE tadm_dsp)

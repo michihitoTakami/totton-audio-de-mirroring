@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -27,12 +29,16 @@ bool starts_with(const std::string& value, const std::string& prefix) {
 }
 
 void apply_kv(FirStageConfig& stage, const std::string& key, const std::string& value) {
-    if (key == "sample_rate_hz") {
+    if (key == "design_kind") {
+        stage.design.design_kind = value;
+    } else if (key == "sample_rate_hz") {
         stage.design.sample_rate_hz = std::stod(value);
     } else if (key == "passband_hz") {
         stage.design.passband_hz = std::stod(value);
     } else if (key == "stopband_hz") {
         stage.design.stopband_hz = std::stod(value);
+    } else if (key == "cutoff_hz") {
+        stage.design.cutoff_hz = std::stod(value);
     } else if (key == "attenuation_db") {
         stage.design.attenuation_db = std::stod(value);
     } else if (key == "passband_ripple_db") {
@@ -68,6 +74,19 @@ void validate_stage(const FirStageConfig& stage) {
     }
     if (stage.design.stopband_hz <= stage.design.passband_hz) {
         throw std::invalid_argument("stopband_hz must exceed passband_hz");
+    }
+    if (stage.design.design_kind != "minimum_phase" &&
+        stage.design.design_kind != "hirate_linear") {
+        throw std::invalid_argument("design_kind must be minimum_phase or hirate_linear");
+    }
+    if (stage.design.design_kind == "hirate_linear") {
+        const double nyquist = 0.5 * stage.design.sample_rate_hz;
+        if (stage.design.cutoff_hz <= 0.0 || stage.design.cutoff_hz >= nyquist) {
+            throw std::invalid_argument("cutoff_hz must be in (0, Nyquist)");
+        }
+        if (stage.design.num_taps < 3 || stage.design.num_taps % 2 == 0) {
+            throw std::invalid_argument("hirate_linear num_taps must be an odd value >= 3");
+        }
     }
     if (stage.taps_path.empty()) {
         throw std::invalid_argument("taps_path is required");
@@ -147,10 +166,9 @@ void write_taps_file(const std::filesystem::path& path, const std::vector<double
     if (!output.is_open()) {
         throw std::runtime_error("failed to write taps file: " + path.string());
     }
-    output.setf(std::ios::fixed);
-    output.precision(17);
     for (double tap : taps) {
-        output << tap << "\n";
+        output << std::setprecision(std::numeric_limits<double>::max_digits10) << std::scientific
+               << tap << "\n";
     }
 }
 
