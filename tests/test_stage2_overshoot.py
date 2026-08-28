@@ -52,18 +52,36 @@ def test_upsample_2x_fir_preserves_settled_dc_level() -> None:
     np.testing.assert_allclose(output[32:], 1.0, rtol=0.0, atol=1e-12)
 
 
-def test_evaluate_stage2_overshoot_with_known_taps() -> None:
-    """Test evaluation returns finite metrics for current Stage 2 taps."""
+def test_default_stage_taps_match_hirate_contract() -> None:
+    """Default taps should preserve the canonical linear-phase ladder."""
     config_dir = Path("cpp/configs")
     stage_taps = load_stage_taps(config_dir=config_dir, num_stages=3)
 
-    result = evaluate_stage2_overshoot(stage_taps=stage_taps)
+    assert [taps.size for taps in stage_taps] == [255, 63, 39]
+    for taps in stage_taps:
+        np.testing.assert_array_equal(taps, taps[::-1])
+        assert np.sum(taps) == pytest.approx(1.0, abs=1.0e-7)
 
-    assert result.output_sample_rate == 705_600
+
+@pytest.mark.parametrize(
+    ("source_sample_rate", "expected_output_rate"),
+    [(88_200, 705_600), (96_000, 768_000)],
+)
+def test_evaluate_stage2_overshoot_with_known_taps(
+    source_sample_rate: int, expected_output_rate: int
+) -> None:
+    """Both rate families should improve on the retired transient baseline."""
+    stage_taps = load_stage_taps(config_dir=Path("cpp/configs"), num_stages=3)
+
+    result = evaluate_stage2_overshoot(
+        stage_taps=stage_taps, source_sample_rate=source_sample_rate
+    )
+
+    assert result.output_sample_rate == expected_output_rate
     assert np.isfinite(result.step.ratio)
     assert np.isfinite(result.square.ratio)
-    assert result.step.ratio >= 0.0
-    assert result.square.ratio >= 0.0
+    assert 0.0 <= result.step.ratio < 0.15
+    assert 0.0 <= result.square.ratio < 0.19
 
 
 def test_load_stage_taps_missing_file_raises(tmp_path: Path) -> None:

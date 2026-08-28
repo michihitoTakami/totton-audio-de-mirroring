@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide a reproducible C++ quality benchmark for Stage2 (HIE) to quantify:
+Provide a reproducible C++ quality benchmark for the linear-phase Stage2 transport FIR to quantify:
 
 - impulse response
 - step response
@@ -14,11 +14,13 @@ Provide a reproducible C++ quality benchmark for Stage2 (HIE) to quantify:
 
 ### FIR and stage conditions
 
-- File: `cpp/configs/hie_fir_min_phase.ini`
+- File: `cpp/configs/hirate_fir_linear_phase.ini`
 - Injected from config:
 - stage taps path (`taps_path`)
-- passband/stopband cutoff (`passband_hz`, `stopband_hz`)
-- tap constraints (`num_taps`, `min_taps`, `max_taps`)
+- design mode (`design_kind=hirate_linear`)
+- passband/stopband measurement bands (`passband_hz`, `stopband_hz`)
+- per-stage Nyquist cutoff (`cutoff_hz`)
+- fixed tap count (`num_taps`: 255, 63, 39)
 
 ### Benchmark conditions and thresholds
 
@@ -35,7 +37,7 @@ Provide a reproducible C++ quality benchmark for Stage2 (HIE) to quantify:
 cmake -S cpp -B cpp/build
 cmake --build cpp/build
 ./cpp/build/tadm_stage2_quality_bench \
-  cpp/configs/hie_fir_min_phase.ini \
+  cpp/configs/hirate_fir_linear_phase.ini \
   cpp/configs/stage2_quality_benchmark.ini
 ```
 
@@ -48,4 +50,5 @@ Return code:
 ## Notes
 
 - This benchmark intentionally separates measurement logic from pass/fail policy via config.
-- Issue #49 baseline indicates current taps may exceed the `<5%` overshoot target; this benchmark provides the C++ side reproducible measurement path for redesign iterations.
+- The FIR contract matches Totton Audio NN: Kaiser beta 16, linear phase, and per-stage input-Nyquist cutoff.
+- The raw-step overshoot is about 13.9%, improved from the retired minimum-phase cascade's roughly 33%, but it does not meet the aspirational `<5%` target. The threshold remains unchanged and the CLI therefore returns `2` for this diagnostic.

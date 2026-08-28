@@ -8,9 +8,11 @@
 namespace totton_audio_de_mirroring::dsp {
 
 struct FirDesignSpec {
+    std::string design_kind = "minimum_phase";
     double sample_rate_hz = 0.0;
     double passband_hz = 0.0;
     double stopband_hz = 0.0;
+    double cutoff_hz = 0.0;
     double attenuation_db = 60.0;
     double passband_ripple_db = 0.1;
     double overshoot_max = 0.05;

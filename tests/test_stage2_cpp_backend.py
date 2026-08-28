@@ -16,7 +16,7 @@ from totton_audio_de_mirroring.stage2.overshoot import cascade_upsample, load_st
 
 
 def test_cpp_stage2_backend_matches_python_reference(tmp_path: Path) -> None:
-    """C++ core API output should match Python cascade for deterministic taps."""
+    """C++ core API should match Python for injected and production taps."""
     if shutil.which("cmake") is None:
         pytest.skip("cmake not available")
 
@@ -39,6 +39,20 @@ def test_cpp_stage2_backend_matches_python_reference(tmp_path: Path) -> None:
         output = upsampler.process(signal)
 
     np.testing.assert_allclose(output, expected, rtol=0.0, atol=1e-12)
+
+    default_signal = np.linspace(-1.0, 1.0, 128, dtype=np.float64)
+    default_taps = load_stage_taps(Path("cpp/configs"), num_stages=3)
+    default_expected = cascade_upsample(default_signal, default_taps)
+    default_runtime = CppStage2RuntimeConfig(
+        config_dir=Path("cpp/configs"),
+        num_stages=3,
+        cpp_project_dir=Path("cpp"),
+        cpp_build_dir=tmp_path / "build",
+    )
+    with CppStage2Upsampler(default_runtime) as upsampler:
+        default_output = upsampler.process(default_signal)
+
+    np.testing.assert_allclose(default_output, default_expected, rtol=0.0, atol=1e-12)
 
 
 def test_cpp_stage2_backend_rejects_missing_config_dir(tmp_path: Path) -> None:
