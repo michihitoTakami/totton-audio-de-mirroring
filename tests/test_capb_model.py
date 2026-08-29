@@ -168,6 +168,39 @@ def test_prototype_routing_prefers_gentle_edges_and_sharp_stationary() -> None:
     assert float(correct_loss) < float(reversed_loss)
 
 
+def test_prototype_routing_recovers_weight_below_generic_epsilon() -> None:
+    """Routing labels must retain a gradient after a softmax nearly saturates."""
+    logits = torch.tensor(
+        [[[-30.0, -30.0], [0.0, 0.0], [0.0, 0.0]]], requires_grad=True
+    )
+    weights = torch.softmax(logits, dim=1)
+    loss = prototype_routing_loss(
+        weights,
+        torch.zeros(1, 4),
+        torch.tensor([True]),
+        sharp_index=0,
+        gentle_index=2,
+    )
+
+    loss.backward()
+
+    assert logits.grad is not None
+    assert torch.all(torch.abs(logits.grad[:, 0, :]) > 0.0)
+
+
+def test_prototype_routing_defers_focused_transients_to_pre_echo_loss() -> None:
+    weights = torch.tensor([[[0.2, 0.2], [0.1, 0.1], [0.7, 0.7]]])
+    loss = prototype_routing_loss(
+        weights,
+        torch.ones(1, 4),
+        torch.tensor([False]),
+        focused_transient=torch.tensor([True]),
+        sharp_index=0,
+        gentle_index=2,
+    )
+    assert float(loss) == pytest.approx(0.0)
+
+
 def test_tv_loss_zero_for_constant_weights() -> None:
     weights = torch.full((2, 3, 10), 1.0 / 3.0)
     assert float(weight_tv_loss(weights)) == pytest.approx(0.0)

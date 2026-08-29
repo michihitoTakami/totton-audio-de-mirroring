@@ -1,4 +1,4 @@
-"""Evaluate 44.1 kHz CAPB pre-echo across controller and OLA offsets."""
+"""Evaluate CAPB pre-echo across controller and OLA offsets."""
 
 from __future__ import annotations
 
@@ -38,11 +38,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--rate-family", choices=("44k1", "48k"), default="44k1")
     return parser.parse_args()
 
 
 def evaluate_robustness(
     capb: CAPBStage1Processor,
+    source_rate: int = _SOURCE_RATE,
+    target_rate: int = _TARGET_RATE,
 ) -> dict[str, Any]:
     """Evaluate direct controller phases and production OLA boundaries.
 
@@ -52,16 +55,20 @@ def evaluate_robustness(
         coordinate system at chunk hops, so both must satisfy the same G2b
         energy bound used by the frozen probe gates.
     """
+    if source_rate <= 0 or target_rate != 2 * source_rate:
+        raise ValueError("target_rate must be exactly 2x a positive source_rate.")
     direct = _evaluate_offsets(
         offsets=range(64),
-        event_position=lambda offset, _hop: _SOURCE_RATE // 2 + offset,
-        candidate=lambda signal: capb.process(signal, _SOURCE_RATE, _TARGET_RATE),
+        event_position=lambda offset, _hop: source_rate // 2 + offset,
+        candidate=lambda signal: capb.process(signal, source_rate, target_rate),
         reference=lambda signal: ReferenceStage1Processor().process(
-            signal, _SOURCE_RATE, _TARGET_RATE
+            signal, source_rate, target_rate
         ),
+        source_rate=source_rate,
+        target_rate=target_rate,
     )
     chunking = ChunkProcessingConfig(
-        sample_rate=_SOURCE_RATE,
+        sample_rate=source_rate,
         chunk_duration_sec=0.25,
         overlap_ratio=0.5,
         window="hann",
@@ -81,6 +88,8 @@ def evaluate_robustness(
         candidate=direct_capb,
         reference=chunked_reference,
         hop_samples=chunking.hop_samples,
+        source_rate=source_rate,
+        target_rate=target_rate,
     )
     return {
         "all_passed": direct["all_passed"] and boundary["all_passed"],
@@ -102,11 +111,38 @@ def _evaluate_offsets(
     candidate: Callable[[np.ndarray], np.ndarray],
     reference: Callable[[np.ndarray], np.ndarray],
     hop_samples: int = 0,
+    source_rate: int = _SOURCE_RATE,
+    target_rate: int = _TARGET_RATE,
 ) -> dict[str, Any]:
+    """Measure pre-echo margin for a set of source-sample offsets.
+
+    Args:
+        offsets: Source-sample offsets to evaluate.
+        event_position: Maps an offset and optional hop size to an event index.
+        candidate: Candidate 2x processing function.
+        reference: Reference 2x processing function.
+        hop_samples: Source-rate OLA hop size passed to event_position.
+        source_rate: Input sample rate in Hz.
+        target_rate: Output sample rate in Hz; must equal 2x source_rate.
+
+    Returns:
+        Serializable worst-case result and one row per offset.
+
+    Raises:
+        ValueError: If the rate contract, event position, or output is invalid.
+
+    Physical Basis:
+        Exhaustive controller and OLA phase offsets prevent a favorable event
+        alignment from hiding a pre-echo regression.
+    """
+    if source_rate <= 0 or target_rate != 2 * source_rate:
+        raise ValueError("target_rate must be exactly 2x a positive source_rate.")
     rows: list[dict[str, float | int | bool]] = []
     for offset in offsets:
-        source = np.zeros(_SOURCE_RATE, dtype=np.float64)
+        source = np.zeros(source_rate, dtype=np.float64)
         event = event_position(offset, hop_samples)
+        if not 0 <= event < source.size:
+            raise ValueError(f"Event position {event} is outside the source buffer.")
         source[event] = _AMPLITUDE
         candidate_output = candidate(source)
         reference_output = reference(source)
@@ -115,8 +151,8 @@ def _evaluate_offsets(
         if not np.all(np.isfinite(candidate_output)):
             raise ValueError("Candidate output contains non-finite values.")
         center = event * 2
-        after = _pre_echo_energy(candidate_output, center, _TARGET_RATE)
-        before = _pre_echo_energy(reference_output, center, _TARGET_RATE)
+        after = _pre_echo_energy(candidate_output, center, target_rate)
+        before = _pre_echo_energy(reference_output, center, target_rate)
         threshold = max(
             _PRE_ECHO_RATIO_MAX * before,
             (_PRE_ECHO_FLOOR_REL * _AMPLITUDE) ** 2,
@@ -144,7 +180,20 @@ def _process_chunked(
     processor: Stage1Processor,
     chunking: ChunkProcessingConfig,
 ) -> np.ndarray:
-    """Run the production Stage 1 Hann-OLA topology without Stage 2."""
+    """Run the production Stage 1 Hann-OLA topology without Stage 2.
+
+    Args:
+        signal: Source-rate mono waveform.
+        processor: Stage 1 processor under evaluation.
+        chunking: Production-compatible Hann-OLA configuration.
+
+    Returns:
+        Contiguous 2x waveform trimmed to the exact rate-converted length.
+
+    Physical Basis:
+        Reusing production chunk and overlap geometry exposes boundary-phase
+        behavior that direct whole-buffer inference cannot measure.
+    """
     streamer = HannOverlapAddStreamer(
         chunk_samples=chunking.chunk_samples * 2,
         overlap_samples=chunking.overlap_samples * 2,
@@ -156,7 +205,9 @@ def _process_chunked(
         chunk_samples=chunking.chunk_samples,
         overlap_samples=chunking.overlap_samples,
     ):
-        output = processor.process(frame.samples, _SOURCE_RATE, _TARGET_RATE)
+        output = processor.process(
+            frame.samples, chunking.sample_rate, chunking.sample_rate * 2
+        )
         piece = streamer.process_chunk(output)
         if piece.size:
             segments.append(np.asarray(piece, dtype=np.float64))
@@ -211,10 +262,12 @@ Negative margin is below the unchanged G2b threshold.
 def main() -> None:
     """Run robustness evaluation and write reproducible evidence."""
     args = parse_args()
+    source_rate = 44_100 if args.rate_family == "44k1" else 48_000
+    target_rate = source_rate * 2
     capb = load_capb_stage1_processor(
         checkpoint_path=args.checkpoint, device=args.device
     )
-    result = evaluate_robustness(capb)
+    result = evaluate_robustness(capb, source_rate, target_rate)
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "robustness.json").write_text(

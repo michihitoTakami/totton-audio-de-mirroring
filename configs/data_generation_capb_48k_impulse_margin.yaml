@@ -1,0 +1,43 @@
+# CAPB 48 kHz final impulse-gain margin curriculum.
+#
+# This short final phase uses clean, event-centered clicks only. Full waveform
+# fidelity can then recover the small sharp contribution needed by G5 without
+# letting long surrounding silence dominate the update. G2b remains the
+# binding checkpoint-selection gate.
+
+num_samples: 5000
+source_duration_sec: 1.0
+chunk_duration_sec: 0.25
+random_chunk: true
+seed: 1234
+
+source_sample_rate: 48000
+target_sample_rate: 96000
+
+brickwall:
+  passband_edge_hz: 23700.0
+  stopband_edge_hz: 24000.0
+  attenuation_db: 120.0
+
+near_nyquist_high_range_hz: [20000.0, 23400.0]
+flat_mask_window_ms: 0.10
+
+signal_mix:
+  isolated_click: 1.0
+
+augmentation:
+  gain_range: [1.0, 1.0]
+  polarity_flip_prob: 0.0
+  noise_std_range: [0.0, 0.0]
+  soft_clip_prob: 0.0
+  soft_clip_drive_range: [1.0, 1.0]
+
+transient_supervision:
+  enabled: true
+  focus_signal_types: [isolated_click]
+  clean_probability: 1.0
+  center_fraction_range: [0.2, 0.8]
+  context_ms: 5.0
+  pre_echo_guard_ms: 0.5
+  pre_echo_window_ms: 3.5
+  edge_supervision_signal_types: [isolated_click]

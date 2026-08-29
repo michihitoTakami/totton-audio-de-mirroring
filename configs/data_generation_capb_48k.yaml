@@ -33,7 +33,7 @@ near_nyquist_high_range_hz: [20000.0, 23400.0]
 # plateau loss but measured by the G1 gate (run2 failed exactly there).
 flat_mask_window_ms: 0.10
 
-# Edge-rich families (~30%) cover the ringing-gate probe distribution;
+# Focused edge-rich families cover the ringing-gate probe distribution;
 # tonal/steady families train mirror suppression; music-like mixtures close
 # the domain gap to real audio without real audio. Identical to 44.1k.
 signal_mix:
@@ -60,3 +60,18 @@ augmentation:
   noise_std_range: [0.0, 0.001]
   soft_clip_prob: 0.1
   soft_clip_drive_range: [1.2, 2.0]
+
+# Sparse events are placed inside every selected chunk. Their broad
+# flat/quiet masks are disabled so surrounding silence cannot dominate event
+# gain; the gate-aligned pre-echo and edge masks provide transient supervision.
+# All windows are specified in milliseconds and therefore match the 44.1 kHz
+# physical intervals while resolving to the correct 96 kHz sample counts.
+transient_supervision:
+  enabled: true
+  focus_signal_types: [isolated_click, tone_burst]
+  clean_probability: 0.7
+  center_fraction_range: [0.2, 0.8]
+  context_ms: 5.0
+  pre_echo_guard_ms: 0.5
+  pre_echo_window_ms: 3.5
+  edge_supervision_signal_types: [square_wave, step_plateau, isolated_click]

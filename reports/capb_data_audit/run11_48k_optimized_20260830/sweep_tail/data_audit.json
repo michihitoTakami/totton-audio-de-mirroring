@@ -1,0 +1,29 @@
+{
+  "num_samples": 10000,
+  "family_counts": {
+    "imd_two_tone": 1029,
+    "isolated_click": 279,
+    "near_nyquist_noise": 1047,
+    "pink_noise": 1015,
+    "square_wave": 498,
+    "sweep_linear": 2516,
+    "sweep_log": 3431,
+    "tone_burst": 185
+  },
+  "transient_event_counts": {
+    "isolated_click": 279,
+    "tone_burst": 185
+  },
+  "focused_clean_count": 340,
+  "focused_augmented_count": 124,
+  "focused_clean_fraction": 0.7327586206896551,
+  "mask_mean_fraction": {
+    "edge_mask": 0.05366022086879239,
+    "flat_mask": 0.030962945861052867,
+    "pre_echo_mask": 0.0006496000200510025,
+    "quiet_mask": 0.0
+  },
+  "max_decimation_error": 0.0,
+  "worst_sampled_image_to_main_db": -147.55420763835548,
+  "fft_samples": 128
+}

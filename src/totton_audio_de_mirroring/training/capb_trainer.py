@@ -337,6 +337,7 @@ def _run_epoch(
         edge_mask = batch["edge_mask"].to(device)
         pre_echo_mask = batch["pre_echo_mask"].to(device)
         stationary = batch["stationary"].to(device)
+        focused_transient = batch["focused_event"].to(device)
 
         with torch.set_grad_enabled(train):
             output, weights, prototypes = model.forward_with_details(source)
@@ -357,6 +358,7 @@ def _run_epoch(
                 prototype_outputs=prototypes,
                 stationary=stationary,
                 pre_echo_mask=pre_echo_mask,
+                focused_transient=focused_transient,
                 sharp_index=model.prototype_names.index("sharp"),
                 gentle_index=model.prototype_names.index("gentle"),
             )
