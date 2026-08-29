@@ -168,18 +168,18 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb_48k.yaml
 ```
 
-48 kHzの最終最適化は、通常学習後にsweep境界とimpulse利得を別々にpolishします。sweep段はchunk位置をランダム化して20 kHz終端まで学習し、impulse段はevent周辺のfull-fidelityだけを短時間更新します。どちらもFIR prototypeと受入gateは変更しません。
+run9から定常変調を補正する48 kHz微調整は2段階です。warm-upで初期学習用entropy barrierを外し、最終段でplateau重みを下げて過度なgentle化を避けます。
 
 ```bash
 uv run python scripts/train_capb.py \
-  --data-config configs/data_generation_capb_48k_sweep_tail_polish.yaml \
-  --config configs/training_stage1_capb_48k.yaml \
-  --init-checkpoint <48k-pre-polish-checkpoint>
+  --data-config configs/data_generation_capb_48k.yaml \
+  --config configs/training_stage1_capb_48k_stationary_warmup.yaml \
+  --summary-json reports/capb_training/run10_stationary_warmup_20260829.json
 
 uv run python scripts/train_capb.py \
-  --data-config configs/data_generation_capb_48k_impulse_margin.yaml \
-  --config configs/training_stage1_capb_48k_impulse_margin.yaml \
-  --init-checkpoint <48k-sweep-polished-checkpoint>
+  --data-config configs/data_generation_capb_48k.yaml \
+  --config configs/training_stage1_capb_48k_stationary.yaml \
+  --summary-json reports/capb_training/run10_stationary_20260829.json
 ```
 
 通常の学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。孤立clickとtone burstは、実際のprobeと同じ入力sample rateでeventを生成し、cardinalなFFT zero-paddingで帯域制限済みteacherへ変換します。どちらの経路も`source == target[::2]`を厳密に保ち、入力Nyquistを超える教師情報を作りません。
@@ -198,7 +198,7 @@ uv run python scripts/audit_capb_training_data.py \
 
 44.1 kHz系列の採用候補は`data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、SMPTE sidebandは`-125.6 dB`、impulse列の利得誤差は`0.446 dB`、G2b pre-echoは`1.05e-7`です。さらにcontroller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して最悪`-2.84 dB`で通過します。
 
-48 kHz系列の採用候補は`data/checkpoints/capb_48k/run11_48k_optimized_20260830/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、canonical sweepのpeak imageは`-112.42 dB`、SMPTE sidebandは`-144.40 dB`、impulse列の利得誤差は`0.390 dB`、G2b pre-echoは`1.52e-8`です。controller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して最悪`-8.43 dB`、`-8.84 dB`で通過します。この2つをrelease pairとして扱えます。学習履歴、データ監査、gate、堅牢性、impulse/THD/IMD/sideband可視化は`reports/capb_training/`、`reports/capb_data_audit/run11_48k_optimized_20260830/`、`reports/probe_gates/run11_48k_optimized_20260830/`、`reports/capb_robustness/run11_48k_optimized_20260830/`、`reports/capb_visualization/run11_release_pair_20260830/`にあります。
+48 kHz系列は`data/checkpoints/capb_48k/run10_stationary_20260829/capb_best.pt`を再評価し、v4の全gate通過とSMPTE sideband `-141.43 dB`を確認しました。この2つをrelease pairとして扱えます。学習履歴、データ監査、gate、堅牢性、impulse/THD/IMD/sideband可視化は`reports/capb_training/`、`reports/capb_data_audit/`、`reports/probe_gates/`、`reports/capb_robustness/`、`reports/capb_visualization/run11_44k1_optimized_20260829/`にあります。
 
 ## 受入評価
 
@@ -217,10 +217,9 @@ uv run python scripts/evaluate_probe_gates.py \
   --checkpoint <48k-checkpoint> \
   --rate-family 48k
 
-# controller phase / Hann-OLA boundary（48 kHzは--rate-family 48k）
+# 44.1 kHz controller phase / Hann-OLA boundary
 uv run python scripts/evaluate_capb_transient_robustness.py \
   --checkpoint data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt \
-  --rate-family 44k1 \
   --output-dir reports/capb_robustness/run11_44k1_optimized_20260829
 ```
 
@@ -295,12 +294,9 @@ configs/
   data_generation_capb.yaml
   data_generation_capb_run9_legacy.yaml
   data_generation_capb_48k.yaml
-  data_generation_capb_48k_sweep_tail_polish.yaml
-  data_generation_capb_48k_impulse_margin.yaml
   training_stage1_capb.yaml
   training_stage1_capb_44k1_margin.yaml
   training_stage1_capb_48k.yaml
-  training_stage1_capb_48k_impulse_margin.yaml
   training_stage1_capb_48k_stationary_warmup.yaml
   training_stage1_capb_48k_stationary.yaml
   stage1_stage2_pipeline.yaml

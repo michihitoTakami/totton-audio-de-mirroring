@@ -17,7 +17,6 @@ num_workers: 4
 seed: 1234
 border_trim: 512
 checkpoint_dir: data/checkpoints/capb_48k
-checkpoint_interval_epochs: 5
 log_interval: 20
 
 loss_weights:
@@ -38,11 +37,7 @@ loss_weights:
   # brickwall teacher rings there, and reproducing that ringing is exactly
   # what the plateau/quiet gates forbid.
   edge_fidelity_relax: 0.9
-  # Edge-zone ripple above the gentle prototype's level. This light default
-  # complements the stronger gate-window and routing supervision below.
-  edge_ring: 0.3
-  # Gate-aligned transient energy above the gentle prototype. The final
-  # coefficient is selected by worst-probe screening, never training loss.
-  pre_echo_excess: 300.0
-  stationary_modulation: 30.0
-  prototype_routing: 0.1
+  # Edge-zone ripple above the gentle prototype's level. Disabled for v1:
+  # with slope-spike edge detection off (see capb_dataset), the remaining
+  # edge zones are already covered by the plateau/quiet losses.
+  edge_ring: 0.0

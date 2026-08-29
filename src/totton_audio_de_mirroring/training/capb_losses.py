@@ -79,7 +79,6 @@ def compute_capb_losses(
     prototype_outputs: torch.Tensor | None = None,
     stationary: torch.Tensor | None = None,
     pre_echo_mask: torch.Tensor | None = None,
-    focused_transient: torch.Tensor | None = None,
     sharp_index: int = 0,
     gentle_index: int = -1,
 ) -> dict[str, torch.Tensor]:
@@ -101,10 +100,8 @@ def compute_capb_losses(
         prototype_outputs: Fixed prototype outputs, shaped (batch, K, time).
         stationary: Boolean batch flags selecting stationary signals.
         pre_echo_mask: Gate-aligned mask immediately before focused events.
-        focused_transient: Boolean batch flags selecting focused click and
-            tone-burst examples governed by the continuous pre-echo loss.
         sharp_index: Prototype index used for stationary non-edge frames.
-        gentle_index: Prototype index used for non-focused edge frames.
+        gentle_index: Prototype index used for edge/pre-echo frames.
 
     Returns:
         Mapping with per-term losses and the weighted "total".
@@ -178,7 +175,6 @@ def compute_capb_losses(
             weights_frames,
             routing_mask,
             stationary,
-            focused_transient=focused_transient,
             sharp_index=sharp_index,
             gentle_index=gentle_index,
         )
@@ -344,7 +340,6 @@ def prototype_routing_loss(
     edge_mask: torch.Tensor,
     stationary: torch.Tensor,
     *,
-    focused_transient: torch.Tensor | None = None,
     sharp_index: int,
     gentle_index: int,
 ) -> torch.Tensor:
@@ -354,9 +349,6 @@ def prototype_routing_loss(
         weights_frames: Convex prototype weights (batch, K, frames).
         edge_mask: Target-rate edge and pre-echo mask (batch, time).
         stationary: Boolean batch flags for stationary signal families.
-        focused_transient: Optional boolean flags for focused transient
-            examples. Their blend is governed by fidelity and pre-echo
-            excess rather than a one-hot routing target.
         sharp_index: Prototype index for stationary non-edge frames.
         gentle_index: Prototype index for edge frames.
 
@@ -376,11 +368,6 @@ def prototype_routing_loss(
         raise ValueError("edge_mask must be a matching (batch, time) tensor.")
     if stationary.dim() != 1 or stationary.shape[0] != weights_frames.shape[0]:
         raise ValueError("stationary must be a batch-length vector.")
-    if focused_transient is not None and (
-        focused_transient.dim() != 1
-        or focused_transient.shape[0] != weights_frames.shape[0]
-    ):
-        raise ValueError("focused_transient must be a batch-length vector.")
     prototype_count = weights_frames.shape[1]
     if not -prototype_count <= gentle_index < prototype_count:
         raise ValueError("gentle_index is out of range.")
@@ -393,20 +380,15 @@ def prototype_routing_loss(
     stationary_frames = (
         stationary.to(weights_frames.dtype).unsqueeze(1).expand_as(frame_edges)
     )
-    focused_frames = torch.zeros_like(frame_edges)
-    if focused_transient is not None:
-        focused_frames = focused_transient.to(weights_frames.dtype).unsqueeze(1)
-    routable_edges = frame_edges * (1.0 - focused_frames)
     sharp_mask = stationary_frames * (1.0 - frame_edges)
-    labelled = routable_edges + sharp_mask
+    labelled = frame_edges + sharp_mask
     counts = torch.sum(labelled, dim=1)
     applicable = counts > 0.0
     if not bool(torch.any(applicable)):
         return weights_frames.new_zeros(())
-    log_floor = torch.finfo(weights_frames.dtype).tiny
-    sharp_loss = -torch.log(weights_frames[:, sharp_index, :].clamp_min(log_floor))
-    gentle_loss = -torch.log(weights_frames[:, gentle_index, :].clamp_min(log_floor))
-    totals = torch.sum(sharp_loss * sharp_mask + gentle_loss * routable_edges, dim=1)
+    sharp_loss = -torch.log(weights_frames[:, sharp_index, :].clamp_min(_EPS))
+    gentle_loss = -torch.log(weights_frames[:, gentle_index, :].clamp_min(_EPS))
+    totals = torch.sum(sharp_loss * sharp_mask + gentle_loss * frame_edges, dim=1)
     return torch.mean(totals[applicable] / counts[applicable])
 
 

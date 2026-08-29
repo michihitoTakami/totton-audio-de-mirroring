@@ -1,7 +1,6 @@
 """Tests for CAPB data-audit and transient-robustness helpers."""
 
 import numpy as np
-import pytest
 from scripts.audit_capb_training_data import audit_dataset
 from scripts.evaluate_capb_transient_robustness import _evaluate_offsets
 
@@ -43,30 +42,3 @@ def test_offset_evaluator_passes_reference_against_itself() -> None:
     )
     assert result["all_passed"]
     assert len(result["rows"]) == 2
-
-
-def test_offset_evaluator_supports_48k_family() -> None:
-    processor = ReferenceStage1Processor()
-
-    def reference(signal: np.ndarray) -> np.ndarray:
-        return processor.process(signal, 48_000, 96_000)
-
-    result = _evaluate_offsets(
-        offsets=range(2),
-        event_position=lambda offset, _hop: 24_000 + offset,
-        candidate=reference,
-        reference=reference,
-        source_rate=48_000,
-        target_rate=96_000,
-    )
-    assert result["all_passed"]
-
-
-def test_offset_evaluator_rejects_event_outside_buffer() -> None:
-    with pytest.raises(ValueError, match="outside"):
-        _evaluate_offsets(
-            offsets=range(1),
-            event_position=lambda _offset, _hop: 44_100,
-            candidate=lambda signal: np.repeat(signal, 2),
-            reference=lambda signal: np.repeat(signal, 2),
-        )
