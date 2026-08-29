@@ -219,8 +219,6 @@ DEFAULT_SIGNAL_MIX: dict[str, float] = {
 
 STATIONARY_SIGNAL_TYPES = frozenset(
     {
-        "square_wave",
-        "sawtooth_wave",
         "multitone",
         "imd_two_tone",
         "am_tone",
@@ -228,6 +226,8 @@ STATIONARY_SIGNAL_TYPES = frozenset(
         "pink_noise",
         "band_limited_noise",
         "near_nyquist_noise",
+        "sweep_log",
+        "sweep_linear",
     }
 )
 
@@ -357,7 +357,11 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
                 guard_ms=self._config.transient_supervision.pre_echo_guard_ms,
                 window_ms=self._config.transient_supervision.pre_echo_window_ms,
             )
-        if focused and not transient_clean:
+        if focused:
+            # Focused transients already carry gate-aligned pre-echo and
+            # edge masks. A chunk-wide quiet mask would let the surrounding
+            # silence dominate the event's gain-fidelity gradient and force
+            # an all-gentle solution.
             flat_mask = np.zeros_like(flat_mask)
             quiet_mask = np.zeros_like(quiet_mask)
 
@@ -450,7 +454,7 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
                 "amplitude_ratio": float(rng.uniform(3.0, 5.0)),
             }
         elif signal_type in {"sweep_log", "sweep_linear"}:
-            start = float(rng.uniform(20.0, 2_000.0))
+            start = _log_uniform(rng, 20.0, 2_000.0)
             params = {
                 "start_hz": start,
                 "end_hz": float(rng.uniform(start + 1_000.0, 20_000.0)),

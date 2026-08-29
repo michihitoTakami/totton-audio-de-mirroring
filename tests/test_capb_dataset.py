@@ -106,11 +106,19 @@ def test_quiet_mask_marks_click_silence() -> None:
     assert mask[signal.size // 2] == 0.0
 
 
-def test_dataset_masks_present_for_edge_family() -> None:
-    config = CAPBDataConfig(num_samples=2, seed=7, signal_mix={"isolated_click": 1.0})
+def test_focused_edge_family_uses_dedicated_transient_masks() -> None:
+    config = CAPBDataConfig(
+        num_samples=2,
+        seed=7,
+        signal_mix={"isolated_click": 1.0},
+        transient_supervision=TransientSupervisionConfig(enabled=True),
+    )
     dataset = CAPBUpsampleDataset(config)
     sample = dataset[0]
-    assert float(sample["quiet_mask"].mean()) > 0.5
+    assert float(sample["flat_mask"].sum()) == 0.0
+    assert float(sample["quiet_mask"].sum()) == 0.0
+    assert float(sample["edge_mask"].sum()) > 0.0
+    assert float(sample["pre_echo_mask"].sum()) > 0.0
     assert not bool(sample["stationary"])
 
 
@@ -149,7 +157,7 @@ def test_transient_clean_and_augmented_views_are_both_present(
     ]
     assert clean
     assert augmented
-    assert any(float(sample["quiet_mask"].mean()) > 0.5 for sample in clean)
+    assert all(float(sample["quiet_mask"].sum()) == 0.0 for sample in clean)
     assert all(float(sample["quiet_mask"].sum()) == 0.0 for sample in augmented)
 
 
@@ -166,12 +174,34 @@ def test_imd_two_tone_is_marked_stationary() -> None:
     assert bool(sample["stationary"])
 
 
+@pytest.mark.parametrize("signal_type", ("sweep_log", "sweep_linear"))
+def test_continuous_sweeps_require_fixed_stationary_routing(signal_type: str) -> None:
+    """Sweeps must not create an interpolation-image ridge by weight motion."""
+    config = CAPBDataConfig(num_samples=1, seed=11, signal_mix={signal_type: 1.0})
+    sample = CAPBUpsampleDataset(config)[0]
+
+    assert bool(sample["stationary"])
+
+
+def test_sweep_start_sampling_covers_low_frequency_decades() -> None:
+    """Log-uniform sweep starts must retain examples below 100 Hz."""
+    config = CAPBDataConfig(num_samples=1, seed=11, signal_mix={"sweep_log": 1.0})
+    dataset = CAPBUpsampleDataset(config)
+    starts = [
+        float(dataset._sample_request(np.random.default_rng(seed))[1]["start_hz"])
+        for seed in range(64)
+    ]
+
+    assert min(starts) < 100.0
+    assert max(starts) > 1_000.0
+
+
 @pytest.mark.parametrize("signal_type", ["square_wave", "sawtooth_wave"])
-def test_periodic_edge_signals_are_marked_stationary(signal_type: str) -> None:
+def test_periodic_edge_signals_are_not_marked_stationary(signal_type: str) -> None:
     config = CAPBDataConfig(num_samples=1, seed=11, signal_mix={signal_type: 1.0})
     sample = CAPBUpsampleDataset(config)[0]
     assert sample["signal_type"] == signal_type
-    assert bool(sample["stationary"])
+    assert not bool(sample["stationary"])
 
 
 def test_stationary_noise_does_not_receive_slope_edge_mask() -> None:

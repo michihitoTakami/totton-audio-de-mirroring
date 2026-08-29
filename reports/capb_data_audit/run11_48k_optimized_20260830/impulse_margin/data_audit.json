@@ -1,0 +1,21 @@
+{
+  "num_samples": 5000,
+  "family_counts": {
+    "isolated_click": 5000
+  },
+  "transient_event_counts": {
+    "isolated_click": 5000
+  },
+  "focused_clean_count": 5000,
+  "focused_augmented_count": 0,
+  "focused_clean_fraction": 1.0,
+  "mask_mean_fraction": {
+    "edge_mask": 0.04620241729207337,
+    "flat_mask": 0.0,
+    "pre_echo_mask": 0.014000000432133675,
+    "quiet_mask": 0.0
+  },
+  "max_decimation_error": 0.0,
+  "worst_sampled_image_to_main_db": -98.94222053643065,
+  "fft_samples": 128
+}
