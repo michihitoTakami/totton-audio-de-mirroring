@@ -24,6 +24,13 @@ from totton_audio_de_mirroring.models.proto_bank import (
 _BESSEL_CUTOFF_HZ = 20_000.0
 _BESSEL_ORDER = 6
 _AMPLITUDE = 0.5
+_REFERENCE_ZORDER = 2.0
+_CAPB_ZORDER = 10.0
+
+
+def _comparison_zorder(name: str) -> float:
+    """Return a drawing priority that keeps CAPB above references."""
+    return _CAPB_ZORDER if name == "capb" else _REFERENCE_ZORDER
 
 
 @dataclass(frozen=True)
@@ -142,8 +149,14 @@ def _plot(
         "sharp": "tab:green",
         "gentle": "tab:red",
     }
-    for name, output in outputs.items():
-        axes[0].plot(time_ms, output[sample_slice], label=name, color=colors[name])
+    for name in ("bessel", "sharp", "gentle", "capb"):
+        axes[0].plot(
+            time_ms,
+            outputs[name][sample_slice],
+            label=name,
+            color=colors[name],
+            zorder=_comparison_zorder(name),
+        )
     axes[0].axvspan(-4.0, -0.5, color="gray", alpha=0.12, label="G2b window")
     axes[0].set(
         title=f"{case.label}: isolated input-rate impulse response",
@@ -221,7 +234,7 @@ def main() -> None:
                 "metrics": _metrics(outputs, center, case.target_rate),
             }
         (args.output_dir / "impulse_metrics.json").write_text(
-            json.dumps(summary, indent=2), encoding="utf-8"
+            json.dumps(summary, indent=2) + "\n", encoding="utf-8"
         )
         (args.output_dir / "impulse_report.md").write_text(
             _render_markdown(summary), encoding="utf-8"
