@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 from scipy import signal as sp_signal
 
+from totton_audio_de_mirroring.evaluation.distortion import smpte_imd_db
 from totton_audio_de_mirroring.evaluation.lb_preservation import (
     evaluate_lowband_preservation,
 )
@@ -29,6 +30,7 @@ from totton_audio_de_mirroring.evaluation.passband_flatness import (
 )
 from totton_audio_de_mirroring.evaluation.probe_suite import (
     KIND_DC_STEP,
+    KIND_IMD_TWO_TONE,
     KIND_IMPULSE,
     KIND_IMPULSE_TRAIN,
     KIND_MULTITONE,
@@ -42,7 +44,7 @@ from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
 
-GATE_SPEC_VERSION = 3
+GATE_SPEC_VERSION = 4
 _EPSILON = 1e-300
 
 LF_RINGING_MAX_FREQ_HZ = 2_000.0
@@ -80,6 +82,7 @@ class Stage1GateConfig:
         lb_phase_error_max_deg: Max low-band phase error vs ideal reference.
         lb_group_delay_error_max_samples: Max low-band group-delay error.
         lb_waveform_error_max_db: Max low-band waveform error in dB.
+        modulation_sideband_max_db: Maximum two-tone modulation products in dBc.
 
     Physical Basis:
         Relative terms guard regressions against the reference SRC; absolute
@@ -105,6 +108,7 @@ class Stage1GateConfig:
     lb_phase_error_max_deg: float = 15.0
     lb_group_delay_error_max_samples: float = 600.0
     lb_waveform_error_max_db: float = -20.0
+    modulation_sideband_max_db: float = -110.0
 
 
 @dataclass(frozen=True)
@@ -273,6 +277,20 @@ def evaluate_probe(
                 "flatness_hf_dip_db": flatness.hf_max_dip_db,
             }
         )
+    if spec.kind == KIND_IMD_TWO_TONE:
+        low_hz = spec.frequency_hz
+        high_hz = spec.secondary_frequency_hz
+        if low_hz is None or high_hz is None:
+            raise ValueError("IMD probes require both primary frequencies.")
+        center = output.size // 2
+        half_window = target_sample_rate // 2
+        steady = output[center - half_window : center + half_window]
+        metrics["modulation_sideband_db"] = smpte_imd_db(
+            steady,
+            target_sample_rate,
+            low_tone_hz=low_hz,
+            high_tone_hz=high_hz,
+        )
 
     if spec.kind in {KIND_PINK_NOISE, KIND_MULTITONE}:
         lb = evaluate_lowband_preservation(
@@ -326,6 +344,7 @@ def evaluate_gates(
         _gate_gain(evaluations, cfg),
         _gate_added_hf(evaluations, cfg),
         _gate_lb_preservation(evaluations, cfg),
+        _gate_modulation_sidebands(evaluations, cfg),
     )
     return GateReport(
         all_passed=all(gate.passed for gate in gates),
@@ -606,6 +625,35 @@ def _gate_lb_preservation(
                 )
             )
     return _finalize("G8_lb_preservation", rows)
+
+
+def _gate_modulation_sidebands(
+    evaluations: list[ProbeEvaluation], cfg: Stage1GateConfig
+) -> GateResult:
+    """Gate signal-dependent two-tone sidebands on canonical and held-out probes."""
+    rows = [
+        GateRow(
+            probe_id=evaluation.spec.probe_id,
+            tier=evaluation.spec.tier,
+            metric="modulation_sideband_db",
+            value=evaluation.metrics["modulation_sideband_db"],
+            threshold=cfg.modulation_sideband_max_db,
+            passed=(
+                evaluation.metrics["modulation_sideband_db"]
+                <= cfg.modulation_sideband_max_db
+            ),
+            binding="absolute",
+        )
+        for evaluation in evaluations
+        if "modulation_sideband_db" in evaluation.metrics
+    ]
+    worst = max(rows, key=lambda row: row.value).probe_id if rows else None
+    return GateResult(
+        gate_id="G9_no_modulation_sidebands",
+        passed=all(row.passed for row in rows),
+        worst_probe_id=worst,
+        rows=tuple(rows),
+    )
 
 
 def _threshold_rows(

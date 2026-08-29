@@ -1,9 +1,12 @@
 """Tests for the CAPB model and losses."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
 
+from totton_audio_de_mirroring.data.capb_dataset import CAPBDataConfig
 from totton_audio_de_mirroring.models.capb import CAPB, DEFAULT_INIT_WEIGHTS
 from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank,
@@ -16,7 +19,13 @@ from totton_audio_de_mirroring.training.capb_losses import (
     edge_ring_loss,
     plateau_ripple_loss,
     quiet_energy_loss,
+    stationary_modulation_loss,
     weight_tv_loss,
+)
+from totton_audio_de_mirroring.training.capb_trainer import (
+    CAPBTrainingConfig,
+    _load_initial_checkpoint,
+    load_capb_training_config,
 )
 from totton_audio_de_mirroring.training.stft_loss import STFTLossConfig
 
@@ -125,6 +134,35 @@ def test_tv_loss_zero_for_constant_weights() -> None:
     assert float(weight_tv_loss(weights)) == pytest.approx(0.0)
 
 
+def test_stationary_modulation_loss_is_zero_for_fixed_blend() -> None:
+    prototypes = torch.randn(2, 3, 128)
+    weights = torch.full((2, 3, 8), 1.0 / 3.0)
+    output = torch.sum(weights[:, :, :1] * prototypes, dim=1)
+    loss = stationary_modulation_loss(
+        output, prototypes, weights, torch.tensor([True, True]), trim=0
+    )
+    assert float(loss) < 1.0e-6
+
+
+def test_stationary_modulation_loss_detects_time_varying_blend() -> None:
+    prototypes = torch.stack(
+        (torch.ones(128), torch.zeros(128), -torch.ones(128)), dim=0
+    ).unsqueeze(0)
+    weights = torch.zeros(1, 3, 8)
+    weights[:, 0, ::2] = 1.0
+    weights[:, 2, 1::2] = 1.0
+    weights_up = torch.nn.functional.interpolate(weights, size=128, mode="linear")
+    output = torch.sum(weights_up * prototypes, dim=1)
+    loss = stationary_modulation_loss(
+        output, prototypes, weights, torch.tensor([True]), trim=0
+    )
+    ignored = stationary_modulation_loss(
+        output, prototypes, weights, torch.tensor([False]), trim=0
+    )
+    assert float(loss) > 0.0
+    assert float(ignored) == pytest.approx(0.0)
+
+
 def test_compute_capb_losses_total(model: CAPB) -> None:
     source = torch.randn(2, 4_096)
     target = torch.randn(2, 8_192)
@@ -146,6 +184,7 @@ def test_compute_capb_losses_total(model: CAPB) -> None:
         "quiet",
         "tv",
         "entropy_floor",
+        "stationary_modulation",
         "edge_ring",
         "total",
     }
@@ -217,3 +256,42 @@ def test_capb_from_checkpoint_requires_model_state() -> None:
 
     with pytest.raises(RuntimeError, match="model_state"):
         capb_from_checkpoint({"target_sample_rate": 96_000})
+
+
+def test_training_config_loads_initial_checkpoint(tmp_path: Path) -> None:
+    config_path = tmp_path / "training.yaml"
+    checkpoint_path = tmp_path / "initial.pt"
+    config_path.write_text(f"initial_checkpoint: {checkpoint_path}\n")
+
+    config = load_capb_training_config(config_path)
+
+    assert config.initial_checkpoint == checkpoint_path
+
+
+def test_initial_checkpoint_loader_validates_rate(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "initial.pt"
+    torch.save(_make_checkpoint(target_rate=96_000, input_rate=48_000), checkpoint_path)
+    training_config = CAPBTrainingConfig(initial_checkpoint=checkpoint_path)
+
+    with pytest.raises(ValueError, match="target rate"):
+        _load_initial_checkpoint(training_config, CAPBDataConfig())
+
+
+def test_initial_checkpoint_loader_accepts_matching_rate(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "initial.pt"
+    torch.save(_make_checkpoint(target_rate=96_000, input_rate=48_000), checkpoint_path)
+    training_config = CAPBTrainingConfig(initial_checkpoint=checkpoint_path)
+    data_config = CAPBDataConfig(
+        source_sample_rate=48_000,
+        target_sample_rate=96_000,
+        near_nyquist_high_range_hz=(20_000.0, 23_700.0),
+    )
+
+    loaded = _load_initial_checkpoint(training_config, data_config)
+
+    assert (
+        loaded.kernel_size
+        == build_prototype_bank(
+            prototype_specs_for_target_rate(96_000), sample_rate=96_000
+        ).kernels.shape[1]
+    )

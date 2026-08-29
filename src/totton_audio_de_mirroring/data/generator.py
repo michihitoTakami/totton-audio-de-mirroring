@@ -234,6 +234,51 @@ def generate_multitone(
     return _scale_to_amplitude(tones, amplitude)
 
 
+def generate_imd_two_tone(
+    low_tone_hz: float,
+    high_tone_hz: float,
+    amplitude_ratio: float = 4.0,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+    duration_sec: float = DEFAULT_DURATION_SEC,
+    amplitude: float = DEFAULT_AMPLITUDE,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray:
+    """Generate a low/high two-tone probe for IMD-resistant training.
+
+    Args:
+        low_tone_hz: Low-frequency primary in Hz.
+        high_tone_hz: High-frequency primary in Hz.
+        amplitude_ratio: Low-to-high peak-amplitude ratio.
+        sample_rate: Sample rate in Hz.
+        duration_sec: Signal duration in seconds.
+        amplitude: Peak amplitude after normalization.
+        rng: Optional RNG (unused for deterministic tones).
+
+    Returns:
+        Peak-normalized two-tone waveform.
+
+    Raises:
+        ValueError: If frequencies or the amplitude ratio are invalid.
+
+    Physical Basis:
+        A fixed linear interpolator preserves only the two primary lines.
+        Training on randomized low/high pairs exposes controller-induced
+        amplitude modulation without teaching exact gate frequencies.
+    """
+    if low_tone_hz >= high_tone_hz:
+        raise ValueError("low_tone_hz must be lower than high_tone_hz.")
+    if not np.isfinite(amplitude_ratio) or amplitude_ratio <= 0.0:
+        raise ValueError("amplitude_ratio must be finite and positive.")
+    return generate_multitone(
+        frequencies_hz=(low_tone_hz, high_tone_hz),
+        sample_rate=sample_rate,
+        duration_sec=duration_sec,
+        amplitudes=(amplitude_ratio, 1.0),
+        amplitude=amplitude,
+        rng=rng,
+    )
+
+
 def generate_linear_sweep(
     start_hz: float = DEFAULT_SWEEP_START_HZ,
     end_hz: float = DEFAULT_SWEEP_END_HZ,
@@ -700,6 +745,7 @@ def apply_soft_clip(signal: np.ndarray, drive: float = 2.0) -> np.ndarray:
 
 _SIGNAL_GENERATORS: dict[str, Callable[..., np.ndarray]] = {
     "multitone": generate_multitone,
+    "imd_two_tone": generate_imd_two_tone,
     "sweep_linear": generate_linear_sweep,
     "sweep_log": generate_log_sweep,
     "impulse_train": generate_impulse_train,

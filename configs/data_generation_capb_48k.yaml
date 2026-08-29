@@ -42,8 +42,9 @@ signal_mix:
   isolated_click: 0.05
   sawtooth_wave: 0.05
   tone_burst: 0.10
-  music_like_mixture: 0.15
+  music_like_mixture: 0.10
   multitone: 0.10
+  imd_two_tone: 0.05
   sweep_log: 0.05
   sweep_linear: 0.03
   am_tone: 0.05

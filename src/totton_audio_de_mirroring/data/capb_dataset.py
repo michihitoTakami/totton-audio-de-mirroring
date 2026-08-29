@@ -194,8 +194,9 @@ DEFAULT_SIGNAL_MIX: dict[str, float] = {
     "isolated_click": 0.05,
     "sawtooth_wave": 0.05,
     "tone_burst": 0.10,
-    "music_like_mixture": 0.15,
+    "music_like_mixture": 0.10,
     "multitone": 0.10,
+    "imd_two_tone": 0.05,
     "sweep_log": 0.05,
     "sweep_linear": 0.03,
     "am_tone": 0.05,
@@ -205,6 +206,20 @@ DEFAULT_SIGNAL_MIX: dict[str, float] = {
     "band_limited_noise": 0.04,
     "near_nyquist_noise": 0.04,
 }
+
+STATIONARY_SIGNAL_TYPES = frozenset(
+    {
+        "square_wave",
+        "sawtooth_wave",
+        "multitone",
+        "imd_two_tone",
+        "am_tone",
+        "fm_tone",
+        "pink_noise",
+        "band_limited_noise",
+        "near_nyquist_noise",
+    }
+)
 
 
 class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
@@ -290,6 +305,9 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             "flat_mask": torch.from_numpy(flat_mask.astype(np.float32)),
             "quiet_mask": torch.from_numpy(quiet_mask.astype(np.float32)),
             "edge_mask": torch.from_numpy(edge_mask.astype(np.float32)),
+            "stationary": torch.tensor(
+                signal_type in STATIONARY_SIGNAL_TYPES, dtype=torch.bool
+            ),
             "signal_type": signal_type,
             "chunk_start": int(chunk_start),
         }
@@ -337,6 +355,12 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
                 "frequencies_hz": np.sort(
                     rng.uniform(40.0, 18_000.0, size=count)
                 ).tolist()
+            }
+        elif signal_type == "imd_two_tone":
+            params = {
+                "low_tone_hz": float(rng.uniform(40.0, 120.0)),
+                "high_tone_hz": float(rng.uniform(4_000.0, 12_000.0)),
+                "amplitude_ratio": float(rng.uniform(3.0, 5.0)),
             }
         elif signal_type in {"sweep_log", "sweep_linear"}:
             start = float(rng.uniform(20.0, 2_000.0))

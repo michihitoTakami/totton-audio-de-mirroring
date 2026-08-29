@@ -18,7 +18,7 @@ from scipy import signal as sp_signal
 
 DEFAULT_SOURCE_SAMPLE_RATE = 44_100
 DEFAULT_DURATION_SEC = 1.0
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 TIER_CANONICAL = "canonical"
 TIER_HELD_OUT = "held_out"
@@ -31,6 +31,7 @@ KIND_TONE_BURST = "tone_burst"
 KIND_SWEEP_LOG = "sweep_log"
 KIND_PINK_NOISE = "pink_noise"
 KIND_MULTITONE = "multitone"
+KIND_IMD_TWO_TONE = "imd_two_tone"
 
 _VALID_KINDS = frozenset(
     {
@@ -42,6 +43,7 @@ _VALID_KINDS = frozenset(
         KIND_SWEEP_LOG,
         KIND_PINK_NOISE,
         KIND_MULTITONE,
+        KIND_IMD_TWO_TONE,
     }
 )
 _VALID_TIERS = frozenset({TIER_CANONICAL, TIER_HELD_OUT})
@@ -59,6 +61,8 @@ class ProbeSpec:
         duration_sec: Probe duration in seconds.
         frequency_hz: Primary frequency (square/tone/burst), if applicable.
         frequency_end_hz: Sweep end frequency, if applicable.
+        secondary_frequency_hz: High primary of an IMD two-tone probe.
+        amplitude_ratio: Low-to-high amplitude ratio of an IMD probe.
         burst_ms: Tone-burst Hann gate length in milliseconds.
         period_ms: Impulse-train period in milliseconds.
         step_sign: DC-step direction (+1 rise, -1 fall).
@@ -77,6 +81,8 @@ class ProbeSpec:
     duration_sec: float = DEFAULT_DURATION_SEC
     frequency_hz: float | None = None
     frequency_end_hz: float | None = None
+    secondary_frequency_hz: float | None = None
+    amplitude_ratio: float | None = None
     burst_ms: float | None = None
     period_ms: float | None = None
     step_sign: int | None = None
@@ -186,6 +192,17 @@ def build_default_probe_suite() -> tuple[ProbeSpec, ...]:
             seed=20260704,
         )
     )
+    specs.append(
+        ProbeSpec(
+            probe_id="imd_60hz_7000hz",
+            kind=KIND_IMD_TWO_TONE,
+            tier=TIER_CANONICAL,
+            frequency_hz=60.0,
+            secondary_frequency_hz=7_000.0,
+            amplitude_ratio=4.0,
+            duration_sec=3.0,
+        )
+    )
 
     for freq in (73.0, 331.0, 1_730.0, 4_400.0):
         specs.append(
@@ -222,6 +239,17 @@ def build_default_probe_suite() -> tuple[ProbeSpec, ...]:
             kind=KIND_PINK_NOISE,
             tier=TIER_HELD_OUT,
             seed=5678,
+        )
+    )
+    specs.append(
+        ProbeSpec(
+            probe_id="imd_83hz_6311hz_held",
+            kind=KIND_IMD_TWO_TONE,
+            tier=TIER_HELD_OUT,
+            frequency_hz=83.0,
+            secondary_frequency_hz=6_311.0,
+            amplitude_ratio=3.7,
+            duration_sec=3.0,
         )
     )
     return tuple(specs)
@@ -322,6 +350,22 @@ def generate_probe(
             tones += np.sin(2.0 * np.pi * frequency * time_axis + phase)
         return np.asarray(
             spec.amplitude * tones / np.max(np.abs(tones)), dtype=np.float64
+        )
+
+    if spec.kind == KIND_IMD_TWO_TONE:
+        low_hz = _require(spec.frequency_hz, "frequency_hz", spec)
+        high_hz = _require(spec.secondary_frequency_hz, "secondary_frequency_hz", spec)
+        ratio = _require(spec.amplitude_ratio, "amplitude_ratio", spec)
+        if low_hz >= high_hz:
+            raise ValueError("IMD low frequency must be below the high frequency.")
+        if ratio <= 0.0:
+            raise ValueError("IMD amplitude_ratio must be positive.")
+        low_amplitude = spec.amplitude * ratio / (ratio + 1.0)
+        high_amplitude = spec.amplitude / (ratio + 1.0)
+        return np.asarray(
+            low_amplitude * np.sin(2.0 * np.pi * low_hz * time_axis)
+            + high_amplitude * np.sin(2.0 * np.pi * high_hz * time_axis),
+            dtype=np.float64,
         )
 
     raise ValueError(f"Unhandled probe kind: {spec.kind}")
