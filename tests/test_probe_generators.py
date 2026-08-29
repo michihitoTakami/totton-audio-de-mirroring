@@ -70,6 +70,18 @@ def test_isolated_click_is_mostly_silent() -> None:
     assert silent_fraction > 0.99
 
 
+def test_isolated_click_respects_center_fraction() -> None:
+    signal = generate_isolated_click(
+        sample_rate=SAMPLE_RATE,
+        duration_sec=1.0,
+        click_width_samples=3,
+        center_fraction=0.25,
+        rng=np.random.default_rng(4),
+    )
+    center = int(np.argmax(np.abs(signal)))
+    assert center == pytest.approx(SAMPLE_RATE // 4, abs=2)
+
+
 def test_validation_errors() -> None:
     with pytest.raises(ValueError, match="Nyquist"):
         generate_square_wave(frequency_hz=50_000.0, sample_rate=SAMPLE_RATE)
@@ -77,3 +89,5 @@ def test_validation_errors() -> None:
         generate_square_wave(duty=1.5)
     with pytest.raises(ValueError, match="RNG"):
         generate_step_plateau(rng=None)
+    with pytest.raises(ValueError, match="center_fraction"):
+        generate_isolated_click(center_fraction=1.5)

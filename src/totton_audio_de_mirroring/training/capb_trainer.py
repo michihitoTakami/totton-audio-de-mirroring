@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +57,8 @@ class CAPBTrainingConfig:
         border_trim: Samples excluded at chunk borders in the losses.
         checkpoint_dir: Directory for checkpoints.
         initial_checkpoint: Optional controller checkpoint used for fine-tuning.
+        checkpoint_interval_epochs: Save numbered checkpoints at this interval;
+            zero disables numbered snapshots.
         log_interval: Steps between train-loss log lines.
 
     Physical Basis:
@@ -77,6 +79,7 @@ class CAPBTrainingConfig:
     border_trim: int = 512
     checkpoint_dir: Path = Path("data/checkpoints/capb")
     initial_checkpoint: Path | None = None
+    checkpoint_interval_epochs: int = 0
     log_interval: int = 20
 
 
@@ -106,8 +109,13 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         stationary_modulation=float(weights_raw.get("stationary_modulation", 0.0)),
         edge_fidelity_relax=float(weights_raw.get("edge_fidelity_relax", 0.9)),
         edge_ring=float(weights_raw.get("edge_ring", 300.0)),
+        pre_echo_excess=float(weights_raw.get("pre_echo_excess", 0.0)),
+        prototype_routing=float(weights_raw.get("prototype_routing", 0.0)),
         min_entropy=float(weights_raw.get("min_entropy", 0.05)),
     )
+    checkpoint_interval = int(raw.get("checkpoint_interval_epochs", 0))
+    if checkpoint_interval < 0:
+        raise ValueError("checkpoint_interval_epochs must be non-negative.")
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
         batch_size=int(raw.get("batch_size", 16)),
@@ -126,6 +134,7 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
             if raw.get("initial_checkpoint") is not None
             else None
         ),
+        checkpoint_interval_epochs=checkpoint_interval,
         log_interval=int(raw.get("log_interval", 20)),
     )
 
@@ -240,6 +249,10 @@ def train_capb(
         )
 
         _save_checkpoint(model, training_config, data_config, record, last_path)
+        interval = training_config.checkpoint_interval_epochs
+        if interval > 0 and (epoch + 1) % interval == 0:
+            epoch_path = checkpoint_dir / f"capb_epoch_{epoch + 1:03d}.pt"
+            _save_checkpoint(model, training_config, data_config, record, epoch_path)
         if val_metrics["total"] < best_val:
             best_val = val_metrics["total"]
             _save_checkpoint(model, training_config, data_config, record, best_path)
@@ -322,6 +335,7 @@ def _run_epoch(
         flat_mask = batch["flat_mask"].to(device)
         quiet_mask = batch["quiet_mask"].to(device)
         edge_mask = batch["edge_mask"].to(device)
+        pre_echo_mask = batch["pre_echo_mask"].to(device)
         stationary = batch["stationary"].to(device)
 
         with torch.set_grad_enabled(train):
@@ -342,6 +356,9 @@ def _run_epoch(
                 gentle_output=gentle_output,
                 prototype_outputs=prototypes,
                 stationary=stationary,
+                pre_echo_mask=pre_echo_mask,
+                sharp_index=model.prototype_names.index("sharp"),
+                gentle_index=model.prototype_names.index("gentle"),
             )
 
         if train:
@@ -391,7 +408,9 @@ def _save_checkpoint(
                     if config.initial_checkpoint is not None
                     else None
                 ),
+                "checkpoint_interval_epochs": config.checkpoint_interval_epochs,
             },
+            "data_config": asdict(data_config),
             "record": record,
         },
         path,

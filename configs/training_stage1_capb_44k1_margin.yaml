@@ -1,0 +1,33 @@
+# CAPB 44.1 kHz final margin polish.
+#
+# The selected pre-polish checkpoint already suppresses stationary blend
+# modulation. This single low-rate epoch restores a safe pre-echo margin
+# without collapsing every transient to the gentle endpoint.
+
+epochs: 1
+batch_size: 16
+learning_rate: 5.0e-7
+weight_decay: 1.0e-3
+grad_clip: 1.0
+val_fraction: 0.1
+num_workers: 4
+seed: 1234
+border_trim: 512
+checkpoint_dir: data/checkpoints/capb/run11_44k1_optimized_20260829
+initial_checkpoint: data/checkpoints/capb/run11_44k1_optimized_20260829/capb_pre_polish.pt
+checkpoint_interval_epochs: 1
+log_interval: 20
+
+loss_weights:
+  wave: 1.0
+  stft: 1.0
+  plateau: 300.0
+  quiet: 300.0
+  tv: 0.1
+  entropy_floor: 10.0
+  min_entropy: 0.05
+  edge_fidelity_relax: 0.9
+  edge_ring: 0.03
+  pre_echo_excess: 3000.0
+  stationary_modulation: 3000.0
+  prototype_routing: 2.0

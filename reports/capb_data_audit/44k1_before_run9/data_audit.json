@@ -1,0 +1,36 @@
+{
+  "num_samples": 10000,
+  "family_counts": {
+    "am_tone": 505,
+    "band_limited_noise": 403,
+    "fm_tone": 516,
+    "isolated_click": 525,
+    "multitone": 1013,
+    "music_like_mixture": 1561,
+    "near_nyquist_noise": 388,
+    "percussive": 507,
+    "pink_noise": 409,
+    "sawtooth_wave": 452,
+    "square_wave": 1016,
+    "step_plateau": 978,
+    "sweep_linear": 304,
+    "sweep_log": 474,
+    "tone_burst": 949
+  },
+  "transient_event_counts": {
+    "isolated_click": 154,
+    "tone_burst": 276
+  },
+  "focused_clean_count": 0,
+  "focused_augmented_count": 0,
+  "focused_clean_fraction": null,
+  "mask_mean_fraction": {
+    "edge_mask": 0.10910629481608049,
+    "flat_mask": 0.29910279821769725,
+    "pre_echo_mask": 0.0,
+    "quiet_mask": 0.14460425857901574
+  },
+  "max_decimation_error": 0.0,
+  "worst_sampled_image_to_main_db": -129.55291530304072,
+  "fft_samples": 128
+}

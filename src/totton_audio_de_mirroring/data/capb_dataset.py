@@ -23,6 +23,12 @@ from scipy import signal as sp_signal
 from torch.utils.data import Dataset
 
 from totton_audio_de_mirroring.data.generator import apply_soft_clip, generate_signal
+from totton_audio_de_mirroring.data.transient_supervision import (
+    TransientSupervisionConfig,
+    cardinal_upsample,
+    compute_pre_echo_mask,
+    find_event_bounds,
+)
 
 SOURCE_SAMPLE_RATE = 44_100
 TARGET_SAMPLE_RATE = 88_200
@@ -121,6 +127,7 @@ class CAPBDataConfig:
         signal_mix: Mapping of signal type to sampling weight.
         brickwall: Teacher band-limiting specification.
         augmentation: Augmentation configuration (applied to the teacher).
+        transient_supervision: Event-focused transient training settings.
         source_sample_rate: Input sample rate in Hz (44.1k or 48k family).
         target_sample_rate: Teacher sample rate in Hz (2x the source rate).
         near_nyquist_high_range_hz: Range the near-Nyquist noise family's
@@ -147,6 +154,9 @@ class CAPBDataConfig:
     )
     brickwall: BrickwallConfig = field(default_factory=BrickwallConfig)
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
+    transient_supervision: TransientSupervisionConfig = field(
+        default_factory=TransientSupervisionConfig
+    )
     source_sample_rate: int = SOURCE_SAMPLE_RATE
     target_sample_rate: int = TARGET_SAMPLE_RATE
     near_nyquist_high_range_hz: tuple[float, float] = DEFAULT_NEAR_NYQUIST_HIGH_RANGE_HZ
@@ -248,6 +258,14 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         weights = np.asarray([config.signal_mix[name] for name in names])
         self._mix_names = names
         self._mix_probs = weights / weights.sum()
+        augmentation = config.augmentation
+        self._clean_transient_augmentation = AugmentationConfig(
+            gain_range=augmentation.gain_range,
+            polarity_flip_prob=augmentation.polarity_flip_prob,
+            noise_std_range=(0.0, 0.0),
+            soft_clip_prob=0.0,
+            soft_clip_drive_range=augmentation.soft_clip_drive_range,
+        )
 
     def __len__(self) -> int:
         """Return dataset length."""
@@ -264,20 +282,46 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
 
         rng = self._rng_for_index(index)
         signal_type, params = self._sample_request(rng)
-
-        clean_full = generate_signal(
-            signal_type
-            if signal_type != "near_nyquist_noise"
-            else ("band_limited_noise"),
-            sample_rate=self._config.target_sample_rate,
-            duration_sec=self._config.source_duration_sec,
-            seed=int(rng.integers(0, 2**32 - 1)),
-            **params,
-        ).astype(np.float64)
-        augmented = apply_augmentations(clean_full, self._config.augmentation, rng)
-
-        target_full = _apply_brickwall(augmented, self._brickwall_taps)
-        target_chunk, chunk_start = self._extract_chunk(target_full, rng)
+        focused = self._is_focused_transient(signal_type)
+        transient_clean = focused and (
+            rng.random() < self._config.transient_supervision.clean_probability
+        )
+        augmentation = (
+            self._clean_transient_augmentation
+            if transient_clean
+            else self._config.augmentation
+        )
+        generator_seed = int(rng.integers(0, 2**32 - 1))
+        if focused:
+            clean_source = generate_signal(
+                signal_type,
+                sample_rate=self._config.source_sample_rate,
+                duration_sec=self._config.source_duration_sec,
+                seed=generator_seed,
+                **params,
+            ).astype(np.float64)
+            source_event_bounds = find_event_bounds(clean_source)
+            augmented_source = apply_augmentations(clean_source, augmentation, rng)
+            clean_full = cardinal_upsample(clean_source, UPSAMPLE_RATIO)
+            target_full = cardinal_upsample(augmented_source, UPSAMPLE_RATIO)
+            event_bounds = (
+                source_event_bounds[0] * UPSAMPLE_RATIO,
+                source_event_bounds[1] * UPSAMPLE_RATIO,
+            )
+        else:
+            clean_full = generate_signal(
+                signal_type
+                if signal_type != "near_nyquist_noise"
+                else ("band_limited_noise"),
+                sample_rate=self._config.target_sample_rate,
+                duration_sec=self._config.source_duration_sec,
+                seed=generator_seed,
+                **params,
+            ).astype(np.float64)
+            augmented = apply_augmentations(clean_full, augmentation, rng)
+            target_full = _apply_brickwall(augmented, self._brickwall_taps)
+            event_bounds = None
+        target_chunk, chunk_start = self._extract_chunk(target_full, rng, event_bounds)
         source_chunk = target_chunk[::UPSAMPLE_RATIO].copy()
 
         # Masks come from the CLEAN pre-brickwall signal: the band-limited
@@ -291,13 +335,31 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             window_ms=self._config.flat_mask_window_ms,
         )
         quiet_mask = compute_quiet_mask(clean_chunk, self._config.target_sample_rate)
-        # Slope-spike edge detection remains disabled because stationary
-        # broadband noise legitimately exceeds a simple slope threshold.
+        # Slope spikes are enabled only for generator-labelled edge families;
+        # stationary broadband noise never enters that path.
         edge_mask = compute_edge_mask(
             flat_mask,
             quiet_mask,
+            clean_signal=(
+                clean_chunk
+                if signal_type
+                in self._config.transient_supervision.edge_supervision_signal_types
+                else None
+            ),
             sample_rate=self._config.target_sample_rate,
         )
+        pre_echo_mask = np.zeros_like(clean_chunk)
+        if event_bounds is not None:
+            pre_echo_mask = compute_pre_echo_mask(
+                clean_chunk.size,
+                event_start=event_bounds[0] - chunk_start,
+                sample_rate=self._config.target_sample_rate,
+                guard_ms=self._config.transient_supervision.pre_echo_guard_ms,
+                window_ms=self._config.transient_supervision.pre_echo_window_ms,
+            )
+        if focused and not transient_clean:
+            flat_mask = np.zeros_like(flat_mask)
+            quiet_mask = np.zeros_like(quiet_mask)
 
         return {
             "source": torch.from_numpy(source_chunk.astype(np.float32)),
@@ -305,15 +367,21 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             "flat_mask": torch.from_numpy(flat_mask.astype(np.float32)),
             "quiet_mask": torch.from_numpy(quiet_mask.astype(np.float32)),
             "edge_mask": torch.from_numpy(edge_mask.astype(np.float32)),
+            "pre_echo_mask": torch.from_numpy(pre_echo_mask.astype(np.float32)),
             "stationary": torch.tensor(
                 signal_type in STATIONARY_SIGNAL_TYPES, dtype=torch.bool
             ),
             "signal_type": signal_type,
             "chunk_start": int(chunk_start),
+            "focused_event": torch.tensor(focused, dtype=torch.bool),
+            "transient_clean": torch.tensor(transient_clean, dtype=torch.bool),
         }
 
     def _extract_chunk(
-        self, target_full: np.ndarray, rng: np.random.Generator
+        self,
+        target_full: np.ndarray,
+        rng: np.random.Generator,
+        event_bounds: tuple[int, int] | None = None,
     ) -> tuple[np.ndarray, int]:
         chunk_len = int(
             round(self._config.chunk_duration_sec * self._config.target_sample_rate)
@@ -324,8 +392,27 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             raise ValueError(
                 "source_duration_sec too short for chunk plus filter margins."
             )
+        low_start, high_start = margin, max_start
+        if event_bounds is not None:
+            context = int(
+                round(
+                    self._config.transient_supervision.context_ms
+                    * self._config.target_sample_rate
+                    / 1_000.0
+                )
+            )
+            event_start, event_stop = event_bounds
+            low_start = max(low_start, event_stop + context - chunk_len)
+            high_start = min(high_start, event_start - context)
+        low_start += (-low_start) % UPSAMPLE_RATIO
+        high_start -= high_start % UPSAMPLE_RATIO
+        if low_start > high_start:
+            raise ValueError("Event and required context do not fit a valid chunk.")
         if self._config.random_chunk:
-            start = int(rng.integers(margin, max_start + 1))
+            choices = (high_start - low_start) // UPSAMPLE_RATIO + 1
+            start = low_start + UPSAMPLE_RATIO * int(rng.integers(0, choices))
+        elif event_bounds is not None:
+            start = low_start + (high_start - low_start) // 2
         else:
             start = margin
         start -= start % UPSAMPLE_RATIO
@@ -392,7 +479,16 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             low = float(rng.uniform(15_000.0, 18_000.0))
             high_low, high_high = self._config.near_nyquist_high_range_hz
             params = {"low_hz": low, "high_hz": float(rng.uniform(high_low, high_high))}
+        if self._is_focused_transient(signal_type):
+            params["center_fraction"] = float(
+                rng.uniform(*self._config.transient_supervision.center_fraction_range)
+            )
         return signal_type, params
+
+    def _is_focused_transient(self, signal_type: str) -> bool:
+        return self._config.transient_supervision.enabled and (
+            signal_type in self._config.transient_supervision.focus_signal_types
+        )
 
     def _rng_for_index(self, index: int) -> np.random.Generator:
         worker_info = torch.utils.data.get_worker_info()
@@ -463,6 +559,26 @@ def load_capb_data_config(path: Path) -> CAPBDataConfig:
         soft_clip_prob=float(aug_raw.get("soft_clip_prob", 0.2)),
         soft_clip_drive_range=tuple(aug_raw.get("soft_clip_drive_range", (1.2, 2.5))),
     )
+    transient_raw = raw.get("transient_supervision", {})
+    transient_supervision = TransientSupervisionConfig(
+        enabled=bool(transient_raw.get("enabled", False)),
+        focus_signal_types=tuple(
+            transient_raw.get("focus_signal_types", ("isolated_click", "tone_burst"))
+        ),
+        clean_probability=float(transient_raw.get("clean_probability", 0.7)),
+        center_fraction_range=_parse_range(
+            transient_raw.get("center_fraction_range", (0.2, 0.8))
+        ),
+        context_ms=float(transient_raw.get("context_ms", 5.0)),
+        pre_echo_guard_ms=float(transient_raw.get("pre_echo_guard_ms", 0.5)),
+        pre_echo_window_ms=float(transient_raw.get("pre_echo_window_ms", 3.5)),
+        edge_supervision_signal_types=tuple(
+            transient_raw.get(
+                "edge_supervision_signal_types",
+                ("square_wave", "step_plateau", "isolated_click"),
+            )
+        ),
+    )
     return CAPBDataConfig(
         num_samples=int(raw.get("num_samples", 10_000)),
         source_duration_sec=float(raw.get("source_duration_sec", 1.0)),
@@ -472,6 +588,7 @@ def load_capb_data_config(path: Path) -> CAPBDataConfig:
         signal_mix=dict(raw.get("signal_mix", DEFAULT_SIGNAL_MIX)),
         brickwall=brickwall,
         augmentation=augmentation,
+        transient_supervision=transient_supervision,
         source_sample_rate=int(raw.get("source_sample_rate", SOURCE_SAMPLE_RATE)),
         target_sample_rate=int(raw.get("target_sample_rate", TARGET_SAMPLE_RATE)),
         near_nyquist_high_range_hz=_parse_range(

@@ -15,7 +15,7 @@ brickwall:
   stopband_edge_hz: 22050.0
   attenuation_db: 120.0
 
-# Edge-rich families (~30%) cover the ringing-gate probe distribution;
+# Focused edge-rich families cover the ringing-gate probe distribution;
 # tonal/steady families train mirror suppression; music-like mixtures close
 # the domain gap to real audio without real audio.
 signal_mix:
@@ -24,8 +24,9 @@ signal_mix:
   isolated_click: 0.05
   sawtooth_wave: 0.05
   tone_burst: 0.10
-  music_like_mixture: 0.15
+  music_like_mixture: 0.10
   multitone: 0.10
+  imd_two_tone: 0.05
   sweep_log: 0.05
   sweep_linear: 0.03
   am_tone: 0.05
@@ -41,3 +42,16 @@ augmentation:
   noise_std_range: [0.0, 0.001]
   soft_clip_prob: 0.1
   soft_clip_drive_range: [1.2, 2.0]
+
+# Sparse events are placed inside every selected chunk. Clean views provide
+# absolute silence supervision; augmented views retain low-level robustness
+# and use only same-input gentle-reference pre-echo supervision.
+transient_supervision:
+  enabled: true
+  focus_signal_types: [isolated_click, tone_burst]
+  clean_probability: 0.7
+  center_fraction_range: [0.2, 0.8]
+  context_ms: 5.0
+  pre_echo_guard_ms: 0.5
+  pre_echo_window_ms: 3.5
+  edge_supervision_signal_types: [square_wave, step_plateau, isolated_click]

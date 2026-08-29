@@ -12,11 +12,14 @@ from totton_audio_de_mirroring.data.capb_dataset import (
     BrickwallConfig,
     CAPBDataConfig,
     CAPBUpsampleDataset,
+    TransientSupervisionConfig,
     compute_edge_mask,
     compute_flat_mask,
+    compute_pre_echo_mask,
     compute_quiet_mask,
     load_capb_data_config,
 )
+from totton_audio_de_mirroring.data.transient_supervision import cardinal_upsample
 
 
 @pytest.fixture(scope="module")
@@ -32,6 +35,16 @@ def test_input_is_exact_decimation_of_target(dataset) -> None:
         source = sample["source"].numpy()
         target = sample["target"].numpy()
         np.testing.assert_array_equal(source, target[::UPSAMPLE_RATIO])
+
+
+def test_cardinal_upsample_preserves_impulse_lattice_and_bandlimit() -> None:
+    source = np.zeros(128, dtype=np.float64)
+    source[63] = 1.0
+    target = cardinal_upsample(source, 2)
+    spectrum = np.abs(np.fft.rfft(target))
+
+    assert np.allclose(target[::2], source, atol=1.0e-12)
+    assert np.max(spectrum[65:]) < 1.0e-12
 
 
 def test_sample_shapes(dataset) -> None:
@@ -101,6 +114,51 @@ def test_dataset_masks_present_for_edge_family() -> None:
     assert not bool(sample["stationary"])
 
 
+@pytest.fixture(scope="module")
+def focused_click_dataset() -> CAPBUpsampleDataset:
+    config = CAPBDataConfig(
+        num_samples=40,
+        seed=17,
+        signal_mix={"isolated_click": 1.0},
+        transient_supervision=TransientSupervisionConfig(enabled=True),
+    )
+    return CAPBUpsampleDataset(config)
+
+
+def test_focused_click_always_has_gate_aligned_mask(focused_click_dataset) -> None:
+    expected = round(3.5 * TARGET_SAMPLE_RATE / 1_000.0)
+    for index in range(len(focused_click_dataset)):
+        sample = focused_click_dataset[index]
+        assert bool(sample["focused_event"])
+        assert int(torch.count_nonzero(sample["pre_echo_mask"])) == expected
+        torch.testing.assert_close(sample["source"], sample["target"][::2])
+
+
+def test_transient_clean_and_augmented_views_are_both_present(
+    focused_click_dataset,
+) -> None:
+    clean = [
+        focused_click_dataset[index]
+        for index in range(len(focused_click_dataset))
+        if bool(focused_click_dataset[index]["transient_clean"])
+    ]
+    augmented = [
+        focused_click_dataset[index]
+        for index in range(len(focused_click_dataset))
+        if not bool(focused_click_dataset[index]["transient_clean"])
+    ]
+    assert clean
+    assert augmented
+    assert any(float(sample["quiet_mask"].mean()) > 0.5 for sample in clean)
+    assert all(float(sample["quiet_mask"].sum()) == 0.0 for sample in augmented)
+
+
+def test_pre_echo_mask_matches_gate_window() -> None:
+    mask = compute_pre_echo_mask(2_000, event_start=1_000, sample_rate=100_000)
+    assert np.all(mask[600:950] == 1.0)
+    assert float(mask[:600].sum() + mask[950:].sum()) == 0.0
+
+
 def test_imd_two_tone_is_marked_stationary() -> None:
     config = CAPBDataConfig(num_samples=1, seed=11, signal_mix={"imd_two_tone": 1.0})
     sample = CAPBUpsampleDataset(config)[0]
@@ -158,6 +216,8 @@ def test_load_yaml_config() -> None:
     assert config.target_sample_rate == 88_200
     assert config.near_nyquist_high_range_hz == (20_000.0, 21_500.0)
     assert config.signal_mix["isolated_click"] == pytest.approx(0.05)
+    assert config.signal_mix["imd_two_tone"] == pytest.approx(0.05)
+    assert config.transient_supervision.enabled
 
 
 def test_load_yaml_config_48k() -> None:

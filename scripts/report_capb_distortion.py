@@ -717,18 +717,18 @@ def _markdown_report(
         f"- `{case.label}`: `{case.checkpoint}`" for case in cases
     )
     if smpte_delta > 0.0:
-        interpretation = f"""The 48 kHz checkpoint is the SMPTE two-tone outlier. Its
+        interpretation = f"""The 48 kHz checkpoint has the larger SMPTE result. Its
 sideband RSS is {smpte_delta:.2f} dB higher than the 44.1 kHz checkpoint and
 corresponds to an amplitude ratio of approximately {smpte_percent:.4f}%.
 The symmetric `7 kHz ± n·60 Hz` family and controller-weight excursion are
 consistent with modulation introduced by the time-varying prototype blend.
 This is a diagnosis, not proof of a single internal causal mechanism."""
     else:
-        interpretation = f"""The 48 kHz checkpoint is no longer the SMPTE
-two-tone outlier: its sideband RSS is {abs(smpte_delta):.2f} dB lower than the
-44.1 kHz diagnostic checkpoint and corresponds to an amplitude ratio of
+        interpretation = f"""Both checkpoints are below the unchanged -110 dB
+SMPTE modulation-sideband gate. The 48 kHz result is {abs(smpte_delta):.2f} dB
+lower than the 44.1 kHz result and corresponds to an amplitude ratio of
 approximately {smpte_percent:.6f}%. The per-family plots confirm that the
-symmetric `7 kHz ± n·60 Hz` family and controller-weight excursion were
+symmetric `7 kHz ± n·60 Hz` family and controller-weight excursion are
 suppressed together."""
     return f"""# CAPB visualization and distortion investigation
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
+import torch.nn.functional as F
 
 from totton_audio_de_mirroring.training.stft_loss import (
     STFTLossConfig,
@@ -37,6 +38,9 @@ class CAPBLossWeights:
             inside edge zones (0.9 keeps 10% of the wave loss there).
         edge_ring: Penalty for edge-zone ripple exceeding the gentle
             prototype's ripple (covers dense-edge content with no plateaus).
+        pre_echo_excess: Penalty for gate-window energy exceeding the gentle
+            prototype on focused transient samples.
+        prototype_routing: Label-supervised sharp/gentle routing penalty.
         min_entropy: Per-frame entropy floor in nats (~0.05 allows a max
             blend weight of roughly 0.99).
 
@@ -56,6 +60,8 @@ class CAPBLossWeights:
     stationary_modulation: float = 0.0
     edge_fidelity_relax: float = 0.9
     edge_ring: float = 300.0
+    pre_echo_excess: float = 0.0
+    prototype_routing: float = 0.0
     min_entropy: float = 0.05
 
 
@@ -72,6 +78,9 @@ def compute_capb_losses(
     gentle_output: torch.Tensor | None = None,
     prototype_outputs: torch.Tensor | None = None,
     stationary: torch.Tensor | None = None,
+    pre_echo_mask: torch.Tensor | None = None,
+    sharp_index: int = 0,
+    gentle_index: int = -1,
 ) -> dict[str, torch.Tensor]:
     """Compute all CAPB loss terms.
 
@@ -90,6 +99,9 @@ def compute_capb_losses(
             enables the edge_ring loss when given with edge_mask.
         prototype_outputs: Fixed prototype outputs, shaped (batch, K, time).
         stationary: Boolean batch flags selecting stationary signals.
+        pre_echo_mask: Gate-aligned mask immediately before focused events.
+        sharp_index: Prototype index used for stationary non-edge frames.
+        gentle_index: Prototype index used for edge/pre-echo frames.
 
     Returns:
         Mapping with per-term losses and the weighted "total".
@@ -149,6 +161,25 @@ def compute_capb_losses(
         )
     else:
         losses["edge_ring"] = output.new_zeros(())
+    if pre_echo_mask is not None and gentle_output is not None:
+        losses["pre_echo_excess"] = pre_echo_excess_loss(
+            out, gentle_output[:, sl], pre_echo_mask[:, sl]
+        )
+    else:
+        losses["pre_echo_excess"] = output.new_zeros(())
+    if edge_mask is not None and stationary is not None:
+        routing_mask = edge_mask
+        if pre_echo_mask is not None:
+            routing_mask = torch.maximum(routing_mask, pre_echo_mask)
+        losses["prototype_routing"] = prototype_routing_loss(
+            weights_frames,
+            routing_mask,
+            stationary,
+            sharp_index=sharp_index,
+            gentle_index=gentle_index,
+        )
+    else:
+        losses["prototype_routing"] = output.new_zeros(())
     losses["total"] = (
         loss_weights.wave * losses["wave"]
         + loss_weights.stft * losses["stft"]
@@ -158,6 +189,8 @@ def compute_capb_losses(
         + loss_weights.entropy_floor * losses["entropy_floor"]
         + loss_weights.stationary_modulation * losses["stationary_modulation"]
         + loss_weights.edge_ring * losses["edge_ring"]
+        + loss_weights.pre_echo_excess * losses["pre_echo_excess"]
+        + loss_weights.prototype_routing * losses["prototype_routing"]
     )
     return losses
 
@@ -262,6 +295,103 @@ def edge_ring_loss(
     return _top_k_masked_mean(excess, mask, top_fraction)
 
 
+def pre_echo_excess_loss(
+    output: torch.Tensor,
+    gentle_output: torch.Tensor,
+    pre_echo_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Penalize pre-echo energy above the gentle prototype per event.
+
+    Args:
+        output: Model output (batch, time).
+        gentle_output: Gentle prototype output for the same source.
+        pre_echo_mask: G2b-aligned pre-event mask (batch, time).
+
+    Returns:
+        Peak-normalized mean excess energy over applicable batch items.
+
+    Physical Basis:
+        Legitimate augmented noise can produce non-zero output in a nominally
+        quiet interval. Comparing the same source through the low-ringing
+        gentle endpoint avoids treating that noise as hallucination, while
+        still driving the adaptive blend no worse than the validated endpoint.
+    """
+    _validate_pair(output, pre_echo_mask)
+    if gentle_output.shape != output.shape:
+        raise ValueError("gentle_output must share the output shape.")
+    counts = torch.sum(pre_echo_mask, dim=1)
+    applicable = counts > 0.0
+    if not bool(torch.any(applicable)):
+        return output.new_zeros(())
+    denominator = counts.clamp_min(1.0)
+    output_energy = torch.sum(torch.square(output) * pre_echo_mask, dim=1) / denominator
+    gentle_energy = (
+        torch.sum(torch.square(gentle_output) * pre_echo_mask, dim=1) / denominator
+    )
+    peak_energy = torch.square(torch.amax(torch.abs(gentle_output), dim=1)).clamp_min(
+        _EPS
+    )
+    excess = torch.relu(output_energy - gentle_energy) / peak_energy
+    return torch.mean(excess[applicable])
+
+
+def prototype_routing_loss(
+    weights_frames: torch.Tensor,
+    edge_mask: torch.Tensor,
+    stationary: torch.Tensor,
+    *,
+    sharp_index: int,
+    gentle_index: int,
+) -> torch.Tensor:
+    """Teach physically labelled sharp-versus-gentle routing.
+
+    Args:
+        weights_frames: Convex prototype weights (batch, K, frames).
+        edge_mask: Target-rate edge and pre-echo mask (batch, time).
+        stationary: Boolean batch flags for stationary signal families.
+        sharp_index: Prototype index for stationary non-edge frames.
+        gentle_index: Prototype index for edge frames.
+
+    Returns:
+        Mean negative log weight over labelled frames.
+
+    Physical Basis:
+        Procedural data provides reliable labels unavailable in arbitrary
+        audio: discontinuities require the validated low-ringing endpoint,
+        while stationary non-edge content requires strong image rejection.
+        This auxiliary classification signal prevents a global gentle
+        collapse without adding a runtime guard or changing FIR outputs.
+    """
+    if weights_frames.dim() != 3:
+        raise ValueError("weights_frames must be (batch, K, frames).")
+    if edge_mask.dim() != 2 or edge_mask.shape[0] != weights_frames.shape[0]:
+        raise ValueError("edge_mask must be a matching (batch, time) tensor.")
+    if stationary.dim() != 1 or stationary.shape[0] != weights_frames.shape[0]:
+        raise ValueError("stationary must be a batch-length vector.")
+    prototype_count = weights_frames.shape[1]
+    if not -prototype_count <= gentle_index < prototype_count:
+        raise ValueError("gentle_index is out of range.")
+    if not 0 <= sharp_index < prototype_count:
+        raise ValueError("sharp_index is out of range.")
+    frame_edges = F.adaptive_max_pool1d(
+        edge_mask.unsqueeze(1), weights_frames.shape[-1]
+    ).squeeze(1)
+    frame_edges = torch.clamp(frame_edges, 0.0, 1.0)
+    stationary_frames = (
+        stationary.to(weights_frames.dtype).unsqueeze(1).expand_as(frame_edges)
+    )
+    sharp_mask = stationary_frames * (1.0 - frame_edges)
+    labelled = frame_edges + sharp_mask
+    counts = torch.sum(labelled, dim=1)
+    applicable = counts > 0.0
+    if not bool(torch.any(applicable)):
+        return weights_frames.new_zeros(())
+    sharp_loss = -torch.log(weights_frames[:, sharp_index, :].clamp_min(_EPS))
+    gentle_loss = -torch.log(weights_frames[:, gentle_index, :].clamp_min(_EPS))
+    totals = torch.sum(sharp_loss * sharp_mask + gentle_loss * frame_edges, dim=1)
+    return torch.mean(totals[applicable] / counts[applicable])
+
+
 def entropy_floor_loss(
     weights_frames: torch.Tensor, min_entropy: float = 0.15
 ) -> torch.Tensor:
@@ -326,7 +456,8 @@ def stationary_modulation_loss(
         trim: Samples excluded at each output border.
 
     Returns:
-        Mean per-sample relative L1 deviation from the time-mean fixed blend.
+        Sum of the relative output deviation and mean blend-weight deviation
+        from the time-mean fixed blend.
 
     Raises:
         ValueError: If shapes or trim are invalid.
@@ -336,7 +467,11 @@ def stationary_modulation_loss(
         overall path into a modulator and creates sidebands. A stationary
         input should use one fixed convex blend; comparing with the same
         signal's time-mean blend removes modulation without preferring a
-        particular prototype or restricting transient behavior.
+        particular prototype or restricting transient behavior. The direct
+        weight term remains observable where adjacent prototype outputs are
+        locally similar, preventing small controller oscillations from hiding
+        behind a weak output-domain gradient and later producing IMD
+        sidebands on a different stationary signal.
     """
     if prototype_outputs.dim() != 3 or prototype_outputs.shape[0] != output.shape[0]:
         raise ValueError("prototype_outputs must be (batch, K, time).")
@@ -354,11 +489,14 @@ def stationary_modulation_loss(
     mean_weights = torch.mean(weights_frames, dim=-1, keepdim=True)
     fixed_output = torch.sum(mean_weights * prototype_outputs, dim=1)
     sl = slice(trim, output.shape[-1] - trim) if trim else slice(None)
-    difference = torch.mean(
+    output_difference = torch.mean(
         torch.abs(output[selected, sl] - fixed_output[selected, sl]), dim=1
     )
     reference = torch.mean(torch.abs(fixed_output[selected, sl]), dim=1).clamp_min(_EPS)
-    return torch.mean(difference / reference)
+    weight_difference = torch.mean(
+        torch.abs(weights_frames[selected] - mean_weights[selected])
+    )
+    return torch.mean(output_difference / reference) + weight_difference
 
 
 def _validate_pair(output: torch.Tensor, mask: torch.Tensor) -> None:

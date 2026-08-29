@@ -83,7 +83,7 @@ w_k >= 0
 
 つまりcontrollerは、検証済みFIRが作る範囲の外へ自由なフィルタ係数を出せません。学習されるのは混合比を決めるcontrollerだけで、FIR係数は学習中もcheckpoint読込後も固定です。
 
-ただし、各FIRが線形でも、入力に応じて混合比が時間変化するCAPB全体は厳密なLTI系ではありません。混合比が定常toneへ同期して動くと振幅変調となり、入力にないsidebandを作る可能性があります。そのため定常・周期信号では、同じ信号の時間平均重みによる固定混合との差を学習lossで抑え、SMPTE two-tone gateで実出力を検査します。
+ただし、各FIRが線形でも、入力に応じて混合比が時間変化するCAPB全体は厳密なLTI系ではありません。混合比が定常toneへ同期して動くと振幅変調となり、入力にないsidebandを作る可能性があります。そのため定常・周期信号では、同じ信号の時間平均重みによる固定混合との差と、重み自体の時間平均からの偏差を学習lossで抑え、SMPTE two-tone gateで実出力を検査します。この制約は学習時だけに適用し、ランタイムguardやFIRの帯域分割は追加しません。
 
 ### 3本のFIRの役割
 
@@ -150,6 +150,15 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb.yaml
 ```
 
+44.1 kHzの最終margin polishは、同梱したpre-polish checkpointから再現できます。
+
+```bash
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb.yaml \
+  --config configs/training_stage1_capb_44k1_margin.yaml \
+  --summary-json reports/capb_training/run11_44k1_optimized_20260829.json
+```
+
 48 kHz familyの通常学習:
 
 ```bash
@@ -172,15 +181,23 @@ uv run python scripts/train_capb.py \
   --summary-json reports/capb_training/run10_stationary_20260829.json
 ```
 
-学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。したがって`source == target[::2]`が成立します。
+通常の学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。孤立clickとtone burstは、実際のprobeと同じ入力sample rateでeventを生成し、cardinalなFFT zero-paddingで帯域制限済みteacherへ変換します。どちらの経路も`source == target[::2]`を厳密に保ち、入力Nyquistを超える教師情報を作りません。
+
+44.1 kHzデータではclick/tone burstを必ずchunk内へ配置し、70%を無noise・無clipの絶対silence supervision、30%をaugmentation耐性用としました。SMPTE/held-out two-toneを代表する`imd_two_tone`も5%含めます。分布、mask、decimation、image leakageは次で監査できます。
+
+```bash
+uv run python scripts/audit_capb_training_data.py \
+  --data-config configs/data_generation_capb.yaml \
+  --output-dir reports/capb_data_audit/44k1_optimized
+```
 
 学習されるのは約10万parameterのcontrollerだけです。3つのFIRは固定され、checkpointにはcontrollerの学習結果と対象sample-rate系列が保存されます。
 
 ### 学習済み成果物
 
-48 kHz系列の採用候補は`data/checkpoints/capb_48k/run10_stationary_20260829/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、60 Hz + 7 kHzのSMPTE sidebandはrun9の`-69.70 dB`から`-141.43 dB`へ改善しました。学習履歴、gate結果、THD/IMDとsidebandのbefore/afterは`reports/capb_training/`、`reports/probe_gates/`、`reports/capb_visualization/run10_stationary_20260829/`にあります。
+44.1 kHz系列の採用候補は`data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、SMPTE sidebandは`-125.6 dB`、impulse列の利得誤差は`0.446 dB`、G2b pre-echoは`1.05e-7`です。さらにcontroller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して最悪`-2.84 dB`で通過します。
 
-44.1 kHz run9は診断用checkpointとして残しますが、既存のG2/G2bが未合格です。したがって今回の成果物は48 kHz系列だけの採用候補であり、両系列をそろえた正式release pairではありません。
+48 kHz系列は`data/checkpoints/capb_48k/run10_stationary_20260829/capb_best.pt`を再評価し、v4の全gate通過とSMPTE sideband `-141.43 dB`を確認しました。この2つをrelease pairとして扱えます。学習履歴、データ監査、gate、堅牢性、impulse/THD/IMD/sideband可視化は`reports/capb_training/`、`reports/capb_data_audit/`、`reports/probe_gates/`、`reports/capb_robustness/`、`reports/capb_visualization/run11_44k1_optimized_20260829/`にあります。
 
 ## 受入評価
 
@@ -198,6 +215,11 @@ uv run python scripts/evaluate_probe_gates.py \
   --backend capb \
   --checkpoint <48k-checkpoint> \
   --rate-family 48k
+
+# 44.1 kHz controller phase / Hann-OLA boundary
+uv run python scripts/evaluate_capb_transient_robustness.py \
+  --checkpoint data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt \
+  --output-dir reports/capb_robustness/run11_44k1_optimized_20260829
 ```
 
 主な合格条件:
@@ -268,8 +290,10 @@ uv run pytest -v
 ```text
 configs/
   data_generation_capb.yaml
+  data_generation_capb_run9_legacy.yaml
   data_generation_capb_48k.yaml
   training_stage1_capb.yaml
+  training_stage1_capb_44k1_margin.yaml
   training_stage1_capb_48k.yaml
   training_stage1_capb_48k_stationary_warmup.yaml
   training_stage1_capb_48k_stationary.yaml
@@ -278,6 +302,7 @@ src/totton_audio_de_mirroring/
   data/capb_dataset.py
   data/probe_generators.py
   data/reference.py
+  data/transient_supervision.py
   models/capb.py
   models/proto_bank.py
   training/capb_losses.py
@@ -290,7 +315,10 @@ src/totton_audio_de_mirroring/
 scripts/
   train_capb.py
   evaluate_probe_gates.py
+  evaluate_capb_transient_robustness.py
+  audit_capb_training_data.py
   report_capb_distortion.py
+  report_capb_impulse.py
   run_capb_phase0.py
 ```
 
