@@ -34,6 +34,13 @@ _BESSEL_ORDER = 6
 _ANALYSIS_DURATION_SEC = 1
 _SIGNAL_DURATION_SEC = 3
 _DB_FLOOR = -180.0
+_REFERENCE_ZORDER = 2.0
+_CAPB_ZORDER = 10.0
+
+
+def _comparison_zorder(name: str) -> float:
+    """Return a drawing priority that keeps CAPB above references."""
+    return _CAPB_ZORDER if name == "capb" else _REFERENCE_ZORDER
 
 
 @dataclass(frozen=True)
@@ -245,7 +252,14 @@ def _render_square_plot(
         relative_ms, waveform = _edge_window(
             outputs[name], edges[name], case.target_rate, -1.0, 3.0
         )
-        axis.plot(relative_ms, waveform, color=color, linewidth=1.1, label=name)
+        axis.plot(
+            relative_ms,
+            waveform,
+            color=color,
+            linewidth=1.1,
+            label=name,
+            zorder=_comparison_zorder(name),
+        )
     axis.axvspan(0.1, 0.8, color="#4caf50", alpha=0.10, label="gate plateau 0.1–0.8 ms")
     axis.set(
         xlabel="time from edge (ms)",
@@ -366,15 +380,24 @@ def _plot_sweep_spectrum(
 ) -> None:
     """Plot passband and image-band sweep power for four paths."""
     figure, axis = plt.subplots(figsize=(12, 5))
-    for name in ("bessel", "capb", "sharp", "gentle"):
+    colors = {
+        "bessel": "tab:blue",
+        "capb": "tab:orange",
+        "sharp": "tab:green",
+        "gentle": "tab:red",
+    }
+    lines: dict[str, Any] = {}
+    for name in ("bessel", "sharp", "gentle", "capb"):
         frequencies, psd = sp_signal.welch(
             outputs[name], fs=case.target_rate, nperseg=8_192
         )
-        axis.semilogx(
+        (lines[name],) = axis.semilogx(
             frequencies[1:],
             10.0 * np.log10(np.maximum(psd[1:], 1.0e-20)),
             label=name,
+            color=colors[name],
             linewidth=1.0,
+            zorder=_comparison_zorder(name),
         )
     axis.axvline(case.source_rate / 2.0, color="black", linestyle="--", linewidth=1.0)
     axis.text(case.source_rate / 2.0 * 1.02, -85.0, "input Nyquist")
@@ -386,7 +409,8 @@ def _plot_sweep_spectrum(
         title=f"{case.label}: sweep passband and interpolation image",
     )
     axis.grid(alpha=0.25, which="both")
-    axis.legend()
+    legend_order = ("bessel", "capb", "sharp", "gentle")
+    axis.legend([lines[name] for name in legend_order], legend_order)
     figure.tight_layout()
     figure.savefig(output_dir / "sweep_spectrum.png", dpi=150)
     plt.close(figure)
@@ -513,7 +537,14 @@ def _plot_thd(case: RateCase, result: dict[str, Any], output_path: Path) -> None
     figure, axis = plt.subplots(figsize=(11, 5))
     for name, marker in (("ideal", "o"), ("bessel", "s"), ("capb", "^")):
         levels = np.maximum(lines["thd"][name], _DB_FLOOR)
-        axis.plot(orders, levels, marker=marker, markersize=4, label=name)
+        axis.plot(
+            orders,
+            levels,
+            marker=marker,
+            markersize=4,
+            label=name,
+            zorder=_comparison_zorder(name),
+        )
     capb_thd = result["metrics"]["capb"]["thd_1khz_20khz_db"]
     axis.set(
         xticks=orders,
@@ -541,12 +572,14 @@ def _plot_imd(case: RateCase, result: dict[str, Any], output_path: Path) -> None
             np.maximum(lines["smpte"][name], _DB_FLOOR),
             marker=marker,
             label=name,
+            zorder=_comparison_zorder(name),
         )
         axes[1].plot(
             ccif_freqs,
             np.maximum(lines["ccif"][name], _DB_FLOOR),
             marker=marker,
             label=name,
+            zorder=_comparison_zorder(name),
         )
     axes[0].set(
         title="SMPTE: lines around 7 kHz",
@@ -589,6 +622,7 @@ def _plot_sideband_degradation(
             np.maximum(lines["smpte"][name], _DB_FLOOR),
             marker=marker,
             label=name,
+            zorder=_comparison_zorder(name),
         )
     axes[0].set(
         xlabel="offset from 7 kHz (Hz)",
@@ -628,7 +662,11 @@ def _plot_am_sidebands(
     figure, axis = plt.subplots(figsize=(11, 5))
     for name, marker in (("ideal", "o"), ("bessel", "s"), ("capb", "^")):
         axis.plot(
-            orders, np.maximum(lines["am"][name], _DB_FLOOR), marker=marker, label=name
+            orders,
+            np.maximum(lines["am"][name], _DB_FLOOR),
+            marker=marker,
+            label=name,
+            zorder=_comparison_zorder(name),
         )
     axis.axvspan(-1.1, 1.1, color="#4caf50", alpha=0.08, label="input lines")
     axis.set(
