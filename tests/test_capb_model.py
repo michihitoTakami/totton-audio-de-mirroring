@@ -18,6 +18,8 @@ from totton_audio_de_mirroring.training.capb_losses import (
     compute_capb_losses,
     edge_ring_loss,
     plateau_ripple_loss,
+    pre_echo_excess_loss,
+    prototype_routing_loss,
     quiet_energy_loss,
     stationary_modulation_loss,
     weight_tv_loss,
@@ -129,6 +131,43 @@ def test_dense_edge_loss_prefers_gentle_prototype() -> None:
     assert float(gentle_loss) == pytest.approx(0.0)
 
 
+def test_pre_echo_excess_loss_uses_gentle_as_zero_baseline() -> None:
+    gentle = torch.full((2, 64), 0.1)
+    output = gentle.clone()
+    output[0, 8:16] = 0.2
+    mask = torch.zeros_like(output)
+    mask[:, 8:16] = 1.0
+
+    loss = pre_echo_excess_loss(output, gentle, mask)
+    baseline = pre_echo_excess_loss(gentle, gentle, mask)
+
+    assert float(loss) > 0.0
+    assert float(baseline) == pytest.approx(0.0)
+
+
+def test_prototype_routing_prefers_gentle_edges_and_sharp_stationary() -> None:
+    correct = torch.tensor([[[0.9, 0.1], [0.05, 0.05], [0.05, 0.85]]])
+    reversed_weights = torch.flip(correct, dims=(1,))
+    edge_mask = torch.tensor([[0.0, 0.0, 1.0, 1.0]])
+    stationary = torch.tensor([True])
+
+    correct_loss = prototype_routing_loss(
+        correct,
+        edge_mask,
+        stationary,
+        sharp_index=0,
+        gentle_index=2,
+    )
+    reversed_loss = prototype_routing_loss(
+        reversed_weights,
+        edge_mask,
+        stationary,
+        sharp_index=0,
+        gentle_index=2,
+    )
+    assert float(correct_loss) < float(reversed_loss)
+
+
 def test_tv_loss_zero_for_constant_weights() -> None:
     weights = torch.full((2, 3, 10), 1.0 / 3.0)
     assert float(weight_tv_loss(weights)) == pytest.approx(0.0)
@@ -163,6 +202,18 @@ def test_stationary_modulation_loss_detects_time_varying_blend() -> None:
     assert float(ignored) == pytest.approx(0.0)
 
 
+def test_stationary_modulation_loss_observes_weights_for_equal_prototypes() -> None:
+    prototypes = torch.ones(1, 3, 128)
+    weights = torch.zeros(1, 3, 8)
+    weights[:, 0, ::2] = 1.0
+    weights[:, 1, 1::2] = 1.0
+    output = torch.ones(1, 128)
+    loss = stationary_modulation_loss(
+        output, prototypes, weights, torch.tensor([True]), trim=0
+    )
+    assert float(loss) > 0.0
+
+
 def test_compute_capb_losses_total(model: CAPB) -> None:
     source = torch.randn(2, 4_096)
     target = torch.randn(2, 8_192)
@@ -186,6 +237,8 @@ def test_compute_capb_losses_total(model: CAPB) -> None:
         "entropy_floor",
         "stationary_modulation",
         "edge_ring",
+        "pre_echo_excess",
+        "prototype_routing",
         "total",
     }
     assert torch.isfinite(losses["total"])
@@ -266,6 +319,16 @@ def test_training_config_loads_initial_checkpoint(tmp_path: Path) -> None:
     config = load_capb_training_config(config_path)
 
     assert config.initial_checkpoint == checkpoint_path
+
+
+def test_training_config_loads_checkpoint_interval(tmp_path: Path) -> None:
+    config_path = tmp_path / "training.yaml"
+    config_path.write_text("checkpoint_interval_epochs: 5\n")
+    assert load_capb_training_config(config_path).checkpoint_interval_epochs == 5
+
+    config_path.write_text("checkpoint_interval_epochs: -1\n")
+    with pytest.raises(ValueError, match="checkpoint_interval_epochs"):
+        load_capb_training_config(config_path)
 
 
 def test_initial_checkpoint_loader_validates_rate(tmp_path: Path) -> None:

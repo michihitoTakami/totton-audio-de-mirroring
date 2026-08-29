@@ -259,6 +259,7 @@ def generate_isolated_click(
     amplitude: float = DEFAULT_AMPLITUDE,
     rng: np.random.Generator | None = None,
     click_width_samples: int = 3,
+    center_fraction: float | None = None,
 ) -> np.ndarray:
     """Generate an isolated click surrounded by silence.
 
@@ -268,6 +269,7 @@ def generate_isolated_click(
         amplitude: Peak amplitude.
         rng: RNG for click position and polarity (centered if None).
         click_width_samples: Click width in samples.
+        center_fraction: Optional normalized click-center position in [0, 1].
 
     Returns:
         Click signal as float32.
@@ -283,9 +285,15 @@ def generate_isolated_click(
     _validate_common(sample_rate, duration_sec, amplitude)
     if click_width_samples <= 0:
         raise ValueError("click_width_samples must be positive.")
+    if center_fraction is not None and not 0.0 <= center_fraction <= 1.0:
+        raise ValueError("center_fraction must be in [0, 1].")
 
     num_samples = _num_samples(sample_rate, duration_sec)
-    if rng is None:
+    if center_fraction is not None:
+        center = int(round(center_fraction * (num_samples - 1)))
+        start = int(np.clip(center - click_width_samples // 2, 0, num_samples - 1))
+        polarity = 1.0 if rng is None or rng.uniform() < 0.5 else -1.0
+    elif rng is None:
         start = num_samples // 2
         polarity = 1.0
     else:
