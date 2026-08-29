@@ -3,9 +3,10 @@
 The model upsamples 44.1 kHz audio to 88.2 kHz as a convex, slowly
 time-varying blend of fixed linear-phase interpolation prototypes. A small
 waveform controller predicts per-frame blend weights; everything else is
-frozen DSP. The network therefore cannot create frequencies, cannot change
-gain, and cannot ring beyond the worst fixed prototype - it only chooses a
-point on the sharp-vs-gentle trade-off curve over time.
+frozen DSP. The network cannot synthesize arbitrary FIR coefficients or an
+independent waveform: it only chooses a point on the sharp-vs-gentle trade-off
+curve over time. Because those weights depend on the input, however, the full
+system is time-varying and can create modulation sidebands unless constrained.
 """
 
 from __future__ import annotations
@@ -202,7 +203,8 @@ class CAPB(nn.Module):
         # not level, and run6 showed the controller otherwise learns an
         # amplitude shortcut that fails on out-of-distribution probe levels.
         # The blend still applies to the unnormalized prototype outputs, so
-        # the system stays linear.
+        # this normalization does not change output level. Input-dependent
+        # weights still make the overall system time-varying/nonlinear.
         output, weights, _ = self.forward_with_details(source)
         if return_weights:
             return output, weights

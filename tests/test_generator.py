@@ -10,6 +10,7 @@ from totton_audio_de_mirroring.data.generator import (
     generate_am_tone,
     generate_band_limited_noise,
     generate_fm_tone,
+    generate_imd_two_tone,
     generate_impulse_train,
     generate_linear_sweep,
     generate_log_sweep,
@@ -42,6 +43,7 @@ def test_list_signal_types_has_minimum_coverage() -> None:
     assert len(names) >= 10
     for key in (
         "multitone",
+        "imd_two_tone",
         "sweep_linear",
         "sweep_log",
         "impulse_train",
@@ -68,6 +70,27 @@ def test_generate_multitone_has_peaks() -> None:
     baseline = float(np.median(mags))
     for freq in freqs:
         assert _peak_magnitude(spectrum_freqs, mags, freq) > 10.0 * baseline
+
+
+def test_generate_imd_two_tone_preserves_primary_ratio() -> None:
+    signal = generate_imd_two_tone(
+        low_tone_hz=60.0,
+        high_tone_hz=7_000.0,
+        amplitude_ratio=4.0,
+        sample_rate=48_000,
+        duration_sec=1.0,
+        amplitude=0.5,
+    )
+    frequencies, magnitudes = _spectrum(signal, 48_000)
+    low = _peak_magnitude(frequencies, magnitudes, 60.0)
+    high = _peak_magnitude(frequencies, magnitudes, 7_000.0)
+    assert low / high == pytest.approx(4.0, rel=1.0e-5)
+    assert float(np.max(np.abs(signal))) <= 0.50001
+
+
+def test_generate_imd_two_tone_rejects_invalid_primaries() -> None:
+    with pytest.raises(ValueError, match="lower"):
+        generate_imd_two_tone(7_000.0, 60.0)
 
 
 def test_linear_sweep_tracks_start_and_end() -> None:

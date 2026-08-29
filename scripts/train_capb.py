@@ -30,6 +30,7 @@ def main() -> None:
     parser.add_argument("--num-samples", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
+    parser.add_argument("--init-checkpoint", type=Path, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
     args = parser.parse_args()
 
@@ -49,6 +50,8 @@ def main() -> None:
         overrides["device"] = args.device
     if args.checkpoint_dir is not None:
         overrides["checkpoint_dir"] = args.checkpoint_dir
+    if args.init_checkpoint is not None:
+        overrides["initial_checkpoint"] = args.init_checkpoint
     if overrides:
         training_config = replace(training_config, **overrides)
 
@@ -57,6 +60,11 @@ def main() -> None:
         "best_checkpoint": str(summary["best_checkpoint"]),
         "last_checkpoint": str(summary["last_checkpoint"]),
         "best_val_total": summary["best_val_total"],
+        "initial_checkpoint": (
+            str(training_config.initial_checkpoint)
+            if training_config.initial_checkpoint is not None
+            else None
+        ),
         "history": summary["history"],
     }
     if args.summary_json is not None:

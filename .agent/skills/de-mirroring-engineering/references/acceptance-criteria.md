@@ -13,5 +13,7 @@ Run `scripts/evaluate_probe_gates.py --backend capb` for `44k1` and `48k`.
 - Low-band phase error: at most 15 degrees.
 - Low-band group-delay error: at most 600 samples.
 - Low-band waveform error: at most -20 dB.
+- SMPTE-style modulation sidebands on canonical and held-out two-tone probes:
+  at most -110 dBc (G9, gate specification v4 / probe manifest v2).
 
 Do not weaken a threshold to admit a checkpoint. A threshold or probe change requires independent physical justification and before/after reports using the same candidate.

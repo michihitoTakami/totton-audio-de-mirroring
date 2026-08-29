@@ -132,3 +132,9 @@ def test_probes_generate_at_48k(suite) -> None:
         wave = generate_probe(spec, sample_rate=48_000)
         expected = int(round(spec.duration_sec * 48_000))
         assert wave.shape == (expected,), spec.probe_id
+
+
+def test_suite_has_canonical_and_held_out_imd_probes(suite) -> None:
+    imd_specs = [spec for spec in suite if spec.kind == "imd_two_tone"]
+    assert {spec.tier for spec in imd_specs} == {TIER_CANONICAL, TIER_HELD_OUT}
+    assert all(spec.duration_sec == 3.0 for spec in imd_specs)

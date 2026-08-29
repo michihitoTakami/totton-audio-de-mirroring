@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "source_sample_rate": 48000,
   "probes": [
     {
@@ -224,6 +224,21 @@
       "seed": 20260704
     },
     {
+      "probe_id": "imd_60hz_7000hz",
+      "kind": "imd_two_tone",
+      "tier": "canonical",
+      "amplitude": 0.5,
+      "duration_sec": 3.0,
+      "frequency_hz": 60.0,
+      "frequency_end_hz": null,
+      "secondary_frequency_hz": 7000.0,
+      "amplitude_ratio": 4.0,
+      "burst_ms": null,
+      "period_ms": null,
+      "step_sign": null,
+      "seed": null
+    },
+    {
       "probe_id": "square_73hz_held",
       "kind": "square",
       "tier": "held_out",
@@ -326,6 +341,21 @@
       "period_ms": null,
       "step_sign": null,
       "seed": 5678
+    },
+    {
+      "probe_id": "imd_83hz_6311hz_held",
+      "kind": "imd_two_tone",
+      "tier": "held_out",
+      "amplitude": 0.5,
+      "duration_sec": 3.0,
+      "frequency_hz": 83.0,
+      "frequency_end_hz": null,
+      "secondary_frequency_hz": 6311.0,
+      "amplitude_ratio": 3.7,
+      "burst_ms": null,
+      "period_ms": null,
+      "step_sign": null,
+      "seed": null
     }
   ]
 }

@@ -83,6 +83,8 @@ w_k >= 0
 
 つまりcontrollerは、検証済みFIRが作る範囲の外へ自由なフィルタ係数を出せません。学習されるのは混合比を決めるcontrollerだけで、FIR係数は学習中もcheckpoint読込後も固定です。
 
+ただし、各FIRが線形でも、入力に応じて混合比が時間変化するCAPB全体は厳密なLTI系ではありません。混合比が定常toneへ同期して動くと振幅変調となり、入力にないsidebandを作る可能性があります。そのため定常・周期信号では、同じ信号の時間平均重みによる固定混合との差を学習lossで抑え、SMPTE two-tone gateで実出力を検査します。
+
 ### 3本のFIRの役割
 
 | FIR | 周波数・時間応答の性格 | 主に使う区間 |
@@ -119,6 +121,7 @@ controllerは入力波形を直接受け取る5段の小さな1次元畳み込�
 - `quiet energy`: impulse前後など、本来無音の領域へ漏れる前後のechoを減らす
 - `edge ringing`: 不連続点の近くで、`gentle`より大きくなったリンギングを罰する
 - `weight total variation`: 混合比を時間方向に滑らかにし、重みの急変による副作用を抑える
+- `stationary modulation`: 定常・周期信号の出力を時間平均重みによる固定混合へ近づけ、信号同期sidebandを抑える
 - `entropy floor`: 1本のFIRへ早期に完全固定され、学習できなくなることを防ぐ
 
 この設計では、ニューラルネットワークは音声sample、周波数ごとの加工量、FIR係数を生成しません。候補となる3つの波形は常に固定FIRで入力から計算され、機械学習は「現在の区間ではイメージ抑制と波形の自然さのどちらをどの程度優先するか」だけを制御します。最終的な合否は学習中の誤差ではなく、両sample-rate系列のすべての評価信号に対する最悪値で判定します。
@@ -147,12 +150,26 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb.yaml
 ```
 
-48 kHz family:
+48 kHz familyの通常学習:
 
 ```bash
 uv run python scripts/train_capb.py \
   --data-config configs/data_generation_capb_48k.yaml \
   --config configs/training_stage1_capb_48k.yaml
+```
+
+run9から定常変調を補正する48 kHz微調整は2段階です。warm-upで初期学習用entropy barrierを外し、最終段でplateau重みを下げて過度なgentle化を避けます。
+
+```bash
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb_48k.yaml \
+  --config configs/training_stage1_capb_48k_stationary_warmup.yaml \
+  --summary-json reports/capb_training/run10_stationary_warmup_20260829.json
+
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb_48k.yaml \
+  --config configs/training_stage1_capb_48k_stationary.yaml \
+  --summary-json reports/capb_training/run10_stationary_20260829.json
 ```
 
 学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。したがって`source == target[::2]`が成立します。
@@ -161,7 +178,9 @@ uv run python scripts/train_capb.py \
 
 ### 学習済み成果物
 
-後続実験の学習履歴と評価結果は`reports/capb_training/`と`reports/probe_gates/`へ診断記録として残しています。対応するcheckpointは採用対象ではなく、リポジトリには同梱しません。CAPBのリリース条件は両系列の全gate合格なので、正式なcheckpointの組はまだ確定していません。
+48 kHz系列の採用候補は`data/checkpoints/capb_48k/run10_stationary_20260829/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、60 Hz + 7 kHzのSMPTE sidebandはrun9の`-69.70 dB`から`-141.43 dB`へ改善しました。学習履歴、gate結果、THD/IMDとsidebandのbefore/afterは`reports/capb_training/`、`reports/probe_gates/`、`reports/capb_visualization/run10_stationary_20260829/`にあります。
+
+44.1 kHz run9は診断用checkpointとして残しますが、既存のG2/G2bが未合格です。したがって今回の成果物は48 kHz系列だけの採用候補であり、両系列をそろえた正式release pairではありません。
 
 ## 受入評価
 
@@ -188,6 +207,7 @@ uv run python scripts/evaluate_probe_gates.py \
 - sweep、pink noise、複数tone: イメージ成分を`-65 dB`以下にする
 - 100 Hz–20 kHz: 周波数特性、利得、位相、群遅延、時間波形の誤差を制限する
 - 不要な高域成分: Bessel基準に対する増加を制限する
+- SMPTE/held-out two-tone: controller変調によるsidebandを`-110 dBc`以下にする
 
 レポートは`reports/probe_gates/<label>/gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。
 
@@ -251,6 +271,8 @@ configs/
   data_generation_capb_48k.yaml
   training_stage1_capb.yaml
   training_stage1_capb_48k.yaml
+  training_stage1_capb_48k_stationary_warmup.yaml
+  training_stage1_capb_48k_stationary.yaml
   stage1_stage2_pipeline.yaml
 src/totton_audio_de_mirroring/
   data/capb_dataset.py
@@ -262,11 +284,13 @@ src/totton_audio_de_mirroring/
   training/capb_trainer.py
   evaluation/gates.py
   evaluation/probe_suite.py
+  evaluation/distortion.py
   inference/pipeline.py
   stage2/
 scripts/
   train_capb.py
   evaluate_probe_gates.py
+  report_capb_distortion.py
   run_capb_phase0.py
 ```
 

@@ -41,6 +41,7 @@ def test_sample_shapes(dataset) -> None:
     assert sample["source"].shape == (chunk_len // UPSAMPLE_RATIO,)
     assert sample["flat_mask"].shape == (chunk_len,)
     assert sample["quiet_mask"].shape == (chunk_len,)
+    assert sample["stationary"].shape == ()
 
 
 def test_target_is_band_limited(dataset) -> None:
@@ -97,6 +98,22 @@ def test_dataset_masks_present_for_edge_family() -> None:
     dataset = CAPBUpsampleDataset(config)
     sample = dataset[0]
     assert float(sample["quiet_mask"].mean()) > 0.5
+    assert not bool(sample["stationary"])
+
+
+def test_imd_two_tone_is_marked_stationary() -> None:
+    config = CAPBDataConfig(num_samples=1, seed=11, signal_mix={"imd_two_tone": 1.0})
+    sample = CAPBUpsampleDataset(config)[0]
+    assert sample["signal_type"] == "imd_two_tone"
+    assert bool(sample["stationary"])
+
+
+@pytest.mark.parametrize("signal_type", ["square_wave", "sawtooth_wave"])
+def test_periodic_edge_signals_are_marked_stationary(signal_type: str) -> None:
+    config = CAPBDataConfig(num_samples=1, seed=11, signal_mix={signal_type: 1.0})
+    sample = CAPBUpsampleDataset(config)[0]
+    assert sample["signal_type"] == signal_type
+    assert bool(sample["stationary"])
 
 
 def test_stationary_noise_does_not_receive_slope_edge_mask() -> None:

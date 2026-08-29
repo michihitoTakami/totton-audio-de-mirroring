@@ -175,3 +175,40 @@ def test_image_band_low_hz_by_rate_family() -> None:
     assert image_band_low_hz(96_000) == 24_500.0
     with pytest.raises(ValueError, match="positive"):
         image_band_low_hz(0)
+
+
+def test_modulation_sideband_gate_binds_on_worst_two_tone() -> None:
+    base_metrics = {
+        "image_rel_db": -100.0,
+        "image_abs_db": -150.0,
+        "image_before_abs_db": -150.0,
+        "gain_error_db": 0.0,
+        "gain_band_fraction": 1.0,
+    }
+    evaluations = []
+    for probe_id, tier, value in (
+        ("canonical", "canonical", -120.0),
+        ("held", "held_out", -95.0),
+    ):
+        spec = ProbeSpec(
+            probe_id=probe_id,
+            kind="imd_two_tone",
+            tier=tier,
+            frequency_hz=60.0,
+            secondary_frequency_hz=7_000.0,
+            amplitude_ratio=4.0,
+            duration_sec=3.0,
+        )
+        evaluations.append(
+            ProbeEvaluation(
+                spec=spec,
+                metrics={**base_metrics, "modulation_sideband_db": value},
+            )
+        )
+    gate = next(
+        result
+        for result in evaluate_gates(evaluations).gates
+        if result.gate_id == "G9_no_modulation_sidebands"
+    )
+    assert not gate.passed
+    assert gate.worst_probe_id == "held"

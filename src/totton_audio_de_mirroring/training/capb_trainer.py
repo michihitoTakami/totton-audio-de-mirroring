@@ -20,7 +20,7 @@ from totton_audio_de_mirroring.data.capb_dataset import (
     CAPBDataConfig,
     CAPBUpsampleDataset,
 )
-from totton_audio_de_mirroring.models.capb import CAPB
+from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
 from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank,
     prototype_specs_for_target_rate,
@@ -56,6 +56,7 @@ class CAPBTrainingConfig:
         loss_weights: Composite loss weights.
         border_trim: Samples excluded at chunk borders in the losses.
         checkpoint_dir: Directory for checkpoints.
+        initial_checkpoint: Optional controller checkpoint used for fine-tuning.
         log_interval: Steps between train-loss log lines.
 
     Physical Basis:
@@ -75,6 +76,7 @@ class CAPBTrainingConfig:
     loss_weights: CAPBLossWeights = field(default_factory=CAPBLossWeights)
     border_trim: int = 512
     checkpoint_dir: Path = Path("data/checkpoints/capb")
+    initial_checkpoint: Path | None = None
     log_interval: int = 20
 
 
@@ -101,6 +103,7 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         quiet=float(weights_raw.get("quiet", 100.0)),
         tv=float(weights_raw.get("tv", 0.1)),
         entropy_floor=float(weights_raw.get("entropy_floor", 10.0)),
+        stationary_modulation=float(weights_raw.get("stationary_modulation", 0.0)),
         edge_fidelity_relax=float(weights_raw.get("edge_fidelity_relax", 0.9)),
         edge_ring=float(weights_raw.get("edge_ring", 300.0)),
         min_entropy=float(weights_raw.get("min_entropy", 0.05)),
@@ -118,6 +121,11 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         loss_weights=loss_weights,
         border_trim=int(raw.get("border_trim", 512)),
         checkpoint_dir=Path(raw.get("checkpoint_dir", "data/checkpoints/capb")),
+        initial_checkpoint=(
+            Path(raw["initial_checkpoint"])
+            if raw.get("initial_checkpoint") is not None
+            else None
+        ),
         log_interval=int(raw.get("log_interval", 20)),
     )
 
@@ -170,6 +178,10 @@ def train_capb(
         num_workers=training_config.num_workers,
     )
 
+    if model is not None and training_config.initial_checkpoint is not None:
+        raise ValueError("model and initial_checkpoint cannot both be provided.")
+    if model is None and training_config.initial_checkpoint is not None:
+        model = _load_initial_checkpoint(training_config, data_config)
     if model is None:
         bank = build_prototype_bank(
             prototype_specs_for_target_rate(data_config.target_sample_rate),
@@ -240,6 +252,56 @@ def train_capb(
     }
 
 
+def _load_initial_checkpoint(
+    training_config: CAPBTrainingConfig,
+    data_config: CAPBDataConfig,
+) -> CAPB:
+    """Load and rate-check a controller for fine-tuning.
+
+    Args:
+        training_config: Training settings containing the checkpoint path.
+        data_config: Dataset rates that the checkpoint must match.
+
+    Returns:
+        Rate-correct CAPB initialized from the checkpoint.
+
+    Raises:
+        FileNotFoundError: If the checkpoint does not exist.
+        ValueError: If checkpoint and dataset rates differ.
+
+    Physical Basis:
+        Fine-tuning preserves the validated transient response learned by the
+        baseline while the stationary loss removes signal-synchronous weight
+        modulation. Rate validation prevents pairing a controller with the
+        wrong fixed prototype bank.
+    """
+    path = training_config.initial_checkpoint
+    if path is None:
+        raise ValueError("initial_checkpoint is required.")
+    if not path.is_file():
+        raise FileNotFoundError(f"Initial checkpoint not found: {path}")
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    model = capb_from_checkpoint(checkpoint)
+    target_sample_rate = int(checkpoint.get("target_sample_rate", 88_200))
+    if target_sample_rate != data_config.target_sample_rate:
+        raise ValueError(
+            "Initial checkpoint target rate "
+            f"{target_sample_rate} Hz does not match dataset target rate "
+            f"{data_config.target_sample_rate} Hz."
+        )
+    expected_input_rate = checkpoint.get("expected_input_rate")
+    if (
+        expected_input_rate is not None
+        and int(expected_input_rate) != data_config.source_sample_rate
+    ):
+        raise ValueError(
+            "Initial checkpoint input rate "
+            f"{expected_input_rate} Hz does not match dataset source rate "
+            f"{data_config.source_sample_rate} Hz."
+        )
+    return model
+
+
 def _run_epoch(
     model: CAPB,
     loader: DataLoader[dict[str, Any]],
@@ -260,6 +322,7 @@ def _run_epoch(
         flat_mask = batch["flat_mask"].to(device)
         quiet_mask = batch["quiet_mask"].to(device)
         edge_mask = batch["edge_mask"].to(device)
+        stationary = batch["stationary"].to(device)
 
         with torch.set_grad_enabled(train):
             output, weights, prototypes = model.forward_with_details(source)
@@ -277,6 +340,8 @@ def _run_epoch(
                 trim=config.border_trim,
                 edge_mask=edge_mask,
                 gentle_output=gentle_output,
+                prototype_outputs=prototypes,
+                stationary=stationary,
             )
 
         if train:
@@ -321,6 +386,11 @@ def _save_checkpoint(
                 "learning_rate": config.learning_rate,
                 "epochs": config.epochs,
                 "loss_weights": vars(config.loss_weights),
+                "initial_checkpoint": (
+                    str(config.initial_checkpoint)
+                    if config.initial_checkpoint is not None
+                    else None
+                ),
             },
             "record": record,
         },

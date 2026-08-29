@@ -31,6 +31,8 @@ class CAPBLossWeights:
         quiet: Energy penalty in clean-signal silences (pre/post echo).
         tv: Total variation of the blend-weight trajectories.
         entropy_floor: Barrier keeping softmax away from one-hot dead zones.
+        stationary_modulation: Penalty for time-varying blends on stationary
+            signals relative to the same signal's time-mean fixed blend.
         edge_fidelity_relax: Fraction by which waveform fidelity is relaxed
             inside edge zones (0.9 keeps 10% of the wave loss there).
         edge_ring: Penalty for edge-zone ripple exceeding the gentle
@@ -51,6 +53,7 @@ class CAPBLossWeights:
     quiet: float = 100.0
     tv: float = 0.1
     entropy_floor: float = 10.0
+    stationary_modulation: float = 0.0
     edge_fidelity_relax: float = 0.9
     edge_ring: float = 300.0
     min_entropy: float = 0.05
@@ -67,6 +70,8 @@ def compute_capb_losses(
     trim: int = 512,
     edge_mask: torch.Tensor | None = None,
     gentle_output: torch.Tensor | None = None,
+    prototype_outputs: torch.Tensor | None = None,
+    stationary: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute all CAPB loss terms.
 
@@ -83,6 +88,8 @@ def compute_capb_losses(
             fidelity is relaxed (see edge_fidelity_relax).
         gentle_output: The gentle prototype's output for the same input;
             enables the edge_ring loss when given with edge_mask.
+        prototype_outputs: Fixed prototype outputs, shaped (batch, K, time).
+        stationary: Boolean batch flags selecting stationary signals.
 
     Returns:
         Mapping with per-term losses and the weighted "total".
@@ -126,6 +133,16 @@ def compute_capb_losses(
             weights_frames, min_entropy=loss_weights.min_entropy
         ),
     }
+    if prototype_outputs is not None and stationary is not None:
+        losses["stationary_modulation"] = stationary_modulation_loss(
+            output,
+            prototype_outputs,
+            weights_frames,
+            stationary,
+            trim=trim,
+        )
+    else:
+        losses["stationary_modulation"] = output.new_zeros(())
     if edge_mask is not None and gentle_output is not None:
         losses["edge_ring"] = edge_ring_loss(
             out, gentle_output[:, sl], edge_mask[:, sl]
@@ -139,6 +156,7 @@ def compute_capb_losses(
         + loss_weights.quiet * losses["quiet"]
         + loss_weights.tv * losses["tv"]
         + loss_weights.entropy_floor * losses["entropy_floor"]
+        + loss_weights.stationary_modulation * losses["stationary_modulation"]
         + loss_weights.edge_ring * losses["edge_ring"]
     )
     return losses
@@ -289,6 +307,58 @@ def weight_tv_loss(weights_frames: torch.Tensor) -> torch.Tensor:
     if weights_frames.shape[-1] < 2:
         return weights_frames.new_zeros(())
     return torch.mean(torch.abs(weights_frames[:, :, 1:] - weights_frames[:, :, :-1]))
+
+
+def stationary_modulation_loss(
+    output: torch.Tensor,
+    prototype_outputs: torch.Tensor,
+    weights_frames: torch.Tensor,
+    stationary: torch.Tensor,
+    trim: int = 512,
+) -> torch.Tensor:
+    """Penalize signal-dependent blend modulation on stationary inputs.
+
+    Args:
+        output: Time-varying CAPB output, shaped (batch, time).
+        prototype_outputs: Fixed FIR outputs, shaped (batch, K, time).
+        weights_frames: Convex blend weights, shaped (batch, K, frames).
+        stationary: Boolean flags, shaped (batch,), selecting applicable input.
+        trim: Samples excluded at each output border.
+
+    Returns:
+        Mean per-sample relative L1 deviation from the time-mean fixed blend.
+
+    Raises:
+        ValueError: If shapes or trim are invalid.
+
+    Physical Basis:
+        Multiplying prototype outputs by signal-synchronous weights turns the
+        overall path into a modulator and creates sidebands. A stationary
+        input should use one fixed convex blend; comparing with the same
+        signal's time-mean blend removes modulation without preferring a
+        particular prototype or restricting transient behavior.
+    """
+    if prototype_outputs.dim() != 3 or prototype_outputs.shape[0] != output.shape[0]:
+        raise ValueError("prototype_outputs must be (batch, K, time).")
+    if prototype_outputs.shape[1] != weights_frames.shape[1]:
+        raise ValueError("prototype and weight counts must match.")
+    if prototype_outputs.shape[-1] != output.shape[-1]:
+        raise ValueError("prototype_outputs and output time lengths must match.")
+    if stationary.dim() != 1 or stationary.shape[0] != output.shape[0]:
+        raise ValueError("stationary must be a batch-length vector.")
+    if trim < 0 or 2 * trim >= output.shape[-1]:
+        raise ValueError("trim must be non-negative and smaller than half length.")
+    selected = stationary.to(dtype=torch.bool, device=output.device)
+    if not bool(torch.any(selected)):
+        return output.new_zeros(())
+    mean_weights = torch.mean(weights_frames, dim=-1, keepdim=True)
+    fixed_output = torch.sum(mean_weights * prototype_outputs, dim=1)
+    sl = slice(trim, output.shape[-1] - trim) if trim else slice(None)
+    difference = torch.mean(
+        torch.abs(output[selected, sl] - fixed_output[selected, sl]), dim=1
+    )
+    reference = torch.mean(torch.abs(fixed_output[selected, sl]), dim=1).clamp_min(_EPS)
+    return torch.mean(difference / reference)
 
 
 def _validate_pair(output: torch.Tensor, mask: torch.Tensor) -> None:
