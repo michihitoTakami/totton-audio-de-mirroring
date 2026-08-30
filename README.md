@@ -168,18 +168,15 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb_48k.yaml
 ```
 
-48 kHzの最終最適化は、通常学習後にsweep境界とimpulse利得を別々にpolishします。sweep段はchunk位置をランダム化して20 kHz終端まで学習し、impulse段はevent周辺のfull-fidelityだけを短時間更新します。どちらもFIR prototypeと受入gateは変更しません。
+48 kHzのrelease margin学習は、定常歪みprobeと過渡probeを同じデータ分布へ入れ、採用済みcheckpointを小さい学習率で1 epochだけ更新します。FIR prototypeと受入gateは変更しません。CUDA学習ではTF32を既定で禁止します。controller重みの時間補間にはbit-exactなCUDA backwardがないため、seed、親checkpoint、設定hash、実行環境をcheckpointとsummaryへ記録し、最終選定は学習lossではなく再生成したprobeで行います。
 
 ```bash
 uv run python scripts/train_capb.py \
-  --data-config configs/data_generation_capb_48k_sweep_tail_polish.yaml \
-  --config configs/training_stage1_capb_48k.yaml \
-  --init-checkpoint <48k-pre-polish-checkpoint>
-
-uv run python scripts/train_capb.py \
-  --data-config configs/data_generation_capb_48k_impulse_margin.yaml \
-  --config configs/training_stage1_capb_48k_impulse_margin.yaml \
-  --init-checkpoint <48k-sweep-polished-checkpoint>
+  --data-config configs/data_generation_capb_48k_balanced.yaml \
+  --config configs/training_stage1_capb_48k_balanced_margin.yaml \
+  --init-checkpoint data/checkpoints/capb_48k/run11_48k_optimized_20260830/capb_best.pt \
+  --checkpoint-dir data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830 \
+  --summary-json reports/capb_training/run12_48k_strictfp32_balanced_20260830.json
 ```
 
 通常の学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。孤立clickとtone burstは、実際のprobeと同じ入力sample rateでeventを生成し、cardinalなFFT zero-paddingで帯域制限済みteacherへ変換します。どちらの経路も`source == target[::2]`を厳密に保ち、入力Nyquistを超える教師情報を作りません。
@@ -198,11 +195,15 @@ uv run python scripts/audit_capb_training_data.py \
 
 44.1 kHz系列の採用候補は`data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、SMPTE sidebandは`-125.6 dB`、impulse列の利得誤差は`0.446 dB`、G2b pre-echoは`1.05e-7`です。さらにcontroller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して最悪`-2.84 dB`で通過します。
 
-48 kHz系列の採用候補は`data/checkpoints/capb_48k/run11_48k_optimized_20260830/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、canonical sweepのpeak imageは`-112.42 dB`、SMPTE sidebandは`-144.40 dB`、impulse列の利得誤差は`0.390 dB`、G2b pre-echoは`1.52e-8`です。controller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して最悪`-8.43 dB`、`-8.84 dB`で通過します。この2つをrelease pairとして扱えます。学習履歴、データ監査、gate、堅牢性、impulse/THD/IMD/sideband可視化は`reports/capb_training/`、`reports/capb_data_audit/run11_48k_optimized_20260830/`、`reports/probe_gates/run11_48k_optimized_20260830/`、`reports/capb_robustness/run11_48k_optimized_20260830/`、`reports/capb_visualization/run11_release_pair_20260830/`にあります。
+48 kHz系列の採用候補は`data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt`です。v4のcanonical/held-out G1〜G9をCPUとstrict-FP32 CUDAの両方で通過し、SMPTE sidebandは`-144.67 dB`、CCIF IMDは`-142.73 dB`、impulse列の利得誤差は`0.400 dB`、G2b pre-echoは`1.33e-8`です。controller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して通過します。この48 kHz checkpointと上記44.1 kHz checkpointをrelease pairとして扱います。
+
+run11で48 kHzだけ悪く見えたTHD/IMD図は、CUDA TF32で長い固定FIRを畳み込んだ数値誤差でした。同じcheckpointでTF32を禁止すると、48 kHz THDは`-76.70 dB`から`-140.00 dB`、CCIF IMDは`-85.86 dB`から`-142.73 dB`へ戻ります。release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。選定理由と学習履歴は`reports/capb_training/run12_48k_strictfp32_balanced_20260830/`、完全な根拠は`reports/capb_precision/run12_strictfp32_release_20260830/`、`reports/capb_release_quality/run12_strictfp32_release_20260830/`、`reports/capb_visualization/run12_strictfp32_release_20260830/`にあります。
 
 ## 受入評価
 
 CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両系列で、通常評価用とheld-out評価用のprobeをすべて通過するまでリリースできません。
+
+Torch/CUDA評価はstrict FP32が既定です。`--allow-tf32`は原因調査専用で、release reportには使用できません。レポートにはTorch、CUDA、cuDNN、GPU、TF32設定を含む実行metadataが保存されます。
 
 ```bash
 # 44.1 kHz family
@@ -295,12 +296,13 @@ configs/
   data_generation_capb.yaml
   data_generation_capb_run9_legacy.yaml
   data_generation_capb_48k.yaml
-  data_generation_capb_48k_sweep_tail_polish.yaml
-  data_generation_capb_48k_impulse_margin.yaml
+  data_generation_capb_48k_balanced.yaml
   training_stage1_capb.yaml
   training_stage1_capb_44k1_margin.yaml
   training_stage1_capb_48k.yaml
-  training_stage1_capb_48k_impulse_margin.yaml
+  training_stage1_capb_48k_balanced_margin.yaml
+  training_stage1_capb_48k_relearn_075.yaml
+  training_stage1_capb_48k_relearn_085.yaml
   training_stage1_capb_48k_stationary_warmup.yaml
   training_stage1_capb_48k_stationary.yaml
   stage1_stage2_pipeline.yaml
@@ -316,15 +318,19 @@ src/totton_audio_de_mirroring/
   evaluation/gates.py
   evaluation/probe_suite.py
   evaluation/distortion.py
+  evaluation/release_quality.py
   inference/pipeline.py
+  torch_precision.py
   stage2/
 scripts/
   train_capb.py
+  evaluate_capb_release_quality.py
   evaluate_probe_gates.py
   evaluate_capb_transient_robustness.py
   audit_capb_training_data.py
   report_capb_distortion.py
   report_capb_impulse.py
+  report_capb_precision.py
   run_capb_phase0.py
 ```
 

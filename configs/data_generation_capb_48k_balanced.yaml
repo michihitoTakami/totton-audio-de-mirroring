@@ -1,9 +1,4 @@
-# CAPB 48 kHz curriculum for continuous-sweep boundary coverage.
-#
-# Random chunk positions expose the controller to both low-frequency sweep
-# onsets and high-frequency sweep tails. This prevents zero padding at an
-# inference boundary from being mistaken for a broadband transient while the
-# frozen prototype bank remains the only waveform-producing component.
+# CAPB 48 kHz balanced stationary/transient replay curriculum.
 
 num_samples: 10000
 source_duration_sec: 1.0
@@ -22,15 +17,25 @@ brickwall:
 near_nyquist_high_range_hz: [20000.0, 23400.0]
 flat_mask_window_ms: 0.10
 
+# Continuous probes retain enough replay mass that transient polish cannot
+# silently change their blend modulation or high-frequency boundary routing.
 signal_mix:
-  sweep_log: 0.35
-  sweep_linear: 0.25
-  pink_noise: 0.10
-  near_nyquist_noise: 0.10
-  imd_two_tone: 0.10
-  square_wave: 0.05
-  isolated_click: 0.03
-  tone_burst: 0.02
+  square_wave: 0.10
+  step_plateau: 0.10
+  isolated_click: 0.06
+  sawtooth_wave: 0.04
+  tone_burst: 0.08
+  music_like_mixture: 0.06
+  multitone: 0.08
+  imd_two_tone: 0.08
+  sweep_log: 0.10
+  sweep_linear: 0.06
+  am_tone: 0.06
+  fm_tone: 0.04
+  percussive: 0.05
+  pink_noise: 0.03
+  band_limited_noise: 0.03
+  near_nyquist_noise: 0.03
 
 augmentation:
   gain_range: [0.25, 1.0]
@@ -47,4 +52,4 @@ transient_supervision:
   context_ms: 5.0
   pre_echo_guard_ms: 0.5
   pre_echo_window_ms: 3.5
-  edge_supervision_signal_types: [square_wave, isolated_click]
+  edge_supervision_signal_types: [square_wave, step_plateau, isolated_click]

@@ -20,6 +20,7 @@ from totton_audio_de_mirroring.models.proto_bank import (
     prototype_specs_for_target_rate,
     upsample_with_kernel,
 )
+from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 
 _BESSEL_CUTOFF_HZ = 20_000.0
 _BESSEL_ORDER = 6
@@ -54,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-48k", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--allow-tf32", action="store_true")
     return parser.parse_args()
 
 
@@ -195,6 +197,8 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     """Render a compact impulse-response report."""
     lines = ["# CAPB impulse-response report", ""]
     for label, rate_result in summary.items():
+        if label == "execution":
+            continue
         metrics = rate_result["metrics"]
         lines.extend(
             [
@@ -215,11 +219,12 @@ def _render_markdown(summary: dict[str, Any]) -> str:
 def main() -> None:
     """Generate deterministic impulse plots, metrics, and report."""
     args = parse_args()
+    precision = configure_torch_precision(args.device, allow_tf32=args.allow_tf32)
     cases = (
         RateCase("44k1", 44_100, args.checkpoint_44k1),
         RateCase("48k", 48_000, args.checkpoint_48k),
     )
-    summary: dict[str, Any] = {}
+    summary: dict[str, Any] = {"execution": precision.to_dict()}
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         for case in cases:

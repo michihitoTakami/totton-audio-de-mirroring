@@ -25,6 +25,7 @@ from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank,
     prototype_specs_for_target_rate,
 )
+from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 from totton_audio_de_mirroring.training.capb_losses import (
     CAPBLossWeights,
     compute_capb_losses,
@@ -53,6 +54,10 @@ class CAPBTrainingConfig:
         num_workers: DataLoader worker count.
         device: Torch device string.
         seed: Torch RNG seed.
+        allow_tf32: Permit reduced-mantissa CUDA TF32 execution.
+        deterministic: Require deterministic Torch algorithms.
+        initial_head_scale: Multiplicative scale applied once to loaded
+            controller-head weights before fine-tuning.
         loss_weights: Composite loss weights.
         border_trim: Samples excluded at chunk borders in the losses.
         checkpoint_dir: Directory for checkpoints.
@@ -75,6 +80,9 @@ class CAPBTrainingConfig:
     num_workers: int = 4
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 1234
+    allow_tf32: bool = False
+    deterministic: bool = False
+    initial_head_scale: float = 1.0
     loss_weights: CAPBLossWeights = field(default_factory=CAPBLossWeights)
     border_trim: int = 512
     checkpoint_dir: Path = Path("data/checkpoints/capb")
@@ -116,6 +124,9 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
     checkpoint_interval = int(raw.get("checkpoint_interval_epochs", 0))
     if checkpoint_interval < 0:
         raise ValueError("checkpoint_interval_epochs must be non-negative.")
+    initial_head_scale = float(raw.get("initial_head_scale", 1.0))
+    if not 0.0 < initial_head_scale <= 1.0:
+        raise ValueError("initial_head_scale must satisfy 0 < scale <= 1.")
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
         batch_size=int(raw.get("batch_size", 16)),
@@ -126,6 +137,9 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         num_workers=int(raw.get("num_workers", 4)),
         device=str(raw.get("device", "cuda" if torch.cuda.is_available() else "cpu")),
         seed=int(raw.get("seed", 1234)),
+        allow_tf32=bool(raw.get("allow_tf32", False)),
+        deterministic=bool(raw.get("deterministic", False)),
+        initial_head_scale=initial_head_scale,
         loss_weights=loss_weights,
         border_trim=int(raw.get("border_trim", 512)),
         checkpoint_dir=Path(raw.get("checkpoint_dir", "data/checkpoints/capb")),
@@ -162,8 +176,13 @@ def train_capb(
         already the FIR baseline that passes the fidelity gates); training
         moves weights toward gentle only where the ringing losses demand.
     """
-    torch.manual_seed(training_config.seed)
     device = torch.device(training_config.device)
+    precision = configure_torch_precision(
+        device,
+        allow_tf32=training_config.allow_tf32,
+        deterministic=training_config.deterministic,
+    )
+    torch.manual_seed(training_config.seed)
 
     dataset = CAPBUpsampleDataset(data_config)
     val_len = max(1, int(len(dataset) * training_config.val_fraction))
@@ -197,6 +216,7 @@ def train_capb(
             sample_rate=data_config.target_sample_rate,
         )
         model = CAPB(bank=bank)
+    _scale_controller_head(model, training_config.initial_head_scale)
     model = model.to(device)
     optimizer = torch.optim.AdamW(
         model.controller.parameters(),
@@ -262,7 +282,31 @@ def train_capb(
         "last_checkpoint": last_path,
         "best_val_total": best_val,
         "history": history,
+        "precision": precision.to_dict(),
     }
+
+
+def _scale_controller_head(model: CAPB, scale: float) -> None:
+    """Scale learned controller-head weights without changing fixed bias.
+
+    Args:
+        model: CAPB model whose controller will be fine-tuned.
+        scale: Multiplicative weight scale in ``(0, 1]``.
+
+    Raises:
+        ValueError: If scale is outside the supported interval.
+
+    Physical Basis:
+        A saturated softmax has vanishing waveform gradients. Scaling only
+        the learned head weights preserves the fixed prior and routing order
+        while restoring a reproducible gradient margin for fine-tuning.
+    """
+    if not 0.0 < scale <= 1.0:
+        raise ValueError("scale must satisfy 0 < scale <= 1.")
+    if scale == 1.0:
+        return
+    with torch.no_grad():
+        model.controller.head.weight.mul_(scale)
 
 
 def _load_initial_checkpoint(
@@ -411,6 +455,9 @@ def _save_checkpoint(
                     else None
                 ),
                 "checkpoint_interval_epochs": config.checkpoint_interval_epochs,
+                "allow_tf32": config.allow_tf32,
+                "deterministic": config.deterministic,
+                "initial_head_scale": config.initial_head_scale,
             },
             "data_config": asdict(data_config),
             "record": record,

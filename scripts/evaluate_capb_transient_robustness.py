@@ -22,6 +22,7 @@ from totton_audio_de_mirroring.inference.pipeline import (
     Stage1Processor,
     load_capb_stage1_processor,
 )
+from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 
 _SOURCE_RATE = 44_100
 _TARGET_RATE = 88_200
@@ -38,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--allow-tf32", action="store_true")
     parser.add_argument("--rate-family", choices=("44k1", "48k"), default="44k1")
     return parser.parse_args()
 
@@ -262,12 +264,14 @@ Negative margin is below the unchanged G2b threshold.
 def main() -> None:
     """Run robustness evaluation and write reproducible evidence."""
     args = parse_args()
+    precision = configure_torch_precision(args.device, allow_tf32=args.allow_tf32)
     source_rate = 44_100 if args.rate_family == "44k1" else 48_000
     target_rate = source_rate * 2
     capb = load_capb_stage1_processor(
         checkpoint_path=args.checkpoint, device=args.device
     )
     result = evaluate_robustness(capb, source_rate, target_rate)
+    result["execution"] = precision.to_dict()
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "robustness.json").write_text(
