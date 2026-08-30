@@ -28,6 +28,7 @@ from totton_audio_de_mirroring.models.proto_bank import (
     prototype_specs_for_target_rate,
     upsample_with_kernel,
 )
+from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 
 _BESSEL_CUTOFF_HZ = 20_000.0
 _BESSEL_ORDER = 6
@@ -72,6 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-48k", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--allow-tf32", action="store_true")
     return parser.parse_args()
 
 
@@ -84,6 +86,7 @@ def main() -> None:
         their checkpoint/controller and prototype bank, not FFT leakage.
     """
     args = parse_args()
+    precision = configure_torch_precision(args.device, allow_tf32=args.allow_tf32)
     cases = (
         RateCase("44k1", 44_100, args.checkpoint_44k1),
         RateCase("48k", 48_000, args.checkpoint_48k),
@@ -94,6 +97,7 @@ def main() -> None:
             case.label: _generate_rate_report(case, args.output_dir, args.device)
             for case in cases
         }
+        summary["execution"] = precision.to_dict()
         _plot_cross_family(summary, args.output_dir / "distortion_comparison.png")
         _write_summary(summary, cases, args.output_dir)
     except OSError as error:
@@ -174,7 +178,7 @@ def _process_probe(
     with torch.no_grad():
         tensor = torch.from_numpy(source_copy.astype(np.float32)).unsqueeze(0)
         tensor = tensor.to(next(model.parameters()).device)
-        capb_output, weights = model(tensor, return_weights=True)
+        capb_output, weights, prototype_outputs = model.forward_with_details(tensor)
     outputs = {
         "ideal": np.asarray(sp_signal.resample_poly(source_copy, 2, 1)),
         "bessel": upsample_bessel_reference(
@@ -188,6 +192,10 @@ def _process_probe(
         "gentle": upsample_with_kernel(source_copy, bank.kernels[-1], 2),
         "capb": np.asarray(capb_output.squeeze(0).cpu(), dtype=np.float64),
     }
+    for index, name in enumerate(model.prototype_names):
+        outputs[f"torch_{name}"] = np.asarray(
+            prototype_outputs[0, index].cpu(), dtype=np.float64
+        )
     return ProcessedSignal(
         outputs=outputs,
         weights=np.asarray(weights.squeeze(0).cpu(), dtype=np.float64),
@@ -462,7 +470,16 @@ def _assemble_distortion_result(
     cropped: dict[str, dict[str, np.ndarray]],
 ) -> dict[str, Any]:
     """Compute scalar metrics and plot-ready line levels."""
-    backends = ("ideal", "bessel", "sharp", "gentle", "capb")
+    backends = (
+        "ideal",
+        "bessel",
+        "sharp",
+        "gentle",
+        "torch_sharp",
+        "torch_mid",
+        "torch_gentle",
+        "capb",
+    )
     metrics = {
         backend: {
             "thd_1khz_20khz_db": thd_db(cropped["thd"][backend], case.target_rate),

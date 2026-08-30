@@ -42,6 +42,7 @@ from totton_audio_de_mirroring.models.proto_bank import (
     prototype_specs_for_target_rate,
     upsample_with_kernel,
 )
+from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 
 BESSEL_CUTOFF_HZ = 20_000.0
 BESSEL_ORDER = 6
@@ -61,6 +62,7 @@ def main() -> None:
     parser.add_argument("--backend", type=str, required=True)
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--allow-tf32", action="store_true")
     parser.add_argument("--rate-family", choices=sorted(RATE_FAMILIES), default="44k1")
     parser.add_argument(
         "--tier", choices=["canonical", "held_out", "both"], default="both"
@@ -70,6 +72,7 @@ def main() -> None:
     parser.add_argument("--no-strict", action="store_true")
     args = parser.parse_args()
 
+    precision = configure_torch_precision(args.device, allow_tf32=args.allow_tf32)
     source_sr, target_sr = RATE_FAMILIES[args.rate_family]
     default_label = args.backend.replace(":", "_")
     if args.rate_family != "44k1":
@@ -114,9 +117,9 @@ def main() -> None:
         ),
     )
 
-    (report_dir / "gate_report.json").write_text(
-        json.dumps(report_to_dict(report), indent=2)
-    )
+    payload = report_to_dict(report)
+    payload["execution"] = precision.to_dict()
+    (report_dir / "gate_report.json").write_text(json.dumps(payload, indent=2))
     markdown = render_markdown_report(report)
     (report_dir / "gate_report.md").write_text(markdown)
     print(markdown)

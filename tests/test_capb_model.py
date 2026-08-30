@@ -27,6 +27,7 @@ from totton_audio_de_mirroring.training.capb_losses import (
 from totton_audio_de_mirroring.training.capb_trainer import (
     CAPBTrainingConfig,
     _load_initial_checkpoint,
+    _scale_controller_head,
     load_capb_training_config,
 )
 from totton_audio_de_mirroring.training.stft_loss import STFTLossConfig
@@ -362,6 +363,31 @@ def test_training_config_loads_checkpoint_interval(tmp_path: Path) -> None:
     config_path.write_text("checkpoint_interval_epochs: -1\n")
     with pytest.raises(ValueError, match="checkpoint_interval_epochs"):
         load_capb_training_config(config_path)
+
+
+def test_training_config_validates_initial_head_scale(tmp_path: Path) -> None:
+    config_path = tmp_path / "training.yaml"
+    config_path.write_text("initial_head_scale: 0.75\n")
+    assert load_capb_training_config(config_path).initial_head_scale == 0.75
+
+    config_path.write_text("initial_head_scale: 0\n")
+    with pytest.raises(ValueError, match="initial_head_scale"):
+        load_capb_training_config(config_path)
+
+
+def test_scale_controller_head_preserves_bias() -> None:
+    candidate = CAPB()
+    with torch.no_grad():
+        candidate.controller.head.weight.fill_(2.0)
+    bias_before = candidate.controller.head.bias.detach().clone()
+
+    _scale_controller_head(candidate, 0.75)
+
+    torch.testing.assert_close(
+        candidate.controller.head.weight,
+        torch.full_like(candidate.controller.head.weight, 1.5),
+    )
+    torch.testing.assert_close(candidate.controller.head.bias, bias_before)
 
 
 def test_initial_checkpoint_loader_validates_rate(tmp_path: Path) -> None:

@@ -34,6 +34,7 @@ DEFAULT_TOLERANCE = 1.0e-4
 # shorter than the controller stride context, one mid, one full second.
 DEFAULT_VERIFY_LENGTHS = (4_096, 22_050, 48_000)
 METADATA_KEY_EXPECTED_INPUT_RATE = "expected_input_rate"
+METADATA_KEY_CUDA_PRECISION = "cuda_compute_precision"
 
 
 def main() -> None:
@@ -144,9 +145,18 @@ def _write_metadata(output: Path, expected_input_rate: int) -> None:
         ) from exc
 
     model = onnx.load(str(output))
-    entry = model.metadata_props.add()
-    entry.key = METADATA_KEY_EXPECTED_INPUT_RATE
-    entry.value = str(expected_input_rate)
+    metadata = {entry.key: entry.value for entry in model.metadata_props}
+    metadata.update(
+        {
+            METADATA_KEY_EXPECTED_INPUT_RATE: str(expected_input_rate),
+            METADATA_KEY_CUDA_PRECISION: "strict_fp32",
+        }
+    )
+    del model.metadata_props[:]
+    for key, value in metadata.items():
+        entry = model.metadata_props.add()
+        entry.key = key
+        entry.value = value
     onnx.save(model, str(output))
 
 

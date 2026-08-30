@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--num-samples", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--allow-tf32", action="store_true")
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--init-checkpoint", type=Path, default=None)
     parser.add_argument("--pre-echo-excess", type=float, default=None)
@@ -59,6 +60,8 @@ def main() -> None:
         overrides["learning_rate"] = args.learning_rate
     if args.device is not None:
         overrides["device"] = args.device
+    if args.allow_tf32:
+        overrides["allow_tf32"] = True
     if args.checkpoint_dir is not None:
         overrides["checkpoint_dir"] = args.checkpoint_dir
     if args.init_checkpoint is not None:
@@ -96,6 +99,7 @@ def main() -> None:
             else None
         ),
         "history": summary["history"],
+        "precision": summary["precision"],
         "data_config": _jsonable(asdict(data_config)),
         "training_config": _jsonable(asdict(training_config)),
         "config_sha256": {
