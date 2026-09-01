@@ -21,11 +21,16 @@ from totton_audio_de_mirroring.evaluation.distortion import (
     smpte_imd_db,
     thd_db,
 )
-from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
+from totton_audio_de_mirroring.models.capb import (
+    CAPB,
+    SUPPORTED_FIR_COMPUTE_DTYPES,
+    capb_candidate_from_checkpoint,
+    capb_from_checkpoint,
+)
 from totton_audio_de_mirroring.models.proto_bank import (
     PrototypeBank,
-    build_prototype_bank,
-    prototype_specs_for_target_rate,
+    build_prototype_bank_for_profile,
+    supported_prototype_profiles,
     upsample_with_kernel,
 )
 from totton_audio_de_mirroring.torch_precision import configure_torch_precision
@@ -74,6 +79,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--allow-tf32", action="store_true")
+    parser.add_argument(
+        "--prototype-profile",
+        choices=supported_prototype_profiles(),
+        default=None,
+    )
+    parser.add_argument(
+        "--fir-compute-dtype",
+        choices=SUPPORTED_FIR_COMPUTE_DTYPES,
+        default="float32",
+    )
     return parser.parse_args()
 
 
@@ -94,7 +109,13 @@ def main() -> None:
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         summary = {
-            case.label: _generate_rate_report(case, args.output_dir, args.device)
+            case.label: _generate_rate_report(
+                case,
+                args.output_dir,
+                args.device,
+                args.prototype_profile,
+                args.fir_compute_dtype,
+            )
             for case in cases
         }
         summary["execution"] = precision.to_dict()
@@ -111,11 +132,18 @@ def _generate_rate_report(
     case: RateCase,
     output_root: Path,
     device: str,
+    prototype_profile: str | None = None,
+    fir_compute_dtype: str = "float32",
 ) -> dict[str, Any]:
     """Generate all plots and metrics for one rate family."""
     output_dir = output_root / case.label
     output_dir.mkdir(parents=True, exist_ok=True)
-    model, bank = _load_model(case, device)
+    model, bank = _load_model(
+        case,
+        device,
+        prototype_profile,
+        fir_compute_dtype,
+    )
     square_metrics = {
         str(frequency_hz): _plot_square_response(
             case, model, bank, frequency_hz, output_dir
@@ -134,6 +162,9 @@ def _generate_rate_report(
         "source_sample_rate": case.source_rate,
         "target_sample_rate": case.target_rate,
         "checkpoint": str(case.checkpoint),
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "fir_compute_dtype": model.fir_compute_dtype,
         "square": square_metrics,
         "distortion": distortion["metrics"],
         "controller": distortion["controller"],
@@ -141,7 +172,12 @@ def _generate_rate_report(
     }
 
 
-def _load_model(case: RateCase, device: str) -> tuple[CAPB, PrototypeBank]:
+def _load_model(
+    case: RateCase,
+    device: str,
+    prototype_profile: str | None = None,
+    fir_compute_dtype: str = "float32",
+) -> tuple[CAPB, PrototypeBank]:
     """Load and rate-validate one CAPB checkpoint."""
     if not case.checkpoint.is_file():
         raise FileNotFoundError(f"CAPB checkpoint not found: {case.checkpoint}")
@@ -157,11 +193,16 @@ def _load_model(case: RateCase, device: str) -> tuple[CAPB, PrototypeBank]:
             f"Checkpoint {case.checkpoint} expects {expected_rate} Hz, "
             f"not {case.source_rate} Hz."
         )
-    model = capb_from_checkpoint(checkpoint).to(torch.device(device))
-    bank = build_prototype_bank(
-        prototype_specs_for_target_rate(case.target_rate),
-        sample_rate=case.target_rate,
-    )
+    model = (
+        capb_candidate_from_checkpoint(
+            checkpoint,
+            prototype_profile=prototype_profile,
+            fir_compute_dtype=fir_compute_dtype,
+        )
+        if prototype_profile is not None
+        else capb_from_checkpoint(checkpoint)
+    ).to(torch.device(device))
+    bank = build_prototype_bank_for_profile(case.target_rate, model.prototype_profile)
     return model, bank
 
 

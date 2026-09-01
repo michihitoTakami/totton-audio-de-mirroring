@@ -15,8 +15,14 @@ import logging
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from totton_audio_de_mirroring.data.capb_dataset import load_capb_data_config
+from totton_audio_de_mirroring.data.capb_dataset import (
+    CAPBDataConfig,
+    load_capb_data_config,
+)
+from totton_audio_de_mirroring.models.capb import SUPPORTED_FIR_COMPUTE_DTYPES
+from totton_audio_de_mirroring.models.proto_bank import supported_prototype_profiles
 from totton_audio_de_mirroring.training.capb_trainer import (
+    CAPBTrainingConfig,
     load_capb_training_config,
     train_capb,
 )
@@ -30,10 +36,24 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--num-samples", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--allow-tf32", action="store_true")
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--init-checkpoint", type=Path, default=None)
+    parser.add_argument(
+        "--prototype-profile",
+        choices=supported_prototype_profiles(),
+        default=None,
+    )
+    parser.add_argument(
+        "--fir-compute-dtype",
+        choices=SUPPORTED_FIR_COMPUTE_DTYPES,
+        default=None,
+    )
+    parser.add_argument("--initial-controller-only", action="store_true")
+    parser.add_argument("--border-trim", type=int, default=None)
+    parser.add_argument("--far-pre-echo-window-ms", type=float, default=None)
     parser.add_argument("--pre-echo-excess", type=float, default=None)
     parser.add_argument("--edge-ring", type=float, default=None)
     parser.add_argument("--prototype-routing", type=float, default=None)
@@ -48,9 +68,24 @@ def main() -> None:
 
     data_config = load_capb_data_config(args.data_config)
     training_config = load_capb_training_config(args.config)
-
+    data_config, training_config = _override_seed(
+        data_config, training_config, args.seed
+    )
     if args.num_samples is not None:
         data_config = replace(data_config, num_samples=args.num_samples)
+    if args.far_pre_echo_window_ms is not None:
+        if args.far_pre_echo_window_ms < 0.0:
+            raise ValueError("--far-pre-echo-window-ms must be non-negative.")
+        far_guard_ms = data_config.transient_supervision.far_pre_echo_guard_ms
+        transient = replace(
+            data_config.transient_supervision,
+            context_ms=max(
+                data_config.transient_supervision.context_ms,
+                far_guard_ms + args.far_pre_echo_window_ms,
+            ),
+            far_pre_echo_window_ms=args.far_pre_echo_window_ms,
+        )
+        data_config = replace(data_config, transient_supervision=transient)
     overrides: dict[str, object] = {}
     if args.epochs is not None:
         overrides["epochs"] = args.epochs
@@ -66,6 +101,16 @@ def main() -> None:
         overrides["checkpoint_dir"] = args.checkpoint_dir
     if args.init_checkpoint is not None:
         overrides["initial_checkpoint"] = args.init_checkpoint
+    if args.prototype_profile is not None:
+        overrides["prototype_profile"] = args.prototype_profile
+    if args.fir_compute_dtype is not None:
+        overrides["fir_compute_dtype"] = args.fir_compute_dtype
+    if args.initial_controller_only:
+        overrides["initial_controller_only"] = True
+    if args.border_trim is not None:
+        if args.border_trim < 0:
+            raise ValueError("--border-trim must be non-negative.")
+        overrides["border_trim"] = args.border_trim
     if args.checkpoint_interval is not None:
         if args.checkpoint_interval < 0:
             raise ValueError("--checkpoint-interval must be non-negative.")
@@ -111,6 +156,19 @@ def main() -> None:
         args.summary_json.parent.mkdir(parents=True, exist_ok=True)
         args.summary_json.write_text(json.dumps(payload, indent=2))
     print(json.dumps({k: payload[k] for k in ("best_checkpoint", "best_val_total")}))
+
+
+def _override_seed(
+    data_config: CAPBDataConfig,
+    training_config: CAPBTrainingConfig,
+    seed: int | None,
+) -> tuple[CAPBDataConfig, CAPBTrainingConfig]:
+    """Apply one reproducible seed to data generation and controller training."""
+    if seed is None:
+        return data_config, training_config
+    if not 0 <= seed < 2**32:
+        raise ValueError("--seed must be in [0, 2**32).")
+    return replace(data_config, seed=seed), replace(training_config, seed=seed)
 
 
 def _sha256(path: Path) -> str:

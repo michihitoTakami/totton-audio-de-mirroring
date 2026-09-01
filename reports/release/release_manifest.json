@@ -1,0 +1,37 @@
+{
+  "release_date": "2026-09-01",
+  "selected_profile": "release_v4",
+  "selection_reason": "FineTuned 1535/2047 profiles failed unchanged 44.1 kHz G2b pre-echo gates for all three seeds",
+  "seeds": [1234, 2234, 3234],
+  "precision": {
+    "mode": "strict_fp32",
+    "allow_tf32": false,
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "cudnn": 91002,
+    "gpu": "NVIDIA GeForce RTX 5060 Ti"
+  },
+  "gate_spec_version": 4,
+  "families": {
+    "44k1": {
+      "checkpoint": "data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt",
+      "checkpoint_sha256": "c155b779561e237cfca9477cd67fae593c42fae6a8731f30328e59e19fce21ce",
+      "prototype_hash": "cbcc2a9487e877676e345e249166e57703786e921c7f82619bea6ad89c6bd2f7",
+      "manifest_hash": "085959477798407d",
+      "onnx_sha256": "7df8b54a79f3b286e7ac41f9883159ed367de63b00dc1b0d60a0bc2fe1909e59",
+      "onnx_max_abs_error": 7.152557373046875e-7,
+      "wav_null_peak": 4.172325134277344e-7,
+      "wav_null_depth_db": -130.75195294565216
+    },
+    "48k": {
+      "checkpoint": "data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt",
+      "checkpoint_sha256": "53912817b3bf72f6c4b4e716ce4a1e4a898e8e4c2f75ba7a9c0cce458afc8160",
+      "prototype_hash": "665d79f8f10038c33f768c5acfd2fd9e39c9060474a05d275cbc72bd46d0e9bc",
+      "manifest_hash": "6529deadaab177fe",
+      "onnx_sha256": "86d258d7564066f20feab2012ae71a6c77488f7c0e148d95b97d5f6151496b78",
+      "onnx_max_abs_error": 5.364418029785156e-7,
+      "wav_null_peak": 2.384185791015625e-7,
+      "wav_null_depth_db": -138.46530816003454
+    }
+  }
+}

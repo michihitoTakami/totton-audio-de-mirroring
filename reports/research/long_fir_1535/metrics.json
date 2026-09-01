@@ -1,0 +1,39 @@
+{
+  "status": "research_only",
+  "production_profile": "release_v4",
+  "candidate_profile": "long_sharp_1535_a120",
+  "fine_tuning_seeds": [1234, 2234, 3234],
+  "precision": "strict_fp32",
+  "families": {
+    "44k1": {
+      "prototype_hash": "39850f57640c2f2d7e219066b0405683485b8f7e4937509605f60a9d71fe8cb4",
+      "release_g3_image_peak_db": -112.3532825173554,
+      "candidate_g3_image_peak_db": -119.25,
+      "image_improvement_db": 6.896717482644604,
+      "release_g2b_mean_square": 1.0466284463216094e-7,
+      "candidate_g2b_mean_square": 4.958932004627499e-7,
+      "candidate_g2b_rms": 0.000704196845539798,
+      "square_plateau_rms": {
+        "100_hz_release": 5.260412545749931e-5,
+        "100_hz_candidate": 5.260412545749931e-5,
+        "500_hz_release": 5.2604421747090484e-5,
+        "500_hz_candidate": 5.2604421747090484e-5
+      }
+    },
+    "48k": {
+      "prototype_hash": "b7fc5a56edbcc63ce1516b4ea6e4d7a3aa93b2eb9cbc53776b20ad69a1e880f6",
+      "release_g3_image_peak_db": -112.40039908457832,
+      "candidate_g3_image_peak_db": -128.04,
+      "image_improvement_db": 15.639600915421667,
+      "release_g2b_mean_square": 1.3257725938360498e-8,
+      "candidate_g2b_mean_square": 7.912813104240691e-8,
+      "candidate_g2b_rms": 0.0002812972250747388,
+      "square_plateau_rms": {
+        "100_hz_release": 2.7023107998943263e-5,
+        "100_hz_candidate": 2.7021755006872906e-5,
+        "500_hz_release": 2.7023217883649767e-5,
+        "500_hz_candidate": 2.7023217883649767e-5
+      }
+    }
+  }
+}

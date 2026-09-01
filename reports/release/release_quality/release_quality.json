@@ -1,0 +1,63 @@
+{
+  "all_passed": true,
+  "distortion_tolerance_db": 1.0,
+  "transient_position_tolerance": 0.02,
+  "checks": [
+    {
+      "check_id": "44k1_frozen_gates",
+      "passed": true
+    },
+    {
+      "check_id": "48k_frozen_gates",
+      "passed": true
+    },
+    {
+      "check_id": "48k_thd_1khz_20khz_db",
+      "value": -139.99854794590752,
+      "threshold": -138.87695655110565,
+      "passed": true
+    },
+    {
+      "check_id": "48k_smpte_imd_db",
+      "value": -144.67076462763012,
+      "threshold": -124.60390726345202,
+      "passed": true
+    },
+    {
+      "check_id": "48k_ccif_imd_db",
+      "value": -142.73004037916894,
+      "threshold": -141.8257522488034,
+      "passed": true
+    },
+    {
+      "check_id": "48k_added_am_sideband_db",
+      "value": -157.78190016461292,
+      "threshold": -130.16144394138198,
+      "passed": true
+    },
+    {
+      "check_id": "48k_normalized_local_energy",
+      "value": 0.1697484250351667,
+      "threshold": 0.23466961341043566,
+      "passed": true
+    },
+    {
+      "check_id": "48k_normalized_peak",
+      "value": 0.23452324661849944,
+      "threshold": 0.2993065143384555,
+      "passed": true
+    },
+    {
+      "check_id": "48k_pre_echo_mean_square",
+      "value": 1.3257311628711564e-08,
+      "threshold": 1.0466381116001573e-07,
+      "passed": true
+    },
+    {
+      "check_id": "48k_impulse_train_gain_error_db",
+      "value": 0.399763812052282,
+      "threshold": 0.44590628837062474,
+      "passed": true
+    }
+  ]
+}

@@ -10,6 +10,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 from totton_audio_de_mirroring.inference.chunk_processor import (
     ChunkProcessingConfig,
@@ -20,8 +21,12 @@ from totton_audio_de_mirroring.inference.pipeline import (
     CAPBStage1Processor,
     ReferenceStage1Processor,
     Stage1Processor,
-    load_capb_stage1_processor,
 )
+from totton_audio_de_mirroring.models.capb import (
+    SUPPORTED_FIR_COMPUTE_DTYPES,
+    capb_candidate_from_checkpoint,
+)
+from totton_audio_de_mirroring.models.proto_bank import supported_prototype_profiles
 from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 
 _SOURCE_RATE = 44_100
@@ -29,6 +34,8 @@ _TARGET_RATE = 88_200
 _AMPLITUDE = 0.5
 _ECHO_GUARD_MS = 0.5
 _ECHO_WINDOW_MS = 3.5
+_FAR_ECHO_GUARD_MS = 4.0
+_FAR_ECHO_WINDOW_MS = 8.0
 _PRE_ECHO_RATIO_MAX = 1.44
 _PRE_ECHO_FLOOR_REL = 1.0e-3
 
@@ -41,6 +48,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--allow-tf32", action="store_true")
     parser.add_argument("--rate-family", choices=("44k1", "48k"), default="44k1")
+    parser.add_argument(
+        "--prototype-profile",
+        choices=supported_prototype_profiles(),
+        default=None,
+    )
+    parser.add_argument(
+        "--fir-compute-dtype",
+        choices=SUPPORTED_FIR_COMPUTE_DTYPES,
+        default="float32",
+    )
     return parser.parse_args()
 
 
@@ -102,6 +119,8 @@ def evaluate_robustness(
             "pre_echo_floor_rel": _PRE_ECHO_FLOOR_REL,
             "guard_ms": _ECHO_GUARD_MS,
             "window_ms": _ECHO_WINDOW_MS,
+            "far_guard_ms": _FAR_ECHO_GUARD_MS,
+            "far_window_ms": _FAR_ECHO_WINDOW_MS,
         },
     }
 
@@ -155,18 +174,43 @@ def _evaluate_offsets(
         center = event * 2
         after = _pre_echo_energy(candidate_output, center, target_rate)
         before = _pre_echo_energy(reference_output, center, target_rate)
+        far_after = _pre_echo_energy(
+            candidate_output,
+            center,
+            target_rate,
+            guard_ms=_FAR_ECHO_GUARD_MS,
+            window_ms=_FAR_ECHO_WINDOW_MS,
+        )
+        far_before = _pre_echo_energy(
+            reference_output,
+            center,
+            target_rate,
+            guard_ms=_FAR_ECHO_GUARD_MS,
+            window_ms=_FAR_ECHO_WINDOW_MS,
+        )
         threshold = max(
             _PRE_ECHO_RATIO_MAX * before,
             (_PRE_ECHO_FLOOR_REL * _AMPLITUDE) ** 2,
         )
+        far_threshold = max(
+            _PRE_ECHO_RATIO_MAX * far_before,
+            (_PRE_ECHO_FLOOR_REL * _AMPLITUDE) ** 2,
+        )
+        near_margin_db = _margin_db(after, threshold)
+        far_margin_db = _margin_db(far_after, far_threshold)
         rows.append(
             {
                 "offset_samples": offset,
                 "pre_echo_energy_before": before,
                 "pre_echo_energy_after": after,
                 "threshold": threshold,
-                "margin_db": 10.0 * np.log10(max(after, 1.0e-300) / threshold),
-                "passed": after <= threshold,
+                "margin_db": max(near_margin_db, far_margin_db),
+                "near_margin_db": near_margin_db,
+                "far_pre_echo_energy_before": far_before,
+                "far_pre_echo_energy_after": far_after,
+                "far_threshold": far_threshold,
+                "far_margin_db": far_margin_db,
+                "passed": after <= threshold and far_after <= far_threshold,
             }
         )
     worst = max(rows, key=lambda row: float(row["margin_db"]))
@@ -219,11 +263,32 @@ def _process_chunked(
     return np.concatenate(segments)[: signal.size * 2]
 
 
-def _pre_echo_energy(signal: np.ndarray, center: int, sample_rate: int) -> float:
-    guard = int(round(_ECHO_GUARD_MS * sample_rate / 1_000.0))
-    window = int(round(_ECHO_WINDOW_MS * sample_rate / 1_000.0))
+def _pre_echo_energy(
+    signal: np.ndarray,
+    center: int,
+    sample_rate: int,
+    *,
+    guard_ms: float = _ECHO_GUARD_MS,
+    window_ms: float = _ECHO_WINDOW_MS,
+) -> float:
+    """Measure mean-square pre-event energy in a physical time window."""
+    if signal.ndim != 1 or signal.size == 0:
+        raise ValueError("signal must be a non-empty 1D array.")
+    if sample_rate <= 0 or guard_ms < 0.0 or window_ms <= 0.0:
+        raise ValueError("Rate and echo-window values must be positive.")
+    guard = int(round(guard_ms * sample_rate / 1_000.0))
+    window = int(round(window_ms * sample_rate / 1_000.0))
+    if center - guard - window < 0 or center - guard > signal.size:
+        raise ValueError("signal does not contain the complete pre-echo window.")
     samples = signal[center - guard - window : center - guard]
     return float(np.mean(np.square(samples)))
+
+
+def _margin_db(value: float, threshold: float) -> float:
+    """Return a finite decibel margin relative to a positive threshold."""
+    if value < 0.0 or threshold <= 0.0:
+        raise ValueError("value must be non-negative and threshold positive.")
+    return float(10.0 * np.log10(max(value, 1.0e-300) / threshold))
 
 
 def _plot_report(result: dict[str, Any], output_path: Path) -> None:
@@ -257,7 +322,8 @@ def _render_markdown(result: dict[str, Any], checkpoint: Path) -> str:
 - Direct 64-phase worst: {direct["worst"]["margin_db"]:.2f} dB at offset {direct["worst"]["offset_samples"]}
 - OLA-boundary worst: {boundary["worst"]["margin_db"]:.2f} dB at offset {boundary["worst"]["offset_samples"]}
 
-Negative margin is below the unchanged G2b threshold.
+Negative margin is below the unchanged G2b threshold. Each offset must pass
+both the canonical 0.5--4 ms window and the supplemental 4--12 ms tail window.
 """
 
 
@@ -267,11 +333,16 @@ def main() -> None:
     precision = configure_torch_precision(args.device, allow_tf32=args.allow_tf32)
     source_rate = 44_100 if args.rate_family == "44k1" else 48_000
     target_rate = source_rate * 2
-    capb = load_capb_stage1_processor(
-        checkpoint_path=args.checkpoint, device=args.device
+    capb = _load_candidate(
+        args.checkpoint, args.device, args.prototype_profile, args.fir_compute_dtype
     )
     result = evaluate_robustness(capb, source_rate, target_rate)
     result["execution"] = precision.to_dict()
+    result["candidate_identity"] = {
+        "prototype_profile": getattr(capb.model, "prototype_profile", "unknown"),
+        "prototype_hash": getattr(capb.model, "prototype_hash", "unknown"),
+        "fir_compute_dtype": getattr(capb.model, "fir_compute_dtype", "unknown"),
+    }
     try:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "robustness.json").write_text(
@@ -286,6 +357,59 @@ def main() -> None:
     print(_render_markdown(result, args.checkpoint))
     if not result["all_passed"]:
         raise SystemExit(1)
+
+
+def _load_candidate(
+    checkpoint_path: Path,
+    device: str,
+    prototype_profile: str | None,
+    fir_compute_dtype: str,
+) -> CAPBStage1Processor:
+    """Load a release checkpoint or a controller-only FIR candidate.
+
+    Args:
+        checkpoint_path: Controller checkpoint to load.
+        device: Torch execution device.
+        prototype_profile: Optional explicit experimental FIR profile.
+        fir_compute_dtype: Fixed-FIR arithmetic dtype for an experiment.
+
+    Returns:
+        Stage 1 processor containing the requested model.
+
+    Raises:
+        FileNotFoundError: If the checkpoint does not exist.
+        RuntimeError: If checkpoint I/O or deserialization fails.
+
+    Physical Basis:
+        Keeping controller weights fixed while replacing only the named FIR
+        bank exposes phase-offset and OLA-tail effects attributable to taps.
+    """
+    from totton_audio_de_mirroring.inference.pipeline import (
+        load_capb_stage1_processor,
+    )
+
+    if prototype_profile is None:
+        return load_capb_stage1_processor(
+            checkpoint_path=checkpoint_path,
+            device=device,
+        )
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    try:
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            weights_only=False,
+        )
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError(f"Failed to load checkpoint: {error}") from error
+    model = capb_candidate_from_checkpoint(
+        checkpoint,
+        prototype_profile=prototype_profile,
+        fir_compute_dtype=fir_compute_dtype,
+    )
+    torch_device = torch.device(device)
+    return CAPBStage1Processor(model=model.to(torch_device), device=torch_device)
 
 
 if __name__ == "__main__":

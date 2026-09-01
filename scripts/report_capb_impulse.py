@@ -13,11 +13,16 @@ import numpy as np
 import torch
 
 from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
-from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
+from totton_audio_de_mirroring.models.capb import (
+    CAPB,
+    SUPPORTED_FIR_COMPUTE_DTYPES,
+    capb_candidate_from_checkpoint,
+    capb_from_checkpoint,
+)
 from totton_audio_de_mirroring.models.proto_bank import (
     PrototypeBank,
-    build_prototype_bank,
-    prototype_specs_for_target_rate,
+    build_prototype_bank_for_profile,
+    supported_prototype_profiles,
     upsample_with_kernel,
 )
 from totton_audio_de_mirroring.torch_precision import configure_torch_precision
@@ -56,10 +61,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--allow-tf32", action="store_true")
+    parser.add_argument(
+        "--prototype-profile",
+        choices=supported_prototype_profiles(),
+        default=None,
+    )
+    parser.add_argument(
+        "--fir-compute-dtype",
+        choices=SUPPORTED_FIR_COMPUTE_DTYPES,
+        default="float32",
+    )
     return parser.parse_args()
 
 
-def _load_model(case: RateCase, device: str) -> tuple[CAPB, PrototypeBank]:
+def _load_model(
+    case: RateCase,
+    device: str,
+    prototype_profile: str | None = None,
+    fir_compute_dtype: str = "float32",
+) -> tuple[CAPB, PrototypeBank]:
     """Load a rate-validated controller and its fixed prototype bank."""
     if not case.checkpoint.is_file():
         raise FileNotFoundError(f"CAPB checkpoint not found: {case.checkpoint}")
@@ -72,10 +92,20 @@ def _load_model(case: RateCase, device: str) -> tuple[CAPB, PrototypeBank]:
         raise ValueError(
             f"Checkpoint expects {expected_rate} Hz, not {case.source_rate} Hz."
         )
-    model = capb_from_checkpoint(state).to(torch.device(device)).eval()
-    bank = build_prototype_bank(
-        prototype_specs_for_target_rate(case.target_rate), case.target_rate
+    model = (
+        (
+            capb_candidate_from_checkpoint(
+                state,
+                prototype_profile=prototype_profile,
+                fir_compute_dtype=fir_compute_dtype,
+            )
+            if prototype_profile is not None
+            else capb_from_checkpoint(state)
+        )
+        .to(torch.device(device))
+        .eval()
     )
+    bank = build_prototype_bank_for_profile(case.target_rate, model.prototype_profile)
     return model, bank
 
 
@@ -188,6 +218,44 @@ def _plot(
     plt.close(figure)
 
 
+def _plot_long_tail(
+    case: RateCase,
+    outputs: dict[str, np.ndarray],
+    center: int,
+    output_path: Path,
+) -> None:
+    """Plot absolute impulse tails through 12 ms on a logarithmic scale.
+
+    Physical Basis:
+        The existing linear ±4 ms view covers G2b but clips the support of
+        1535/2047-tap filters. A log-amplitude ±12 ms view exposes low-level
+        pre/post-ringing without replacing the authoritative energy gate.
+    """
+    radius = round(0.012 * case.target_rate)
+    sample_slice = slice(center - radius, center + radius + 1)
+    time_ms = (
+        (np.arange(center - radius, center + radius + 1) - center)
+        / case.target_rate
+        * 1_000.0
+    )
+    figure, axis = plt.subplots(figsize=(11, 5), layout="constrained")
+    for name in ("bessel", "sharp", "gentle", "capb"):
+        magnitude = np.maximum(np.abs(outputs[name][sample_slice]), 1.0e-12)
+        axis.semilogy(time_ms, magnitude, label=name)
+    axis.axvspan(-4.0, -0.5, color="gray", alpha=0.12, label="G2b")
+    axis.axvspan(-12.0, -4.0, color="tab:purple", alpha=0.08, label="far tail")
+    axis.set(
+        title=f"{case.label}: absolute impulse tails",
+        xlabel="time from impulse (ms)",
+        ylabel="absolute amplitude",
+        ylim=(1.0e-10, 1.0),
+    )
+    axis.grid(alpha=0.25, which="both")
+    axis.legend(ncol=3)
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 def source_duration_ms(case: RateCase, output_samples: int) -> float:
     """Convert target-rate samples to milliseconds."""
     return output_samples / case.target_rate * 1_000.0
@@ -211,6 +279,8 @@ def _render_markdown(summary: dict[str, Any]) -> str:
                 "",
                 f"![{label} impulse response]({label}/impulse_response.png)",
                 "",
+                f"![{label} long impulse tail]({label}/impulse_long_tail.png)",
+                "",
             ]
         )
     return "\n".join(lines)
@@ -230,11 +300,25 @@ def main() -> None:
         for case in cases:
             output_dir = args.output_dir / case.label
             output_dir.mkdir(parents=True, exist_ok=True)
-            model, bank = _load_model(case, args.device)
+            model, bank = _load_model(
+                case,
+                args.device,
+                args.prototype_profile,
+                args.fir_compute_dtype,
+            )
             outputs, weights, center = _run_impulse(case, model, bank)
             _plot(case, outputs, weights, center, output_dir / "impulse_response.png")
+            _plot_long_tail(
+                case,
+                outputs,
+                center,
+                output_dir / "impulse_long_tail.png",
+            )
             summary[case.label] = {
                 "checkpoint": str(case.checkpoint),
+                "prototype_profile": model.prototype_profile,
+                "prototype_hash": model.prototype_hash,
+                "fir_compute_dtype": model.fir_compute_dtype,
                 "source_sample_rate": case.source_rate,
                 "metrics": _metrics(outputs, center, case.target_rate),
             }

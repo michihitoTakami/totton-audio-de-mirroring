@@ -79,6 +79,7 @@ def compute_capb_losses(
     prototype_outputs: torch.Tensor | None = None,
     stationary: torch.Tensor | None = None,
     pre_echo_mask: torch.Tensor | None = None,
+    far_pre_echo_mask: torch.Tensor | None = None,
     focused_transient: torch.Tensor | None = None,
     sharp_index: int = 0,
     gentle_index: int = -1,
@@ -101,6 +102,8 @@ def compute_capb_losses(
         prototype_outputs: Fixed prototype outputs, shaped (batch, K, time).
         stationary: Boolean batch flags selecting stationary signals.
         pre_echo_mask: Gate-aligned mask immediately before focused events.
+        far_pre_echo_mask: Supplemental 4--12 ms pre-event mask for long FIR
+            tails. It uses the same excess-energy coefficient as G2b.
         focused_transient: Boolean batch flags selecting focused click and
             tone-burst examples governed by the continuous pre-echo loss.
         sharp_index: Prototype index used for stationary non-edge frames.
@@ -170,10 +173,23 @@ def compute_capb_losses(
         )
     else:
         losses["pre_echo_excess"] = output.new_zeros(())
+    if far_pre_echo_mask is not None:
+        if far_pre_echo_mask.shape != output.shape:
+            raise ValueError("far_pre_echo_mask must share the output shape.")
+        if gentle_output is not None:
+            losses["pre_echo_excess"] = losses[
+                "pre_echo_excess"
+            ] + pre_echo_excess_loss(
+                out,
+                gentle_output[:, sl],
+                far_pre_echo_mask[:, sl],
+            )
     if edge_mask is not None and stationary is not None:
         routing_mask = edge_mask
         if pre_echo_mask is not None:
             routing_mask = torch.maximum(routing_mask, pre_echo_mask)
+        if far_pre_echo_mask is not None:
+            routing_mask = torch.maximum(routing_mask, far_pre_echo_mask)
         losses["prototype_routing"] = prototype_routing_loss(
             weights_frames,
             routing_mask,

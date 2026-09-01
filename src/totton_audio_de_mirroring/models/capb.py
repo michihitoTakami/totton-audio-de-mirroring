@@ -11,7 +11,7 @@ system is time-varying and can create modulation sidebands unless constrained.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -20,9 +20,10 @@ from torch import nn
 
 from totton_audio_de_mirroring.models.proto_bank import (
     DEFAULT_PROTOTYPE_SPECS,
+    RELEASE_PROTOTYPE_PROFILE,
     PrototypeBank,
     build_prototype_bank,
-    prototype_specs_for_target_rate,
+    build_prototype_bank_for_profile,
 )
 
 DEFAULT_TARGET_SAMPLE_RATE = 88_200
@@ -32,6 +33,8 @@ DEFAULT_INIT_WEIGHTS = (0.85, 0.10, 0.05)
 _CONTROLLER_CHANNELS = (24, 32, 40, 48, 48)
 _CONTROLLER_STRIDES = (2, 2, 2, 2, 4)
 _CONTROLLER_KERNEL = 9
+FIRComputeDType = Literal["float32", "float64"]
+SUPPORTED_FIR_COMPUTE_DTYPES: tuple[FIRComputeDType, ...] = ("float32", "float64")
 
 
 class CAPBController(nn.Module):
@@ -114,6 +117,7 @@ class CAPB(nn.Module):
     Args:
         bank: Prototype bank (defaults to the validated Phase 0 bank).
         init_weights: Initial blend distribution.
+        fir_compute_dtype: Arithmetic dtype for the fixed FIR path.
 
     Physical Basis:
         With convex weights over gain-matched linear-phase kernels, the
@@ -127,19 +131,29 @@ class CAPB(nn.Module):
         self,
         bank: PrototypeBank | None = None,
         init_weights: tuple[float, ...] = DEFAULT_INIT_WEIGHTS,
+        fir_compute_dtype: FIRComputeDType = "float32",
     ) -> None:
         super().__init__()
         if bank is None:
             bank = build_prototype_bank(DEFAULT_PROTOTYPE_SPECS)
+        if fir_compute_dtype not in SUPPORTED_FIR_COMPUTE_DTYPES:
+            raise ValueError(
+                "fir_compute_dtype must be 'float32' or 'float64', got "
+                f"{fir_compute_dtype!r}."
+            )
         self.upsample_ratio = bank.upsample_ratio
         self.num_prototypes = len(bank.names)
         self.prototype_names = bank.names
         self.kernel_size = int(bank.kernels.shape[1])
         self.control_stride = DEFAULT_CONTROL_STRIDE
+        self.prototype_profile = bank.profile_name
+        self.prototype_hash = bank.coefficient_hash
+        self.fir_compute_dtype = fir_compute_dtype
 
-        kernels = torch.from_numpy(
-            np.ascontiguousarray(bank.kernels, dtype=np.float64)
-        ).to(torch.float32)
+        kernel_dtype = (
+            torch.float32 if fir_compute_dtype == "float32" else torch.float64
+        )
+        kernels = torch.from_numpy(np.ascontiguousarray(bank.kernels)).to(kernel_dtype)
         self.register_buffer("kernels", kernels.unsqueeze(1))
 
         self.controller = CAPBController(self.num_prototypes, init_weights)
@@ -165,8 +179,10 @@ class CAPB(nn.Module):
             raise ValueError("source must be a non-empty (batch, time) tensor.")
 
         prototype_outputs = self._prototype_outputs(source)
-        peak = source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
-        logits = self.controller(source / peak)
+        controller_dtype = self.controller.head.weight.dtype
+        controller_source = source.to(dtype=controller_dtype)
+        peak = controller_source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
+        logits = self.controller(controller_source / peak)
         weights = torch.softmax(logits, dim=1)
         weights_up = F.interpolate(
             weights,
@@ -174,7 +190,9 @@ class CAPB(nn.Module):
             mode="linear",
             align_corners=False,
         )
-        output = (weights_up * prototype_outputs).sum(dim=1)
+        output = (weights_up.to(dtype=prototype_outputs.dtype) * prototype_outputs).sum(
+            dim=1
+        )
         return output, weights, prototype_outputs
 
     def forward(
@@ -219,9 +237,10 @@ class CAPB(nn.Module):
             the zero-stuffed timeline (constant group delay compensated).
         """
         batch, time = source.shape
-        stuffed = source.new_zeros(batch, 1, time * self.upsample_ratio)
-        stuffed[:, 0, :: self.upsample_ratio] = source
         kernels = torch.as_tensor(self.kernels)
+        fir_source = source.to(dtype=kernels.dtype)
+        stuffed = fir_source.new_zeros(batch, 1, time * self.upsample_ratio)
+        stuffed[:, 0, :: self.upsample_ratio] = fir_source
         return F.conv1d(stuffed, kernels, padding=self.kernel_size // 2)
 
     def mean_weights(self, source: torch.Tensor) -> torch.Tensor:
@@ -258,9 +277,9 @@ def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
     """
     target_rate = int(checkpoint.get("target_sample_rate", DEFAULT_TARGET_SAMPLE_RATE))
     expected_input_rate = checkpoint.get("expected_input_rate")
-    bank = build_prototype_bank(
-        prototype_specs_for_target_rate(target_rate), sample_rate=target_rate
-    )
+    profile_name = str(checkpoint.get("prototype_profile", RELEASE_PROTOTYPE_PROFILE))
+    fir_compute_dtype = _checkpoint_fir_dtype(checkpoint)
+    bank = build_prototype_bank_for_profile(target_rate, profile_name)
     if (
         expected_input_rate is not None
         and int(expected_input_rate) * bank.upsample_ratio != target_rate
@@ -269,10 +288,92 @@ def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
             f"Checkpoint expected_input_rate {expected_input_rate} Hz is "
             f"inconsistent with target_sample_rate {target_rate} Hz."
         )
-    model = CAPB(bank=bank)
+    expected_hash = checkpoint.get("prototype_hash")
+    if expected_hash is not None and str(expected_hash) != bank.coefficient_hash:
+        raise ValueError(
+            "Checkpoint prototype_hash does not match the reconstructed "
+            f"'{profile_name}' bank."
+        )
+    model = CAPB(bank=bank, fir_compute_dtype=fir_compute_dtype)
     model_state = checkpoint.get("model_state")
     if not isinstance(model_state, dict):
         raise RuntimeError("Invalid checkpoint: model_state is missing.")
-    model.load_state_dict(model_state)
+    if "prototype_profile" in checkpoint:
+        _load_profiled_model_state(model, model_state)
+    else:
+        model.load_state_dict(model_state)
     model.eval()
     return model
+
+
+def capb_candidate_from_checkpoint(
+    checkpoint: dict[str, Any],
+    *,
+    prototype_profile: str,
+    fir_compute_dtype: FIRComputeDType = "float32",
+) -> CAPB:
+    """Pair an existing controller with an experimental prototype profile.
+
+    Args:
+        checkpoint: Source checkpoint containing validated controller weights.
+        prototype_profile: Explicit experimental prototype profile.
+        fir_compute_dtype: Arithmetic dtype for fixed FIR convolution.
+
+    Returns:
+        Evaluation-only CAPB candidate in eval mode.
+
+    Physical Basis:
+        Controller-only transfer isolates the acoustic effect of changing the
+        fixed prototype bank. Saved kernel buffers must not overwrite the
+        named experimental coefficients.
+    """
+    target_rate = int(checkpoint.get("target_sample_rate", DEFAULT_TARGET_SAMPLE_RATE))
+    bank = build_prototype_bank_for_profile(target_rate, prototype_profile)
+    expected_input_rate = checkpoint.get("expected_input_rate")
+    if (
+        expected_input_rate is not None
+        and int(expected_input_rate) * bank.upsample_ratio != target_rate
+    ):
+        raise ValueError(
+            f"Checkpoint expected_input_rate {expected_input_rate} Hz is "
+            f"inconsistent with target_sample_rate {target_rate} Hz."
+        )
+    model = CAPB(bank=bank, fir_compute_dtype=fir_compute_dtype)
+    model_state = checkpoint.get("model_state")
+    if not isinstance(model_state, dict):
+        raise RuntimeError("Invalid checkpoint: model_state is missing.")
+    _load_controller_state(model, model_state)
+    model.eval()
+    return model
+
+
+def _checkpoint_fir_dtype(checkpoint: dict[str, Any]) -> FIRComputeDType:
+    value = str(checkpoint.get("fir_compute_dtype", "float32"))
+    if value not in SUPPORTED_FIR_COMPUTE_DTYPES:
+        raise ValueError(f"Unsupported checkpoint fir_compute_dtype: {value!r}.")
+    return cast(FIRComputeDType, value)
+
+
+def _load_profiled_model_state(model: CAPB, model_state: dict[str, Any]) -> None:
+    state_without_kernels = {
+        name: value for name, value in model_state.items() if name != "kernels"
+    }
+    incompatible = model.load_state_dict(state_without_kernels, strict=False)
+    if incompatible.missing_keys != ["kernels"] or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "Invalid profiled checkpoint model_state: "
+            f"missing={incompatible.missing_keys}, "
+            f"unexpected={incompatible.unexpected_keys}."
+        )
+
+
+def _load_controller_state(model: CAPB, model_state: dict[str, Any]) -> None:
+    prefix = "controller."
+    controller_state = {
+        name.removeprefix(prefix): value
+        for name, value in model_state.items()
+        if name.startswith(prefix)
+    }
+    if not controller_state:
+        raise RuntimeError("Checkpoint contains no controller state.")
+    model.controller.load_state_dict(controller_state)

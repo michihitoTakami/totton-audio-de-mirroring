@@ -35,6 +35,9 @@ DEFAULT_TOLERANCE = 1.0e-4
 DEFAULT_VERIFY_LENGTHS = (4_096, 22_050, 48_000)
 METADATA_KEY_EXPECTED_INPUT_RATE = "expected_input_rate"
 METADATA_KEY_CUDA_PRECISION = "cuda_compute_precision"
+METADATA_KEY_PROTOTYPE_PROFILE = "prototype_profile"
+METADATA_KEY_PROTOTYPE_HASH = "prototype_hash"
+METADATA_KEY_FIR_COMPUTE_DTYPE = "fir_compute_dtype"
 
 
 def main() -> None:
@@ -45,7 +48,7 @@ def main() -> None:
 
     expected_input_rate = _resolve_expected_input_rate(checkpoint)
     _export_onnx(model, args.output, args.opset_version)
-    _write_metadata(args.output, expected_input_rate)
+    _write_metadata(args.output, expected_input_rate, model)
     _check_model(args.output)
     max_error = _verify_parity(
         model, args.output, tuple(args.verify_lengths), args.tolerance, args.seed
@@ -56,6 +59,9 @@ def main() -> None:
         "output": str(args.output),
         "opset_version": args.opset_version,
         "expected_input_rate": expected_input_rate,
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "fir_compute_dtype": model.fir_compute_dtype,
         "verify_lengths": list(args.verify_lengths),
         "max_abs_error": max_error,
         "tolerance": args.tolerance,
@@ -135,8 +141,8 @@ def _export_onnx(model: CAPB, output: Path, opset_version: int) -> None:
     )
 
 
-def _write_metadata(output: Path, expected_input_rate: int) -> None:
-    """Embed the expected input rate as ONNX custom metadata."""
+def _write_metadata(output: Path, expected_input_rate: int, model: CAPB) -> None:
+    """Embed rate, prototype identity, and FIR precision as metadata."""
     try:
         import onnx  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -144,20 +150,34 @@ def _write_metadata(output: Path, expected_input_rate: int) -> None:
             "Failed to import onnx. Run via 'uv run --with onnx ...'."
         ) from exc
 
-    model = onnx.load(str(output))
-    metadata = {entry.key: entry.value for entry in model.metadata_props}
-    metadata.update(
-        {
-            METADATA_KEY_EXPECTED_INPUT_RATE: str(expected_input_rate),
-            METADATA_KEY_CUDA_PRECISION: "strict_fp32",
-        }
-    )
-    del model.metadata_props[:]
+    onnx_model = onnx.load(str(output))
+    metadata = {entry.key: entry.value for entry in onnx_model.metadata_props}
+    metadata.update(_capb_metadata(expected_input_rate, model))
+    del onnx_model.metadata_props[:]
     for key, value in metadata.items():
-        entry = model.metadata_props.add()
+        entry = onnx_model.metadata_props.add()
         entry.key = key
         entry.value = value
-    onnx.save(model, str(output))
+    onnx.save(onnx_model, str(output))
+
+
+def _capb_metadata(expected_input_rate: int, model: CAPB) -> dict[str, str]:
+    """Return the custom metadata required by the waveform contract.
+
+    Physical Basis:
+        Rate, FIR identity, and strict arithmetic mode bind the exported graph
+        to the exact validated prototype bank and prevent silent cross-family
+        or reduced-precision substitution downstream.
+    """
+    if expected_input_rate <= 0:
+        raise ValueError("expected_input_rate must be positive.")
+    return {
+        METADATA_KEY_EXPECTED_INPUT_RATE: str(expected_input_rate),
+        METADATA_KEY_CUDA_PRECISION: "strict_fp32",
+        METADATA_KEY_PROTOTYPE_PROFILE: model.prototype_profile,
+        METADATA_KEY_PROTOTYPE_HASH: model.prototype_hash,
+        METADATA_KEY_FIR_COMPUTE_DTYPE: model.fir_compute_dtype,
+    }
 
 
 def _check_model(output: Path) -> None:
