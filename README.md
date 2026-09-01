@@ -231,7 +231,7 @@ uv run python scripts/train_capb.py \
 
 長尺化は自動的な高音質化ではありません。固定FIRのFP32累積誤差は演算床を分離する診断値であり、それだけで採否を決めません。採用には両rate familyの全probe、controller 64位相、Hann-OLA境界64 offset、近距離・長距離echoを通過したうえで、worst image leakageをrelease比0.5 dB以上改善することを要求します。image差が0.5 dB未満ならG2b、G9、歪み、短いtap数の順で決め、どれも満たさなければrelease bankを維持します。
 
-2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。イメージ抑制は改善したもののhard gateを満たさないため、採用品は`release_v4`のままです。比較表と既存形式の図は`reports/release/`に集約しています。
+2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。イメージ抑制は改善したもののhard gateを満たさないため、採用品は`release_v4`のままです。正式な受入証跡は`reports/release/`、checkpointを含まない1535-tap研究比較は`reports/research/long_fir_1535/`にあります。
 
 ### 学習済み成果物
 
@@ -277,7 +277,7 @@ uv run python scripts/evaluate_capb_transient_robustness.py \
 - 不要な高域成分: Bessel基準に対する増加を制限する
 - SMPTE/held-out two-tone: controller変調によるsidebandを`-110 dBc`以下にする
 
-レポートは指定した`--report-dir`以下の`gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。採用品の固定release evidenceだけを`reports/release/`へ保存します。
+レポートは指定した`--report-dir`以下の`gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。採用品の固定release evidenceは`reports/release/`へ保存し、不採用候補を残す場合はcheckpointを含まない研究資料として`reports/research/`へ分離します。
 
 固定prototypeだけを検証する場合:
 
