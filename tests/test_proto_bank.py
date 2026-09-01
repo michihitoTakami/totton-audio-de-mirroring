@@ -8,14 +8,17 @@ from totton_audio_de_mirroring.models.proto_bank import (
     DEFAULT_PROTOTYPE_SPECS,
     PROTOTYPE_SPECS_44K1,
     PROTOTYPE_SPECS_48K,
+    RELEASE_PROTOTYPE_PROFILE,
     BesselMagnitudePrototypeSpec,
     KaiserPrototypeSpec,
     blend_modulation_bounds,
     build_prototype_bank,
+    build_prototype_bank_for_profile,
     design_bessel_magnitude_prototype,
     design_kaiser_prototype,
     prototype_specs_for_target_rate,
     summarize_bank,
+    supported_prototype_profiles,
     upsample_with_kernel,
     validate_bank,
 )
@@ -130,6 +133,10 @@ def test_kaiser_spec_validation() -> None:
         design_kaiser_prototype(KaiserPrototypeSpec("bad", 23_000.0, 22_000.0, 80.0))
     with pytest.raises(ValueError, match="Nyquist"):
         design_kaiser_prototype(KaiserPrototypeSpec("bad", 40_000.0, 45_000.0, 80.0))
+    with pytest.raises(ValueError, match="positive odd"):
+        design_kaiser_prototype(
+            KaiserPrototypeSpec("bad", 19_000.0, 23_000.0, 80.0, num_taps=1024)
+        )
 
 
 def test_bessel_spec_validation() -> None:
@@ -161,6 +168,39 @@ def test_default_specs_are_44k1_preset() -> None:
 def test_unsupported_target_rate_raises() -> None:
     with pytest.raises(ValueError, match="No prototype preset"):
         prototype_specs_for_target_rate(192_000)
+
+
+@pytest.mark.parametrize(
+    "profile,length",
+    [
+        ("long_sharp_1023_a120", 1023),
+        ("long_sharp_1535_a120", 1535),
+        ("long_sharp_2047_a120", 2047),
+        ("long_sharp_2047_a140", 2047),
+    ],
+)
+def test_long_fir_profiles_share_requested_length(profile: str, length: int) -> None:
+    bank = build_prototype_bank_for_profile(TARGET_SR, profile)
+    assert bank.kernels.shape == (3, length)
+    assert bank.group_delay_samples == (length - 1) // 2
+    assert bank.profile_name == profile
+    assert len(bank.coefficient_hash) == 64
+
+
+def test_long_fir_profiles_preserve_mid_and_gentle_responses() -> None:
+    release = build_prototype_bank_for_profile(TARGET_SR, RELEASE_PROTOTYPE_PROFILE)
+    candidate = build_prototype_bank_for_profile(TARGET_SR, "long_sharp_2047_a120")
+    for name in ("mid", "gentle"):
+        release_kernel = release.kernels[release.names.index(name)]
+        candidate_kernel = candidate.kernels[candidate.names.index(name)]
+        pad = (candidate_kernel.size - release_kernel.size) // 2
+        np.testing.assert_array_equal(
+            candidate_kernel, np.pad(release_kernel, (pad, pad))
+        )
+
+
+def test_supported_profiles_include_release_default() -> None:
+    assert supported_prototype_profiles()[0] == RELEASE_PROTOTYPE_PROFILE
 
 
 @pytest.fixture(scope="module")

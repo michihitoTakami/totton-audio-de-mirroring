@@ -43,6 +43,8 @@ def test_offset_evaluator_passes_reference_against_itself() -> None:
     )
     assert result["all_passed"]
     assert len(result["rows"]) == 2
+    assert all("far_pre_echo_energy_after" in row for row in result["rows"])
+    assert all("far_margin_db" in row for row in result["rows"])
 
 
 def test_offset_evaluator_supports_48k_family() -> None:

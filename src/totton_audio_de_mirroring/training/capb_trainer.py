@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 import yaml  # type: ignore[import-untyped]
@@ -20,10 +20,17 @@ from totton_audio_de_mirroring.data.capb_dataset import (
     CAPBDataConfig,
     CAPBUpsampleDataset,
 )
-from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
+from totton_audio_de_mirroring.models.capb import (
+    CAPB,
+    SUPPORTED_FIR_COMPUTE_DTYPES,
+    FIRComputeDType,
+    capb_candidate_from_checkpoint,
+    capb_from_checkpoint,
+)
 from totton_audio_de_mirroring.models.proto_bank import (
-    build_prototype_bank,
-    prototype_specs_for_target_rate,
+    RELEASE_PROTOTYPE_PROFILE,
+    build_prototype_bank_for_profile,
+    supported_prototype_profiles,
 )
 from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 from totton_audio_de_mirroring.training.capb_losses import (
@@ -56,8 +63,12 @@ class CAPBTrainingConfig:
         seed: Torch RNG seed.
         allow_tf32: Permit reduced-mantissa CUDA TF32 execution.
         deterministic: Require deterministic Torch algorithms.
+        prototype_profile: Fixed FIR prototype design profile.
+        fir_compute_dtype: Arithmetic dtype for the fixed FIR path.
         initial_head_scale: Multiplicative scale applied once to loaded
             controller-head weights before fine-tuning.
+        initial_controller_only: Transfer only controller weights into the
+            configured prototype profile.
         loss_weights: Composite loss weights.
         border_trim: Samples excluded at chunk borders in the losses.
         checkpoint_dir: Directory for checkpoints.
@@ -82,7 +93,10 @@ class CAPBTrainingConfig:
     seed: int = 1234
     allow_tf32: bool = False
     deterministic: bool = False
+    prototype_profile: str = RELEASE_PROTOTYPE_PROFILE
+    fir_compute_dtype: FIRComputeDType = "float32"
     initial_head_scale: float = 1.0
+    initial_controller_only: bool = False
     loss_weights: CAPBLossWeights = field(default_factory=CAPBLossWeights)
     border_trim: int = 512
     checkpoint_dir: Path = Path("data/checkpoints/capb")
@@ -127,6 +141,12 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
     initial_head_scale = float(raw.get("initial_head_scale", 1.0))
     if not 0.0 < initial_head_scale <= 1.0:
         raise ValueError("initial_head_scale must satisfy 0 < scale <= 1.")
+    prototype_profile = str(raw.get("prototype_profile", RELEASE_PROTOTYPE_PROFILE))
+    if prototype_profile not in supported_prototype_profiles():
+        raise ValueError(f"Unknown prototype_profile: {prototype_profile!r}.")
+    fir_compute_dtype = str(raw.get("fir_compute_dtype", "float32"))
+    if fir_compute_dtype not in SUPPORTED_FIR_COMPUTE_DTYPES:
+        raise ValueError(f"Unknown fir_compute_dtype: {fir_compute_dtype!r}.")
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
         batch_size=int(raw.get("batch_size", 16)),
@@ -139,7 +159,10 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         seed=int(raw.get("seed", 1234)),
         allow_tf32=bool(raw.get("allow_tf32", False)),
         deterministic=bool(raw.get("deterministic", False)),
+        prototype_profile=prototype_profile,
+        fir_compute_dtype=cast(FIRComputeDType, fir_compute_dtype),
         initial_head_scale=initial_head_scale,
+        initial_controller_only=bool(raw.get("initial_controller_only", False)),
         loss_weights=loss_weights,
         border_trim=int(raw.get("border_trim", 512)),
         checkpoint_dir=Path(raw.get("checkpoint_dir", "data/checkpoints/capb")),
@@ -211,11 +234,11 @@ def train_capb(
     if model is None and training_config.initial_checkpoint is not None:
         model = _load_initial_checkpoint(training_config, data_config)
     if model is None:
-        bank = build_prototype_bank(
-            prototype_specs_for_target_rate(data_config.target_sample_rate),
-            sample_rate=data_config.target_sample_rate,
+        bank = build_prototype_bank_for_profile(
+            data_config.target_sample_rate,
+            training_config.prototype_profile,
         )
-        model = CAPB(bank=bank)
+        model = CAPB(bank=bank, fir_compute_dtype=training_config.fir_compute_dtype)
     _scale_controller_head(model, training_config.initial_head_scale)
     model = model.to(device)
     optimizer = torch.optim.AdamW(
@@ -338,7 +361,27 @@ def _load_initial_checkpoint(
     if not path.is_file():
         raise FileNotFoundError(f"Initial checkpoint not found: {path}")
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    model = capb_from_checkpoint(checkpoint)
+    model = (
+        capb_candidate_from_checkpoint(
+            checkpoint,
+            prototype_profile=training_config.prototype_profile,
+            fir_compute_dtype=training_config.fir_compute_dtype,
+        )
+        if training_config.initial_controller_only
+        else capb_from_checkpoint(checkpoint)
+    )
+    if model.prototype_profile != training_config.prototype_profile:
+        raise ValueError(
+            "Initial checkpoint prototype profile "
+            f"{model.prototype_profile!r} does not match training profile "
+            f"{training_config.prototype_profile!r}."
+        )
+    if model.fir_compute_dtype != training_config.fir_compute_dtype:
+        raise ValueError(
+            "Initial checkpoint FIR dtype "
+            f"{model.fir_compute_dtype!r} does not match training dtype "
+            f"{training_config.fir_compute_dtype!r}."
+        )
     target_sample_rate = int(checkpoint.get("target_sample_rate", 88_200))
     if target_sample_rate != data_config.target_sample_rate:
         raise ValueError(
@@ -380,6 +423,7 @@ def _run_epoch(
         quiet_mask = batch["quiet_mask"].to(device)
         edge_mask = batch["edge_mask"].to(device)
         pre_echo_mask = batch["pre_echo_mask"].to(device)
+        far_pre_echo_mask = batch["far_pre_echo_mask"].to(device)
         stationary = batch["stationary"].to(device)
         focused_transient = batch["focused_event"].to(device)
 
@@ -402,6 +446,7 @@ def _run_epoch(
                 prototype_outputs=prototypes,
                 stationary=stationary,
                 pre_echo_mask=pre_echo_mask,
+                far_pre_echo_mask=far_pre_echo_mask,
                 focused_transient=focused_transient,
                 sharp_index=model.prototype_names.index("sharp"),
                 gentle_index=model.prototype_names.index("gentle"),
@@ -443,6 +488,9 @@ def _save_checkpoint(
         {
             "model_state": model.state_dict(),
             "prototype_names": list(model.prototype_names),
+            "prototype_profile": model.prototype_profile,
+            "prototype_hash": model.prototype_hash,
+            "fir_compute_dtype": model.fir_compute_dtype,
             "expected_input_rate": data_config.source_sample_rate,
             "target_sample_rate": data_config.target_sample_rate,
             "training_config": {
@@ -457,7 +505,10 @@ def _save_checkpoint(
                 "checkpoint_interval_epochs": config.checkpoint_interval_epochs,
                 "allow_tf32": config.allow_tf32,
                 "deterministic": config.deterministic,
+                "prototype_profile": config.prototype_profile,
+                "fir_compute_dtype": config.fir_compute_dtype,
                 "initial_head_scale": config.initial_head_scale,
+                "initial_controller_only": config.initial_controller_only,
             },
             "data_config": asdict(data_config),
             "record": record,

@@ -19,6 +19,9 @@ class TransientSupervisionConfig:
         context_ms: Context retained on both sides of the event.
         pre_echo_guard_ms: Gap before the measured pre-echo window.
         pre_echo_window_ms: Duration of the measured pre-echo window.
+        far_pre_echo_guard_ms: Gap before the supplemental far-tail window.
+        far_pre_echo_window_ms: Duration of the supplemental far-tail window.
+            Zero disables the supplemental mask.
         edge_supervision_signal_types: Families with physical edge labels.
 
     Physical Basis:
@@ -35,6 +38,8 @@ class TransientSupervisionConfig:
     context_ms: float = 5.0
     pre_echo_guard_ms: float = 0.5
     pre_echo_window_ms: float = 3.5
+    far_pre_echo_guard_ms: float = 4.0
+    far_pre_echo_window_ms: float = 0.0
     edge_supervision_signal_types: tuple[str, ...] = (
         "square_wave",
         "step_plateau",
@@ -48,10 +53,14 @@ class TransientSupervisionConfig:
             raise ValueError("clean_probability must be in [0, 1].")
         if not np.isfinite((low, high)).all() or not 0.0 <= low <= high <= 1.0:
             raise ValueError("center_fraction_range must stay within [0, 1].")
-        if self.context_ms < self.pre_echo_guard_ms + self.pre_echo_window_ms:
+        near_extent = self.pre_echo_guard_ms + self.pre_echo_window_ms
+        far_extent = self.far_pre_echo_guard_ms + self.far_pre_echo_window_ms
+        if self.context_ms < max(near_extent, far_extent):
             raise ValueError("context_ms must cover the complete pre-echo window.")
         if self.pre_echo_guard_ms < 0.0 or self.pre_echo_window_ms <= 0.0:
             raise ValueError("Pre-echo guard/window values must be valid.")
+        if self.far_pre_echo_guard_ms < 0.0 or self.far_pre_echo_window_ms < 0.0:
+            raise ValueError("Far pre-echo guard/window values must be non-negative.")
         if not self.focus_signal_types:
             raise ValueError("focus_signal_types must not be empty.")
 

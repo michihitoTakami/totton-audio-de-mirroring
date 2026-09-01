@@ -7,9 +7,15 @@ import pytest
 import torch
 
 from totton_audio_de_mirroring.data.capb_dataset import CAPBDataConfig
-from totton_audio_de_mirroring.models.capb import CAPB, DEFAULT_INIT_WEIGHTS
+from totton_audio_de_mirroring.models.capb import (
+    CAPB,
+    DEFAULT_INIT_WEIGHTS,
+    capb_candidate_from_checkpoint,
+    capb_from_checkpoint,
+)
 from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank,
+    build_prototype_bank_for_profile,
     prototype_specs_for_target_rate,
     upsample_with_kernel,
 )
@@ -310,8 +316,6 @@ def _make_checkpoint(target_rate: int | None, input_rate: int | None) -> dict:
 
 def test_capb_from_checkpoint_selects_48k_bank() -> None:
     """A 48k checkpoint must be paired with the 48k prototype kernels."""
-    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
-
     checkpoint = _make_checkpoint(target_rate=96_000, input_rate=48_000)
     model = capb_from_checkpoint(checkpoint)
     from totton_audio_de_mirroring.models.proto_bank import PROTOTYPE_SPECS_48K
@@ -322,8 +326,6 @@ def test_capb_from_checkpoint_selects_48k_bank() -> None:
 
 def test_capb_from_checkpoint_legacy_defaults_to_44k1() -> None:
     """run9-era checkpoints without rate keys load with the 44.1k bank."""
-    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
-
     checkpoint = _make_checkpoint(target_rate=None, input_rate=None)
     model = capb_from_checkpoint(checkpoint)
     reference = build_prototype_bank()
@@ -331,18 +333,77 @@ def test_capb_from_checkpoint_legacy_defaults_to_44k1() -> None:
 
 
 def test_capb_from_checkpoint_rejects_inconsistent_rates() -> None:
-    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
-
     checkpoint = _make_checkpoint(target_rate=96_000, input_rate=44_100)
     with pytest.raises(ValueError, match="inconsistent"):
         capb_from_checkpoint(checkpoint)
 
 
 def test_capb_from_checkpoint_requires_model_state() -> None:
-    from totton_audio_de_mirroring.models.capb import capb_from_checkpoint
-
     with pytest.raises(RuntimeError, match="model_state"):
         capb_from_checkpoint({"target_sample_rate": 96_000})
+
+
+def test_profiled_checkpoint_rebuilds_named_kernels() -> None:
+    profile = "long_sharp_2047_a120"
+    bank = build_prototype_bank_for_profile(88_200, profile)
+    model = CAPB(bank=bank)
+    state = model.state_dict()
+    state["kernels"] = torch.zeros_like(state["kernels"])
+    checkpoint = {
+        "model_state": state,
+        "target_sample_rate": 88_200,
+        "expected_input_rate": 44_100,
+        "prototype_profile": profile,
+        "prototype_hash": bank.coefficient_hash,
+        "fir_compute_dtype": "float32",
+    }
+
+    loaded = capb_from_checkpoint(checkpoint)
+
+    assert loaded.kernel_size == 2047
+    assert torch.count_nonzero(loaded.kernels) > 0
+    assert loaded.prototype_hash == bank.coefficient_hash
+
+
+def test_profiled_checkpoint_rejects_hash_mismatch() -> None:
+    bank = build_prototype_bank_for_profile(88_200, "long_sharp_1023_a120")
+    checkpoint = {
+        "model_state": CAPB(bank=bank).state_dict(),
+        "target_sample_rate": 88_200,
+        "prototype_profile": "long_sharp_1023_a120",
+        "prototype_hash": "wrong",
+    }
+    with pytest.raises(ValueError, match="prototype_hash"):
+        capb_from_checkpoint(checkpoint)
+
+
+def test_candidate_transfer_changes_bank_but_preserves_controller() -> None:
+    checkpoint = _make_checkpoint(target_rate=88_200, input_rate=44_100)
+    baseline = capb_from_checkpoint(checkpoint)
+
+    candidate = capb_candidate_from_checkpoint(
+        checkpoint,
+        prototype_profile="long_sharp_2047_a120",
+        fir_compute_dtype="float64",
+    )
+
+    assert candidate.kernel_size == 2047
+    assert candidate.kernels.dtype == torch.float64
+    for actual, expected in zip(
+        candidate.controller.parameters(), baseline.controller.parameters(), strict=True
+    ):
+        torch.testing.assert_close(actual, expected)
+
+
+def test_float64_fir_keeps_controller_float32() -> None:
+    bank = build_prototype_bank_for_profile(88_200, "long_sharp_1023_a120")
+    model = CAPB(bank=bank, fir_compute_dtype="float64")
+    source = torch.randn(1, 512)
+
+    output, weights = model(source, return_weights=True)
+
+    assert output.dtype == torch.float64
+    assert weights.dtype == torch.float32
 
 
 def test_training_config_loads_initial_checkpoint(tmp_path: Path) -> None:
@@ -353,6 +414,21 @@ def test_training_config_loads_initial_checkpoint(tmp_path: Path) -> None:
     config = load_capb_training_config(config_path)
 
     assert config.initial_checkpoint == checkpoint_path
+
+
+def test_training_config_loads_long_fir_candidate_options(tmp_path: Path) -> None:
+    config_path = tmp_path / "training.yaml"
+    config_path.write_text(
+        "prototype_profile: long_sharp_2047_a120\n"
+        "fir_compute_dtype: float64\n"
+        "initial_controller_only: true\n"
+    )
+
+    config = load_capb_training_config(config_path)
+
+    assert config.prototype_profile == "long_sharp_2047_a120"
+    assert config.fir_compute_dtype == "float64"
+    assert config.initial_controller_only
 
 
 def test_training_config_loads_checkpoint_interval(tmp_path: Path) -> None:
@@ -417,3 +493,21 @@ def test_initial_checkpoint_loader_accepts_matching_rate(tmp_path: Path) -> None
             prototype_specs_for_target_rate(96_000), sample_rate=96_000
         ).kernels.shape[1]
     )
+
+
+def test_initial_checkpoint_loader_transfers_controller_to_long_bank(
+    tmp_path: Path,
+) -> None:
+    checkpoint_path = tmp_path / "initial.pt"
+    torch.save(_make_checkpoint(target_rate=88_200, input_rate=44_100), checkpoint_path)
+    training_config = CAPBTrainingConfig(
+        initial_checkpoint=checkpoint_path,
+        prototype_profile="long_sharp_2047_a120",
+        initial_controller_only=True,
+        border_trim=1_024,
+    )
+
+    loaded = _load_initial_checkpoint(training_config, CAPBDataConfig())
+
+    assert loaded.kernel_size == 2_047
+    assert loaded.prototype_profile == "long_sharp_2047_a120"

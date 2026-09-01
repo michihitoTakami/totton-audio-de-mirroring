@@ -157,7 +157,7 @@ uv run python scripts/train_capb.py \
 uv run python scripts/train_capb.py \
   --data-config configs/data_generation_capb.yaml \
   --config configs/training_stage1_capb_44k1_margin.yaml \
-  --summary-json reports/capb_training/run11_44k1_optimized_20260829.json
+  --summary-json /tmp/capb-44k1-margin.json
 ```
 
 48 kHz familyの通常学習:
@@ -176,7 +176,7 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb_48k_balanced_margin.yaml \
   --init-checkpoint data/checkpoints/capb_48k/run11_48k_optimized_20260830/capb_best.pt \
   --checkpoint-dir data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830 \
-  --summary-json reports/capb_training/run12_48k_strictfp32_balanced_20260830.json
+  --summary-json /tmp/capb-48k-margin.json
 ```
 
 通常の学習データは出力sample rateで合成し、入力のナイキスト周波数未満へ直線位相FIRで帯域制限した後、正確に2:1で間引いて入力を作ります。孤立clickとtone burstは、実際のprobeと同じ入力sample rateでeventを生成し、cardinalなFFT zero-paddingで帯域制限済みteacherへ変換します。どちらの経路も`source == target[::2]`を厳密に保ち、入力Nyquistを超える教師情報を作りません。
@@ -186,10 +186,52 @@ uv run python scripts/train_capb.py \
 ```bash
 uv run python scripts/audit_capb_training_data.py \
   --data-config configs/data_generation_capb.yaml \
-  --output-dir reports/capb_data_audit/44k1_optimized
+  --output-dir /tmp/capb-data-audit
 ```
 
 学習されるのは約10万parameterのcontrollerだけです。3つのFIRは固定され、checkpointにはcontrollerの学習結果と対象sample-rate系列が保存されます。
+
+### 長尺sharp FIRの実験
+
+`long_sharp_1023_a120`、`long_sharp_1535_a120`、`long_sharp_2047_a120`、および診断用の`long_sharp_2047_a140`を候補として利用できます。変更するのはsharpだけで、middle/gentleの係数はrelease版をそのまま対称ゼロ埋めします。全prototypeは同じ奇数長・中心sample・群遅延を持ち、採用前に位相差`1e-6 deg`以下、群遅延差`1e-9 sample`以下、対称誤差`1e-12`以下を満たす必要があります。
+
+まず両rate familyの構造、FP32係数量子化、image応答、0.5--4 msと4--12 msのechoを比較します。
+
+```bash
+uv run python scripts/report_long_fir_candidates.py \
+  --output /tmp/capb-long-fir-candidates.json
+```
+
+既存controllerを変更せずに候補bankへ移し、canonical/held-out G1--G9を実行できます。`--fir-compute-dtype float64`は係数設計ではなく固定FIR演算床を分離する診断です。
+
+```bash
+uv run python scripts/evaluate_probe_gates.py \
+  --backend capb \
+  --checkpoint <44k1-checkpoint> \
+  --rate-family 44k1 \
+  --prototype-profile long_sharp_2047_a120 \
+  --fir-compute-dtype float32 \
+  --report-dir /tmp/capb-long-fir-gates
+```
+
+1 epochのcontroller-only fine-tuneでは、2047 tapの半長に合わせてborder trimを1024 sampleへ広げ、従来G2bと同じ損失係数で4--12 msの長いプリエコーも監視します。
+
+```bash
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb.yaml \
+  --config configs/training_stage1_capb_44k1_margin.yaml \
+  --seed 1234 \
+  --init-checkpoint <44k1-checkpoint> \
+  --prototype-profile long_sharp_2047_a120 \
+  --initial-controller-only \
+  --border-trim 1024 \
+  --far-pre-echo-window-ms 8.0 \
+  --checkpoint-dir <candidate-output-dir>
+```
+
+長尺化は自動的な高音質化ではありません。固定FIRのFP32累積誤差は演算床を分離する診断値であり、それだけで採否を決めません。採用には両rate familyの全probe、controller 64位相、Hann-OLA境界64 offset、近距離・長距離echoを通過したうえで、worst image leakageをrelease比0.5 dB以上改善することを要求します。image差が0.5 dB未満ならG2b、G9、歪み、短いtap数の順で決め、どれも満たさなければrelease bankを維持します。
+
+2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。イメージ抑制は改善したもののhard gateを満たさないため、採用品は`release_v4`のままです。比較表と既存形式の図は`reports/release/`に集約しています。
 
 ### 学習済み成果物
 
@@ -197,7 +239,7 @@ uv run python scripts/audit_capb_training_data.py \
 
 48 kHz系列の採用候補は`data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt`です。v4のcanonical/held-out G1〜G9をCPUとstrict-FP32 CUDAの両方で通過し、SMPTE sidebandは`-144.67 dB`、CCIF IMDは`-142.73 dB`、impulse列の利得誤差は`0.400 dB`、G2b pre-echoは`1.33e-8`です。controller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して通過します。この48 kHz checkpointと上記44.1 kHz checkpointをrelease pairとして扱います。
 
-run11で48 kHzだけ悪く見えたTHD/IMD図は、CUDA TF32で長い固定FIRを畳み込んだ数値誤差でした。同じcheckpointでTF32を禁止すると、48 kHz THDは`-76.70 dB`から`-140.00 dB`、CCIF IMDは`-85.86 dB`から`-142.73 dB`へ戻ります。release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。選定理由と学習履歴は`reports/capb_training/run12_48k_strictfp32_balanced_20260830/`、完全な根拠は`reports/capb_precision/run12_strictfp32_release_20260830/`、`reports/capb_release_quality/run12_strictfp32_release_20260830/`、`reports/capb_visualization/run12_strictfp32_release_20260830/`にあります。
+run11で48 kHzだけ悪く見えたTHD/IMD図は、CUDA TF32で長い固定FIRを畳み込んだ数値誤差でした。同じcheckpointでTF32を禁止すると、48 kHz THDは`-76.70 dB`から`-140.00 dB`、CCIF IMDは`-85.86 dB`から`-142.73 dB`へ戻ります。release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。現在の完全な選定・gate・可視化・ONNX parity根拠は`reports/release/`にあります。
 
 ## 受入評価
 
@@ -222,7 +264,7 @@ uv run python scripts/evaluate_probe_gates.py \
 uv run python scripts/evaluate_capb_transient_robustness.py \
   --checkpoint data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt \
   --rate-family 44k1 \
-  --output-dir reports/capb_robustness/run11_44k1_optimized_20260829
+  --output-dir /tmp/capb-robustness-44k1
 ```
 
 主な合格条件:
@@ -235,7 +277,7 @@ uv run python scripts/evaluate_capb_transient_robustness.py \
 - 不要な高域成分: Bessel基準に対する増加を制限する
 - SMPTE/held-out two-tone: controller変調によるsidebandを`-110 dBc`以下にする
 
-レポートは`reports/probe_gates/<label>/gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。
+レポートは指定した`--report-dir`以下の`gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。採用品の固定release evidenceだけを`reports/release/`へ保存します。
 
 固定prototypeだけを検証する場合:
 

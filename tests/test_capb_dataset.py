@@ -142,6 +142,41 @@ def test_focused_click_always_has_gate_aligned_mask(focused_click_dataset) -> No
         torch.testing.assert_close(sample["source"], sample["target"][::2])
 
 
+def test_focused_click_can_supervise_far_pre_echo_tail() -> None:
+    transient = TransientSupervisionConfig(
+        enabled=True,
+        context_ms=12.0,
+        far_pre_echo_guard_ms=4.0,
+        far_pre_echo_window_ms=8.0,
+    )
+    config = CAPBDataConfig(
+        num_samples=1,
+        seed=19,
+        signal_mix={"isolated_click": 1.0},
+        transient_supervision=transient,
+    )
+
+    sample = CAPBUpsampleDataset(config)[0]
+
+    assert int(torch.count_nonzero(sample["far_pre_echo_mask"])) == round(
+        8.0 * TARGET_SAMPLE_RATE / 1_000.0
+    )
+    assert (
+        int(torch.count_nonzero(sample["pre_echo_mask"] * sample["far_pre_echo_mask"]))
+        == 0
+    )
+
+
+def test_far_pre_echo_window_requires_complete_context() -> None:
+    with pytest.raises(ValueError, match="context_ms"):
+        TransientSupervisionConfig(
+            enabled=True,
+            context_ms=5.0,
+            far_pre_echo_guard_ms=4.0,
+            far_pre_echo_window_ms=8.0,
+        )
+
+
 def test_transient_clean_and_augmented_views_are_both_present(
     focused_click_dataset,
 ) -> None:

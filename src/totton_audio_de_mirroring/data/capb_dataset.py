@@ -349,14 +349,24 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             sample_rate=self._config.target_sample_rate,
         )
         pre_echo_mask = np.zeros_like(clean_chunk)
+        far_pre_echo_mask = np.zeros_like(clean_chunk)
         if event_bounds is not None:
+            event_start = event_bounds[0] - chunk_start
             pre_echo_mask = compute_pre_echo_mask(
                 clean_chunk.size,
-                event_start=event_bounds[0] - chunk_start,
+                event_start=event_start,
                 sample_rate=self._config.target_sample_rate,
                 guard_ms=self._config.transient_supervision.pre_echo_guard_ms,
                 window_ms=self._config.transient_supervision.pre_echo_window_ms,
             )
+            if self._config.transient_supervision.far_pre_echo_window_ms > 0.0:
+                far_pre_echo_mask = compute_pre_echo_mask(
+                    clean_chunk.size,
+                    event_start=event_start,
+                    sample_rate=self._config.target_sample_rate,
+                    guard_ms=self._config.transient_supervision.far_pre_echo_guard_ms,
+                    window_ms=self._config.transient_supervision.far_pre_echo_window_ms,
+                )
         if focused:
             # Focused transients already carry gate-aligned pre-echo and
             # edge masks. A chunk-wide quiet mask would let the surrounding
@@ -372,6 +382,7 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             "quiet_mask": torch.from_numpy(quiet_mask.astype(np.float32)),
             "edge_mask": torch.from_numpy(edge_mask.astype(np.float32)),
             "pre_echo_mask": torch.from_numpy(pre_echo_mask.astype(np.float32)),
+            "far_pre_echo_mask": torch.from_numpy(far_pre_echo_mask.astype(np.float32)),
             "stationary": torch.tensor(
                 signal_type in STATIONARY_SIGNAL_TYPES, dtype=torch.bool
             ),
@@ -576,6 +587,8 @@ def load_capb_data_config(path: Path) -> CAPBDataConfig:
         context_ms=float(transient_raw.get("context_ms", 5.0)),
         pre_echo_guard_ms=float(transient_raw.get("pre_echo_guard_ms", 0.5)),
         pre_echo_window_ms=float(transient_raw.get("pre_echo_window_ms", 3.5)),
+        far_pre_echo_guard_ms=float(transient_raw.get("far_pre_echo_guard_ms", 4.0)),
+        far_pre_echo_window_ms=float(transient_raw.get("far_pre_echo_window_ms", 0.0)),
         edge_supervision_signal_types=tuple(
             transient_raw.get(
                 "edge_supervision_signal_types",

@@ -1,0 +1,70 @@
+{
+  "execution": {
+    "device": "cuda",
+    "precision_mode": "strict_fp32",
+    "allow_tf32": false,
+    "deterministic": false,
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "cudnn_version": 91002,
+    "gpu_name": "NVIDIA GeForce RTX 5060 Ti"
+  },
+  "44k1": {
+    "checkpoint": "data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt",
+    "prototype_profile": "release_v4",
+    "prototype_hash": "cbcc2a9487e877676e345e249166e57703786e921c7f82619bea6ad89c6bd2f7",
+    "fir_compute_dtype": "float32",
+    "source_sample_rate": 44100,
+    "metrics": {
+      "bessel": {
+        "peak": 0.3677098116862076,
+        "pre_echo_mean_square": 0.0,
+        "local_energy": 0.2922638901370832
+      },
+      "capb": {
+        "peak": 0.4062759280204773,
+        "pre_echo_mean_square": 1.0466381116001573e-07,
+        "local_energy": 0.3346094972708889
+      },
+      "sharp": {
+        "peak": 0.4880952032793723,
+        "pre_echo_mean_square": 1.1397508775548107e-06,
+        "local_energy": 0.4859143380403376
+      },
+      "gentle": {
+        "peak": 0.3745666687682121,
+        "pre_echo_mean_square": 4.6435039209574147e-29,
+        "local_energy": 0.2932504053144989
+      }
+    }
+  },
+  "48k": {
+    "checkpoint": "data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt",
+    "prototype_profile": "release_v4",
+    "prototype_hash": "665d79f8f10038c33f768c5acfd2fd9e39c9060474a05d275cbc72bd46d0e9bc",
+    "fir_compute_dtype": "float32",
+    "source_sample_rate": 48000,
+    "metrics": {
+      "bessel": {
+        "peak": 0.32610806001659814,
+        "pre_echo_mean_square": 0.0,
+        "local_energy": 0.2653128351585642
+      },
+      "capb": {
+        "peak": 0.3755107820034027,
+        "pre_echo_mean_square": 1.3257311628711564e-08,
+        "local_energy": 0.3017927765413839
+      },
+      "sharp": {
+        "peak": 0.4791659853631869,
+        "pre_echo_mean_square": 2.4732538955503754e-07,
+        "local_energy": 0.47535676266543286
+      },
+      "gentle": {
+        "peak": 0.34375337759699887,
+        "pre_echo_mean_square": 7.810139146494663e-31,
+        "local_energy": 0.2663068898827157
+      }
+    }
+  }
+}

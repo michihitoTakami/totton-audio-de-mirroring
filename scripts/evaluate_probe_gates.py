@@ -38,8 +38,9 @@ from totton_audio_de_mirroring.evaluation.probe_suite import (
     suite_manifest,
 )
 from totton_audio_de_mirroring.models.proto_bank import (
-    build_prototype_bank,
-    prototype_specs_for_target_rate,
+    RELEASE_PROTOTYPE_PROFILE,
+    build_prototype_bank_for_profile,
+    supported_prototype_profiles,
     upsample_with_kernel,
 )
 from totton_audio_de_mirroring.torch_precision import configure_torch_precision
@@ -63,6 +64,18 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--allow-tf32", action="store_true")
+    parser.add_argument(
+        "--prototype-profile",
+        choices=supported_prototype_profiles(),
+        default=None,
+        help="Override the checkpoint bank for a controller-only experiment.",
+    )
+    parser.add_argument(
+        "--fir-compute-dtype",
+        choices=("float32", "float64"),
+        default=None,
+        help="Override fixed-FIR arithmetic for a controller-only experiment.",
+    )
     parser.add_argument("--rate-family", choices=sorted(RATE_FAMILIES), default="44k1")
     parser.add_argument(
         "--tier", choices=["canonical", "held_out", "both"], default="both"
@@ -75,13 +88,17 @@ def main() -> None:
     precision = configure_torch_precision(args.device, allow_tf32=args.allow_tf32)
     source_sr, target_sr = RATE_FAMILIES[args.rate_family]
     default_label = args.backend.replace(":", "_")
+    if args.prototype_profile is not None:
+        default_label += f"_{args.prototype_profile}"
+    if args.fir_compute_dtype is not None:
+        default_label += f"_{args.fir_compute_dtype}"
     if args.rate_family != "44k1":
         default_label += f"_{args.rate_family}"
     label = args.label or default_label
     report_dir = args.report_dir / label
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    model_fn = _build_backend(args, target_sr)
+    model_fn, candidate_identity = _build_backend(args, target_sr)
     suite = build_default_probe_suite()
     if args.tier != "both":
         suite = tuple(spec for spec in suite if spec.tier == args.tier)
@@ -119,6 +136,7 @@ def main() -> None:
 
     payload = report_to_dict(report)
     payload["execution"] = precision.to_dict()
+    payload["candidate_identity"] = candidate_identity
     (report_dir / "gate_report.json").write_text(json.dumps(payload, indent=2))
     markdown = render_markdown_report(report)
     (report_dir / "gate_report.md").write_text(markdown)
@@ -129,13 +147,17 @@ def main() -> None:
         sys.exit(1)
 
 
-def _build_backend(args: argparse.Namespace, target_sr: int) -> ModelFn:
+def _build_backend(
+    args: argparse.Namespace, target_sr: int
+) -> tuple[ModelFn, dict[str, str]]:
     """Build the candidate model callable: (source, bessel_ref) -> output."""
     backend = args.backend
     if backend.startswith("prototype:"):
         name = backend.split(":", 1)[1]
-        bank = build_prototype_bank(
-            prototype_specs_for_target_rate(target_sr), sample_rate=target_sr
+        profile = args.prototype_profile or RELEASE_PROTOTYPE_PROFILE
+        bank = build_prototype_bank_for_profile(
+            target_sr,
+            profile,
         )
         if name not in bank.names:
             raise ValueError(f"Unknown prototype '{name}', have {bank.names}.")
@@ -144,25 +166,43 @@ def _build_backend(args: argparse.Namespace, target_sr: int) -> ModelFn:
         def prototype_fn(source: np.ndarray, _bessel: np.ndarray) -> np.ndarray:
             return upsample_with_kernel(source, kernel, bank.upsample_ratio)
 
-        return prototype_fn
+        return prototype_fn, {
+            "prototype_profile": bank.profile_name,
+            "prototype_hash": bank.coefficient_hash,
+            "fir_compute_dtype": "float64",
+        }
 
     if backend == "bessel":
-        return lambda _source, bessel_ref: bessel_ref
+        return (lambda _source, bessel_ref: bessel_ref), {}
 
     if backend == "ideal":
-        return lambda source, _bessel: np.asarray(
-            sp_signal.resample_poly(source, 2, 1), dtype=np.float64
+        return (
+            lambda source, _bessel: np.asarray(
+                sp_signal.resample_poly(source, 2, 1), dtype=np.float64
+            ),
+            {},
         )
 
     if backend == "capb":
-        return _build_capb_backend(args.checkpoint, args.device, target_sr)
+        return _build_capb_backend(
+            args.checkpoint,
+            args.device,
+            target_sr,
+            prototype_profile=args.prototype_profile,
+            fir_compute_dtype=args.fir_compute_dtype,
+        )
 
     raise ValueError(f"Unknown backend: {backend}")
 
 
 def _build_capb_backend(
-    checkpoint_path: Path | None, device: str, target_sr: int
-) -> ModelFn:
+    checkpoint_path: Path | None,
+    device: str,
+    target_sr: int,
+    *,
+    prototype_profile: str | None = None,
+    fir_compute_dtype: str | None = None,
+) -> tuple[ModelFn, dict[str, str]]:
     """Build a CAPB backend (untrained init blend if no checkpoint given).
 
     Physical Basis:
@@ -171,12 +211,16 @@ def _build_capb_backend(
     """
     import torch
 
-    from totton_audio_de_mirroring.models.capb import CAPB
-
-    bank = build_prototype_bank(
-        prototype_specs_for_target_rate(target_sr), sample_rate=target_sr
+    from totton_audio_de_mirroring.models.capb import (
+        CAPB,
+        capb_candidate_from_checkpoint,
+        capb_from_checkpoint,
     )
-    model = CAPB(bank=bank)
+
+    profile = prototype_profile or RELEASE_PROTOTYPE_PROFILE
+    dtype = fir_compute_dtype or "float32"
+    bank = build_prototype_bank_for_profile(target_sr, profile)
+    model = CAPB(bank=bank, fir_compute_dtype=dtype)
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         expected_input_rate = checkpoint.get("expected_input_rate")
@@ -188,7 +232,14 @@ def _build_capb_backend(
                 f"Checkpoint expects input rate {expected_input_rate} Hz, "
                 f"incompatible with --rate-family target {target_sr} Hz."
             )
-        model.load_state_dict(checkpoint["model_state"])
+        if prototype_profile is not None or fir_compute_dtype is not None:
+            model = capb_candidate_from_checkpoint(
+                checkpoint,
+                prototype_profile=profile,
+                fir_compute_dtype=dtype,
+            )
+        else:
+            model = capb_from_checkpoint(checkpoint)
     model.eval()
     torch_device = torch.device(device)
     model = model.to(torch_device)
@@ -203,7 +254,11 @@ def _build_capb_backend(
             output = model(tensor)
         return np.asarray(output.squeeze(0).cpu().numpy(), dtype=np.float64)
 
-    return capb_fn
+    return capb_fn, {
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "fir_compute_dtype": model.fir_compute_dtype,
+    }
 
 
 if __name__ == "__main__":

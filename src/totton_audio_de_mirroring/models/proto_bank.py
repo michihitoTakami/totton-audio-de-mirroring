@@ -6,7 +6,7 @@ FIR prototypes. All prototypes are linear phase with one shared group delay,
 so blending mixes their magnitudes coherently and the network's only freedom
 is choosing, over time, a point on the fixed sharp-vs-gentle trade-off curve.
 
-Phase 0 findings that shaped this design (reports/capb_phase0/):
+Phase 0 findings that shaped this design:
 - Any sharp spectral cut (including a shared-passband projection at 20 kHz)
   injects a Gibbs plateau-ripple floor on square probes; projections are out.
 - Widening a Kaiser transition barely reduces square-edge overshoot (~4.5e-2
@@ -18,7 +18,8 @@ Phase 0 findings that shaped this design (reports/capb_phase0/):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy import signal as sp_signal
@@ -31,6 +32,13 @@ DEFAULT_BESSEL_CUTOFF_HZ = 20_000.0
 DEFAULT_BESSEL_ORDER = 6
 _RESPONSE_FFT_SIZE = 1 << 17
 _MAGNITUDE_FIT_GRID = 2049
+RELEASE_PROTOTYPE_PROFILE = "release_v4"
+LONG_FIR_PROTOTYPE_PROFILES: dict[str, tuple[int, float]] = {
+    "long_sharp_1023_a120": (1023, 120.0),
+    "long_sharp_1535_a120": (1535, 120.0),
+    "long_sharp_2047_a120": (2047, 120.0),
+    "long_sharp_2047_a140": (2047, 140.0),
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,8 @@ class KaiserPrototypeSpec:
         passband_edge_hz: Last frequency with full response, in Hz.
         stopband_edge_hz: First frequency at full attenuation, in Hz.
         attenuation_db: Kaiser design stopband attenuation in dB.
+        num_taps: Optional fixed odd length. When omitted, the length is
+            derived from transition width and attenuation.
 
     Physical Basis:
         Transition width sets how fast square-edge Gibbs ripple decays away
@@ -54,6 +64,7 @@ class KaiserPrototypeSpec:
     passband_edge_hz: float
     stopband_edge_hz: float
     attenuation_db: float
+    num_taps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +178,51 @@ def prototype_specs_for_target_rate(
     return specs
 
 
+def supported_prototype_profiles() -> tuple[str, ...]:
+    """Return all stable release and experimental profile identifiers."""
+    return (RELEASE_PROTOTYPE_PROFILE, *LONG_FIR_PROTOTYPE_PROFILES)
+
+
+def prototype_specs_for_profile(
+    target_sample_rate: int,
+    profile_name: str = RELEASE_PROTOTYPE_PROFILE,
+) -> tuple[PrototypeSpecType, ...]:
+    """Return rate-correct prototype specs for one design profile.
+
+    Args:
+        target_sample_rate: Target sample rate after 2x interpolation.
+        profile_name: Release or experimental long-sharp profile identifier.
+
+    Returns:
+        Prototype specifications for the requested profile.
+
+    Raises:
+        ValueError: If the profile name is unsupported.
+
+    Physical Basis:
+        Long-FIR experiments change only the stationary ``sharp`` endpoint.
+        ``mid`` and ``gentle`` retain their validated responses and are
+        centered by zero-padding when the common bank length grows.
+    """
+    base_specs = prototype_specs_for_target_rate(target_sample_rate)
+    if profile_name == RELEASE_PROTOTYPE_PROFILE:
+        return base_specs
+    profile = LONG_FIR_PROTOTYPE_PROFILES.get(profile_name)
+    if profile is None:
+        supported = ", ".join(supported_prototype_profiles())
+        raise ValueError(
+            f"Unknown prototype profile '{profile_name}'; supported: {supported}."
+        )
+    num_taps, attenuation_db = profile
+    sharp = base_specs[0]
+    if not isinstance(sharp, KaiserPrototypeSpec):
+        raise ValueError("The sharp prototype must use a Kaiser specification.")
+    return (
+        replace(sharp, attenuation_db=attenuation_db, num_taps=num_taps),
+        *base_specs[1:],
+    )
+
+
 @dataclass(frozen=True)
 class PrototypeBank:
     """Bank of centered, gain-matched linear-phase interpolation kernels.
@@ -177,6 +233,8 @@ class PrototypeBank:
         names: Prototype names, index-aligned with kernels.
         kernels: Kernels padded to one common odd length, shape (K, L).
         group_delay_samples: Constant group delay shared by all kernels.
+        profile_name: Stable prototype design profile identifier.
+        coefficient_hash: SHA-256 hash of the float64 bank coefficients.
 
     Physical Basis:
         Common length and centering give every kernel the same constant
@@ -190,6 +248,8 @@ class PrototypeBank:
     names: tuple[str, ...]
     kernels: np.ndarray
     group_delay_samples: int
+    profile_name: str = RELEASE_PROTOTYPE_PROFILE
+    coefficient_hash: str = ""
 
 
 def design_kaiser_prototype(
@@ -221,11 +281,15 @@ def design_kaiser_prototype(
     """
     _validate_kaiser_spec(spec, sample_rate)
     width_hz = spec.stopband_edge_hz - spec.passband_edge_hz
-    num_taps, beta = sp_signal.kaiserord(
-        spec.attenuation_db, width_hz / (sample_rate / 2)
-    )
-    if num_taps % 2 == 0:
-        num_taps += 1
+    if spec.num_taps is None:
+        num_taps, beta = sp_signal.kaiserord(
+            spec.attenuation_db, width_hz / (sample_rate / 2)
+        )
+        if num_taps % 2 == 0:
+            num_taps += 1
+    else:
+        num_taps = spec.num_taps
+        beta = sp_signal.kaiser_beta(spec.attenuation_db)
     cutoff_hz = 0.5 * (spec.passband_edge_hz + spec.stopband_edge_hz)
     taps = sp_signal.firwin(
         num_taps, cutoff_hz, window=("kaiser", beta), fs=sample_rate
@@ -289,6 +353,7 @@ def build_prototype_bank(
     specs: tuple[PrototypeSpecType, ...] = DEFAULT_PROTOTYPE_SPECS,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     upsample_ratio: int = DEFAULT_UPSAMPLE_RATIO,
+    profile_name: str = RELEASE_PROTOTYPE_PROFILE,
 ) -> PrototypeBank:
     """Build the prototype bank with a common length and group delay.
 
@@ -296,6 +361,7 @@ def build_prototype_bank(
         specs: Prototype specifications.
         sample_rate: Target sample rate in Hz.
         upsample_ratio: Integer upsampling ratio.
+        profile_name: Stable identifier for the prototype design.
 
     Returns:
         PrototypeBank with centered, gain-matched kernels.
@@ -315,13 +381,71 @@ def build_prototype_bank(
     stacked = np.stack(
         [_pad_centered(kernel, common_len) for kernel in kernels], axis=0
     )
+    coefficient_hash = prototype_coefficient_hash(
+        stacked, sample_rate=sample_rate, upsample_ratio=upsample_ratio
+    )
     return PrototypeBank(
         sample_rate=sample_rate,
         upsample_ratio=upsample_ratio,
         names=tuple(spec.name for spec in specs),
         kernels=stacked,
         group_delay_samples=(common_len - 1) // 2,
+        profile_name=profile_name,
+        coefficient_hash=coefficient_hash,
     )
+
+
+def build_prototype_bank_for_profile(
+    target_sample_rate: int,
+    profile_name: str = RELEASE_PROTOTYPE_PROFILE,
+    upsample_ratio: int = DEFAULT_UPSAMPLE_RATIO,
+) -> PrototypeBank:
+    """Build a rate-correct bank from a named design profile.
+
+    Physical Basis:
+        Profile-based construction prevents a controller checkpoint from
+        silently selecting coefficients from another rate family or FIR
+        length while preserving one common linear-phase center.
+    """
+    specs = prototype_specs_for_profile(target_sample_rate, profile_name)
+    return build_prototype_bank(
+        specs,
+        sample_rate=target_sample_rate,
+        upsample_ratio=upsample_ratio,
+        profile_name=profile_name,
+    )
+
+
+def prototype_coefficient_hash(
+    kernels: np.ndarray,
+    *,
+    sample_rate: int,
+    upsample_ratio: int,
+) -> str:
+    """Return a stable SHA-256 hash for one prototype coefficient bank.
+
+    Args:
+        kernels: Two-dimensional coefficient bank.
+        sample_rate: Target sample rate associated with the coefficients.
+        upsample_ratio: Interpolation ratio associated with the bank.
+
+    Returns:
+        Lowercase SHA-256 hexadecimal digest.
+
+    Physical Basis:
+        A profile name alone cannot detect coefficient drift. Hashing the
+        float64 coefficients and rate contract prevents a checkpoint from
+        silently loading acoustically different fixed FIR endpoints.
+    """
+    if kernels.ndim != 2 or kernels.size == 0:
+        raise ValueError("kernels must be a non-empty 2D array.")
+    if sample_rate <= 0 or upsample_ratio <= 1:
+        raise ValueError("sample_rate and upsample_ratio must be valid.")
+    coefficients = np.ascontiguousarray(kernels, dtype="<f8")
+    digest = hashlib.sha256()
+    digest.update(f"{sample_rate}:{upsample_ratio}:{coefficients.shape}".encode())
+    digest.update(coefficients.tobytes())
+    return digest.hexdigest()
 
 
 def blend_modulation_bounds(
@@ -553,3 +677,8 @@ def _validate_kaiser_spec(spec: KaiserPrototypeSpec, sample_rate: int) -> None:
         )
     if spec.attenuation_db <= 0.0:
         raise ValueError(f"Prototype '{spec.name}' attenuation_db must be positive.")
+    if spec.num_taps is not None and (spec.num_taps <= 0 or spec.num_taps % 2 == 0):
+        raise ValueError(
+            f"Prototype '{spec.name}' num_taps must be a positive odd integer, "
+            f"got {spec.num_taps}."
+        )
