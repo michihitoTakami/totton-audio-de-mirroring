@@ -8,6 +8,7 @@ The TV term keeps the blend trajectory slow and decisive.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -19,6 +20,8 @@ from totton_audio_de_mirroring.training.stft_loss import (
 )
 
 _EPS = 1e-8
+_ROUTING_TARGET_PROBABILITY = 0.999
+_ROUTING_TOP_FRACTION = 0.25
 
 
 @dataclass(frozen=True)
@@ -40,7 +43,8 @@ class CAPBLossWeights:
             prototype's ripple (covers dense-edge content with no plateaus).
         pre_echo_excess: Penalty for gate-window energy exceeding the gentle
             prototype on focused transient samples.
-        prototype_routing: Label-supervised sharp/gentle routing penalty.
+        post_echo_excess: Equivalent penalty after an impulse or burst end.
+        prototype_routing: Label-supervised prototype-role routing penalty.
         min_entropy: Per-frame entropy floor in nats (~0.05 allows a max
             blend weight of roughly 0.99).
 
@@ -61,6 +65,7 @@ class CAPBLossWeights:
     edge_fidelity_relax: float = 0.9
     edge_ring: float = 300.0
     pre_echo_excess: float = 0.0
+    post_echo_excess: float = 0.0
     prototype_routing: float = 0.0
     min_entropy: float = 0.05
 
@@ -79,7 +84,9 @@ def compute_capb_losses(
     prototype_outputs: torch.Tensor | None = None,
     stationary: torch.Tensor | None = None,
     pre_echo_mask: torch.Tensor | None = None,
+    post_echo_mask: torch.Tensor | None = None,
     far_pre_echo_mask: torch.Tensor | None = None,
+    safe_active_mask: torch.Tensor | None = None,
     focused_transient: torch.Tensor | None = None,
     sharp_index: int = 0,
     gentle_index: int = -1,
@@ -102,8 +109,10 @@ def compute_capb_losses(
         prototype_outputs: Fixed prototype outputs, shaped (batch, K, time).
         stationary: Boolean batch flags selecting stationary signals.
         pre_echo_mask: Gate-aligned mask immediately before focused events.
+        post_echo_mask: Gate-aligned mask after focused event ends.
         far_pre_echo_mask: Supplemental 4--12 ms pre-event mask for long FIR
             tails. It uses the same excess-energy coefficient as G2b.
+        safe_active_mask: Active samples outside every labelled risk window.
         focused_transient: Boolean batch flags selecting focused click and
             tone-burst examples governed by the continuous pre-echo loss.
         sharp_index: Prototype index used for stationary non-edge frames.
@@ -173,6 +182,12 @@ def compute_capb_losses(
         )
     else:
         losses["pre_echo_excess"] = output.new_zeros(())
+    if post_echo_mask is not None and gentle_output is not None:
+        losses["post_echo_excess"] = pre_echo_excess_loss(
+            out, gentle_output[:, sl], post_echo_mask[:, sl]
+        )
+    else:
+        losses["post_echo_excess"] = output.new_zeros(())
     if far_pre_echo_mask is not None:
         if far_pre_echo_mask.shape != output.shape:
             raise ValueError("far_pre_echo_mask must share the output shape.")
@@ -186,15 +201,23 @@ def compute_capb_losses(
             )
     if edge_mask is not None and stationary is not None:
         routing_mask = edge_mask
+        focused_risk_mask = edge_mask.clone()
         if pre_echo_mask is not None:
             routing_mask = torch.maximum(routing_mask, pre_echo_mask)
+            focused_risk_mask = torch.maximum(focused_risk_mask, pre_echo_mask)
+        if post_echo_mask is not None:
+            routing_mask = torch.maximum(routing_mask, post_echo_mask)
+            focused_risk_mask = torch.maximum(focused_risk_mask, post_echo_mask)
         if far_pre_echo_mask is not None:
             routing_mask = torch.maximum(routing_mask, far_pre_echo_mask)
+            focused_risk_mask = torch.maximum(focused_risk_mask, far_pre_echo_mask)
         losses["prototype_routing"] = prototype_routing_loss(
             weights_frames,
             routing_mask,
             stationary,
             focused_transient=focused_transient,
+            focused_risk_mask=focused_risk_mask,
+            safe_active_mask=safe_active_mask,
             sharp_index=sharp_index,
             gentle_index=gentle_index,
         )
@@ -210,6 +233,7 @@ def compute_capb_losses(
         + loss_weights.stationary_modulation * losses["stationary_modulation"]
         + loss_weights.edge_ring * losses["edge_ring"]
         + loss_weights.pre_echo_excess * losses["pre_echo_excess"]
+        + loss_weights.post_echo_excess * losses["post_echo_excess"]
         + loss_weights.prototype_routing * losses["prototype_routing"]
     )
     return losses
@@ -361,6 +385,8 @@ def prototype_routing_loss(
     stationary: torch.Tensor,
     *,
     focused_transient: torch.Tensor | None = None,
+    focused_risk_mask: torch.Tensor | None = None,
+    safe_active_mask: torch.Tensor | None = None,
     sharp_index: int,
     gentle_index: int,
 ) -> torch.Tensor:
@@ -371,20 +397,21 @@ def prototype_routing_loss(
         edge_mask: Target-rate edge and pre-echo mask (batch, time).
         stationary: Boolean batch flags for stationary signal families.
         focused_transient: Optional boolean flags for focused transient
-            examples. Their blend is governed by fidelity and pre-echo
-            excess rather than a one-hot routing target.
+            examples. Only their explicit pre/post risk windows are routed.
+        focused_risk_mask: Target-rate pre/post echo mask for focused events.
+        safe_active_mask: Active non-risk samples eligible for sharp routing.
         sharp_index: Prototype index for stationary non-edge frames.
         gentle_index: Prototype index for edge frames.
 
     Returns:
-        Mean negative log weight over labelled frames.
+        Worst-quartile mean negative log weight over labelled frames.
 
     Physical Basis:
         Procedural data provides reliable labels unavailable in arbitrary
-        audio: discontinuities require the validated low-ringing endpoint,
-        while stationary non-edge content requires strong image rejection.
-        This auxiliary classification signal prevents a global gentle
-        collapse without adding a runtime guard or changing FIR outputs.
+        audio: stationary content uses sharp, sustained edges use gentle,
+        and focused sparse transients use the middle compensation prototype
+        when present. The latter preserves 48 kHz impulse gain while meeting
+        echo limits. Worst-quartile mining mirrors worst-probe selection.
     """
     if weights_frames.dim() != 3:
         raise ValueError("weights_frames must be (batch, K, frames).")
@@ -397,7 +424,13 @@ def prototype_routing_loss(
         or focused_transient.shape[0] != weights_frames.shape[0]
     ):
         raise ValueError("focused_transient must be a batch-length vector.")
+    if focused_risk_mask is not None and focused_risk_mask.shape != edge_mask.shape:
+        raise ValueError("focused_risk_mask must share edge_mask shape.")
+    if safe_active_mask is not None and safe_active_mask.shape != edge_mask.shape:
+        raise ValueError("safe_active_mask must share edge_mask shape.")
     prototype_count = weights_frames.shape[1]
+    if prototype_count < 2:
+        raise ValueError("prototype routing requires at least two prototypes.")
     if not -prototype_count <= gentle_index < prototype_count:
         raise ValueError("gentle_index is out of range.")
     if not 0 <= sharp_index < prototype_count:
@@ -410,20 +443,64 @@ def prototype_routing_loss(
         stationary.to(weights_frames.dtype).unsqueeze(1).expand_as(frame_edges)
     )
     focused_frames = torch.zeros_like(frame_edges)
+    frame_focused_risk = torch.zeros_like(frame_edges)
     if focused_transient is not None:
         focused_frames = focused_transient.to(weights_frames.dtype).unsqueeze(1)
-    routable_edges = frame_edges * (1.0 - focused_frames)
+    if focused_risk_mask is not None:
+        frame_focused_risk = F.adaptive_max_pool1d(
+            focused_risk_mask.unsqueeze(1), weights_frames.shape[-1]
+        ).squeeze(1)
+    gentle_mask = frame_edges * (1.0 - focused_frames)
+    focused_risk = torch.clamp(frame_focused_risk * focused_frames, 0.0, 1.0)
+    if prototype_count == 2:
+        gentle_mask = torch.clamp(gentle_mask + focused_risk, 0.0, 1.0)
     sharp_mask = stationary_frames * (1.0 - frame_edges)
-    labelled = routable_edges + sharp_mask
-    counts = torch.sum(labelled, dim=1)
-    applicable = counts > 0.0
+    if safe_active_mask is not None:
+        frame_safe = F.adaptive_max_pool1d(
+            safe_active_mask.unsqueeze(1), weights_frames.shape[-1]
+        ).squeeze(1)
+        sharp_mask = frame_safe * (1.0 - frame_edges)
+    log_floor = torch.finfo(weights_frames.dtype).tiny
+    target_probability = _ROUTING_TARGET_PROBABILITY
+    other_probability = (1.0 - target_probability) / (prototype_count - 1)
+    sharp_targets = torch.full_like(weights_frames, other_probability)
+    gentle_targets = torch.full_like(weights_frames, other_probability)
+    sharp_targets[:, sharp_index, :] = target_probability
+    gentle_targets[:, gentle_index, :] = target_probability
+    log_weights = torch.log(weights_frames.clamp_min(log_floor))
+    sharp_loss = -torch.sum(sharp_targets * log_weights, dim=1)
+    gentle_loss = -torch.sum(gentle_targets * log_weights, dim=1)
+    sharp_counts = torch.sum(sharp_mask, dim=1)
+    gentle_counts = torch.sum(gentle_mask, dim=1)
+    sharp_mean = torch.sum(sharp_loss * sharp_mask, dim=1) / sharp_counts.clamp_min(1.0)
+    gentle_mean = torch.sum(gentle_loss * gentle_mask, dim=1) / gentle_counts.clamp_min(
+        1.0
+    )
+    class_count = (sharp_counts > 0.0).to(weights_frames.dtype)
+    class_count += (gentle_counts > 0.0).to(weights_frames.dtype)
+    middle_mean = torch.zeros_like(sharp_mean)
+    if prototype_count > 2:
+        normalized_gentle_index = gentle_index % prototype_count
+        middle_index = next(
+            index
+            for index in range(prototype_count)
+            if index not in {sharp_index, normalized_gentle_index}
+        )
+        middle_targets = torch.full_like(weights_frames, other_probability)
+        middle_targets[:, middle_index, :] = target_probability
+        middle_loss = -torch.sum(middle_targets * log_weights, dim=1)
+        middle_counts = torch.sum(focused_risk, dim=1)
+        middle_mean = torch.sum(
+            middle_loss * focused_risk, dim=1
+        ) / middle_counts.clamp_min(1.0)
+        class_count += (middle_counts > 0.0).to(weights_frames.dtype)
+    applicable = class_count > 0.0
     if not bool(torch.any(applicable)):
         return weights_frames.new_zeros(())
-    log_floor = torch.finfo(weights_frames.dtype).tiny
-    sharp_loss = -torch.log(weights_frames[:, sharp_index, :].clamp_min(log_floor))
-    gentle_loss = -torch.log(weights_frames[:, gentle_index, :].clamp_min(log_floor))
-    totals = torch.sum(sharp_loss * sharp_mask + gentle_loss * routable_edges, dim=1)
-    return torch.mean(totals[applicable] / counts[applicable])
+    per_sample = (sharp_mean + gentle_mean + middle_mean) / class_count.clamp_min(1.0)
+    applicable_losses = per_sample[applicable]
+    top_count = max(1, math.ceil(_ROUTING_TOP_FRACTION * applicable_losses.numel()))
+    return torch.mean(torch.topk(applicable_losses, top_count).values)
 
 
 def entropy_floor_loss(

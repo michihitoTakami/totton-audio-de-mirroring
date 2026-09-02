@@ -22,6 +22,7 @@ from totton_audio_de_mirroring.data.capb_dataset import (
 )
 from totton_audio_de_mirroring.models.capb import (
     CAPB,
+    SUPPORTED_CONTROLLER_FEATURE_MODES,
     SUPPORTED_FIR_COMPUTE_DTYPES,
     FIRComputeDType,
     capb_candidate_from_checkpoint,
@@ -64,6 +65,9 @@ class CAPBTrainingConfig:
         allow_tf32: Permit reduced-mantissa CUDA TF32 execution.
         deterministic: Require deterministic Torch algorithms.
         prototype_profile: Fixed FIR prototype design profile.
+        controller_dilation: Controller convolution dilation; two supplies
+            sufficient two-sided context for the complete echo masks.
+        controller_feature_mode: Versioned controller input features.
         fir_compute_dtype: Arithmetic dtype for the fixed FIR path.
         initial_head_scale: Multiplicative scale applied once to loaded
             controller-head weights before fine-tuning.
@@ -94,6 +98,8 @@ class CAPBTrainingConfig:
     allow_tf32: bool = False
     deterministic: bool = False
     prototype_profile: str = RELEASE_PROTOTYPE_PROFILE
+    controller_dilation: int = 1
+    controller_feature_mode: str = "waveform"
     fir_compute_dtype: FIRComputeDType = "float32"
     initial_head_scale: float = 1.0
     initial_controller_only: bool = False
@@ -132,6 +138,7 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         edge_fidelity_relax=float(weights_raw.get("edge_fidelity_relax", 0.9)),
         edge_ring=float(weights_raw.get("edge_ring", 300.0)),
         pre_echo_excess=float(weights_raw.get("pre_echo_excess", 0.0)),
+        post_echo_excess=float(weights_raw.get("post_echo_excess", 0.0)),
         prototype_routing=float(weights_raw.get("prototype_routing", 0.0)),
         min_entropy=float(weights_raw.get("min_entropy", 0.05)),
     )
@@ -147,6 +154,14 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
     fir_compute_dtype = str(raw.get("fir_compute_dtype", "float32"))
     if fir_compute_dtype not in SUPPORTED_FIR_COMPUTE_DTYPES:
         raise ValueError(f"Unknown fir_compute_dtype: {fir_compute_dtype!r}.")
+    controller_dilation = int(raw.get("controller_dilation", 1))
+    if controller_dilation <= 0:
+        raise ValueError("controller_dilation must be positive.")
+    controller_feature_mode = str(raw.get("controller_feature_mode", "waveform"))
+    if controller_feature_mode not in SUPPORTED_CONTROLLER_FEATURE_MODES:
+        raise ValueError(
+            f"Unknown controller_feature_mode: {controller_feature_mode!r}."
+        )
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
         batch_size=int(raw.get("batch_size", 16)),
@@ -160,6 +175,8 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         allow_tf32=bool(raw.get("allow_tf32", False)),
         deterministic=bool(raw.get("deterministic", False)),
         prototype_profile=prototype_profile,
+        controller_dilation=controller_dilation,
+        controller_feature_mode=controller_feature_mode,
         fir_compute_dtype=cast(FIRComputeDType, fir_compute_dtype),
         initial_head_scale=initial_head_scale,
         initial_controller_only=bool(raw.get("initial_controller_only", False)),
@@ -238,7 +255,12 @@ def train_capb(
             data_config.target_sample_rate,
             training_config.prototype_profile,
         )
-        model = CAPB(bank=bank, fir_compute_dtype=training_config.fir_compute_dtype)
+        model = CAPB(
+            bank=bank,
+            fir_compute_dtype=training_config.fir_compute_dtype,
+            controller_dilation=training_config.controller_dilation,
+            controller_feature_mode=training_config.controller_feature_mode,
+        )
     _scale_controller_head(model, training_config.initial_head_scale)
     model = model.to(device)
     optimizer = torch.optim.AdamW(
@@ -366,6 +388,8 @@ def _load_initial_checkpoint(
             checkpoint,
             prototype_profile=training_config.prototype_profile,
             fir_compute_dtype=training_config.fir_compute_dtype,
+            controller_dilation=training_config.controller_dilation,
+            controller_feature_mode=training_config.controller_feature_mode,
         )
         if training_config.initial_controller_only
         else capb_from_checkpoint(checkpoint)
@@ -381,6 +405,18 @@ def _load_initial_checkpoint(
             "Initial checkpoint FIR dtype "
             f"{model.fir_compute_dtype!r} does not match training dtype "
             f"{training_config.fir_compute_dtype!r}."
+        )
+    if model.controller_dilation != training_config.controller_dilation:
+        raise ValueError(
+            "Initial checkpoint controller dilation "
+            f"{model.controller_dilation} does not match training dilation "
+            f"{training_config.controller_dilation}."
+        )
+    if model.controller_feature_mode != training_config.controller_feature_mode:
+        raise ValueError(
+            "Initial checkpoint controller feature mode "
+            f"{model.controller_feature_mode!r} does not match training mode "
+            f"{training_config.controller_feature_mode!r}."
         )
     target_sample_rate = int(checkpoint.get("target_sample_rate", 88_200))
     if target_sample_rate != data_config.target_sample_rate:
@@ -423,7 +459,9 @@ def _run_epoch(
         quiet_mask = batch["quiet_mask"].to(device)
         edge_mask = batch["edge_mask"].to(device)
         pre_echo_mask = batch["pre_echo_mask"].to(device)
+        post_echo_mask = batch["post_echo_mask"].to(device)
         far_pre_echo_mask = batch["far_pre_echo_mask"].to(device)
+        safe_active_mask = batch["safe_active_mask"].to(device)
         stationary = batch["stationary"].to(device)
         focused_transient = batch["focused_event"].to(device)
 
@@ -446,7 +484,9 @@ def _run_epoch(
                 prototype_outputs=prototypes,
                 stationary=stationary,
                 pre_echo_mask=pre_echo_mask,
+                post_echo_mask=post_echo_mask,
                 far_pre_echo_mask=far_pre_echo_mask,
+                safe_active_mask=safe_active_mask,
                 focused_transient=focused_transient,
                 sharp_index=model.prototype_names.index("sharp"),
                 gentle_index=model.prototype_names.index("gentle"),
@@ -491,6 +531,8 @@ def _save_checkpoint(
             "prototype_profile": model.prototype_profile,
             "prototype_hash": model.prototype_hash,
             "fir_compute_dtype": model.fir_compute_dtype,
+            "controller_dilation": model.controller_dilation,
+            "controller_feature_mode": model.controller_feature_mode,
             "expected_input_rate": data_config.source_sample_rate,
             "target_sample_rate": data_config.target_sample_rate,
             "training_config": {
@@ -507,6 +549,8 @@ def _save_checkpoint(
                 "deterministic": config.deterministic,
                 "prototype_profile": config.prototype_profile,
                 "fir_compute_dtype": config.fir_compute_dtype,
+                "controller_dilation": config.controller_dilation,
+                "controller_feature_mode": config.controller_feature_mode,
                 "initial_head_scale": config.initial_head_scale,
                 "initial_controller_only": config.initial_controller_only,
             },

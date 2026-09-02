@@ -191,6 +191,31 @@ uv run python scripts/audit_capb_training_data.py \
 
 学習されるのは約10万parameterのcontrollerだけです。3つのFIRは固定され、checkpointにはcontrollerの学習結果と対象sample-rate系列が保存されます。
 
+### Routing v2（Sharp既定・過渡時のみ保護側）
+
+実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/flowing noiseではSharp、包絡onset/offsetと持続plateau edgeではGentle、疎なclick/impulse列ではMidを選びます。Midは曖昧な常用クラスではなく、48 kHz Gentleのimpulse利得誤差を補償しつつG2b/G2cを守る限定的な役割です。20 kHzの帯域分割は導入していません。
+
+2-prototype（Sharp/Gentle）も比較できますが、48 kHzのGentle固定端点自体がimpulseで`0.514 dB`、10 ms impulse列で`0.527 dB`のG5誤差となり、上限`0.5 dB`を超えます。このため両rate family共通の候補は3-prototypeを維持します。
+
+```bash
+# 44.1 kHz family（48 kHzは対応する _48k 設定を使う）
+uv run python scripts/train_capb.py \
+  --data-config configs/data_generation_capb_routing_v2.yaml \
+  --config configs/training_stage1_capb_routing_v2_3p.yaml
+
+uv run python scripts/evaluate_capb_routing_gates.py \
+  --checkpoint <checkpoint> \
+  --data-config configs/data_generation_capb_routing_v2.yaml \
+  --report /tmp/capb-routing-gates.json
+
+uv run python scripts/report_capb_real_audio_routing.py \
+  --audio <evaluation-only.wav> \
+  --checkpoint candidate=<checkpoint> \
+  --output-dir /tmp/capb-real-routing
+```
+
+実録音は学習へ混ぜず、方向性の診断と最終tie-breakだけに使います。正式採用にはrouting診断だけでなく、両系列・複数seedで変更していないcanonical/held-out G1〜G9、controller位相、Hann-OLA境界をすべて通す必要があります。生成checkpoint、実音源、ad-hoc plotはrepositoryへ追加しません。
+
 ### 長尺sharp FIRの実験
 
 `long_sharp_1023_a120`、`long_sharp_1535_a120`、`long_sharp_2047_a120`、および診断用の`long_sharp_2047_a140`を候補として利用できます。変更するのはsharpだけで、middle/gentleの係数はrelease版をそのまま対称ゼロ埋めします。全prototypeは同じ奇数長・中心sample・群遅延を持ち、採用前に位相差`1e-6 deg`以下、群遅延差`1e-9 sample`以下、対称誤差`1e-12`以下を満たす必要があります。

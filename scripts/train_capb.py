@@ -19,7 +19,10 @@ from totton_audio_de_mirroring.data.capb_dataset import (
     CAPBDataConfig,
     load_capb_data_config,
 )
-from totton_audio_de_mirroring.models.capb import SUPPORTED_FIR_COMPUTE_DTYPES
+from totton_audio_de_mirroring.models.capb import (
+    SUPPORTED_CONTROLLER_FEATURE_MODES,
+    SUPPORTED_FIR_COMPUTE_DTYPES,
+)
 from totton_audio_de_mirroring.models.proto_bank import supported_prototype_profiles
 from totton_audio_de_mirroring.training.capb_trainer import (
     CAPBTrainingConfig,
@@ -52,9 +55,16 @@ def main() -> None:
         default=None,
     )
     parser.add_argument("--initial-controller-only", action="store_true")
+    parser.add_argument("--controller-dilation", type=int, default=None)
+    parser.add_argument(
+        "--controller-feature-mode",
+        choices=SUPPORTED_CONTROLLER_FEATURE_MODES,
+        default=None,
+    )
     parser.add_argument("--border-trim", type=int, default=None)
     parser.add_argument("--far-pre-echo-window-ms", type=float, default=None)
     parser.add_argument("--pre-echo-excess", type=float, default=None)
+    parser.add_argument("--post-echo-excess", type=float, default=None)
     parser.add_argument("--edge-ring", type=float, default=None)
     parser.add_argument("--prototype-routing", type=float, default=None)
     parser.add_argument("--stationary-modulation", type=float, default=None)
@@ -107,6 +117,12 @@ def main() -> None:
         overrides["fir_compute_dtype"] = args.fir_compute_dtype
     if args.initial_controller_only:
         overrides["initial_controller_only"] = True
+    if args.controller_dilation is not None:
+        if args.controller_dilation <= 0:
+            raise ValueError("--controller-dilation must be positive.")
+        overrides["controller_dilation"] = args.controller_dilation
+    if args.controller_feature_mode is not None:
+        overrides["controller_feature_mode"] = args.controller_feature_mode
     if args.border_trim is not None:
         if args.border_trim < 0:
             raise ValueError("--border-trim must be non-negative.")
@@ -118,6 +134,8 @@ def main() -> None:
     loss_overrides: dict[str, float] = {}
     if args.pre_echo_excess is not None:
         loss_overrides["pre_echo_excess"] = args.pre_echo_excess
+    if args.post_echo_excess is not None:
+        loss_overrides["post_echo_excess"] = args.post_echo_excess
     if args.edge_ring is not None:
         loss_overrides["edge_ring"] = args.edge_ring
     if args.prototype_routing is not None:

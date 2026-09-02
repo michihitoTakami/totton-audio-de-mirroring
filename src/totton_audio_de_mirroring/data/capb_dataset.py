@@ -26,6 +26,7 @@ from totton_audio_de_mirroring.data.generator import apply_soft_clip, generate_s
 from totton_audio_de_mirroring.data.transient_supervision import (
     TransientSupervisionConfig,
     cardinal_upsample,
+    compute_post_echo_mask,
     compute_pre_echo_mask,
     find_event_bounds,
 )
@@ -46,6 +47,9 @@ FLAT_MASK_SLOPE_REL = 3.0e-4
 QUIET_MASK_LEVEL_REL = 1.0e-3
 EDGE_MASK_DILATION_MS = 3.0
 EDGE_SLOPE_SPIKE_REL = 0.25
+ENVELOPE_EDGE_SIGNAL_TYPES = frozenset(
+    {"damped_string", "clustered_impacts", "string_riff", "impact_stream"}
+)
 
 
 @dataclass(frozen=True)
@@ -215,6 +219,11 @@ DEFAULT_SIGNAL_MIX: dict[str, float] = {
     "pink_noise": 0.04,
     "band_limited_noise": 0.04,
     "near_nyquist_noise": 0.04,
+    "damped_string": 0.0,
+    "clustered_impacts": 0.0,
+    "flowing_noise": 0.0,
+    "string_riff": 0.0,
+    "impact_stream": 0.0,
 }
 
 STATIONARY_SIGNAL_TYPES = frozenset(
@@ -228,6 +237,7 @@ STATIONARY_SIGNAL_TYPES = frozenset(
         "near_nyquist_noise",
         "sweep_log",
         "sweep_linear",
+        "flowing_noise",
     }
 )
 
@@ -348,7 +358,12 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             ),
             sample_rate=self._config.target_sample_rate,
         )
+        if signal_type in ENVELOPE_EDGE_SIGNAL_TYPES:
+            edge_mask = compute_envelope_edge_mask(
+                clean_chunk, self._config.target_sample_rate
+            )
         pre_echo_mask = np.zeros_like(clean_chunk)
+        post_echo_mask = np.zeros_like(clean_chunk)
         far_pre_echo_mask = np.zeros_like(clean_chunk)
         if event_bounds is not None:
             event_start = event_bounds[0] - chunk_start
@@ -358,6 +373,14 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
                 sample_rate=self._config.target_sample_rate,
                 guard_ms=self._config.transient_supervision.pre_echo_guard_ms,
                 window_ms=self._config.transient_supervision.pre_echo_window_ms,
+            )
+            event_stop = event_bounds[1] - chunk_start
+            post_echo_mask = compute_post_echo_mask(
+                clean_chunk.size,
+                event_stop=event_stop,
+                sample_rate=self._config.target_sample_rate,
+                guard_ms=self._config.transient_supervision.post_echo_guard_ms,
+                window_ms=self._config.transient_supervision.post_echo_window_ms,
             )
             if self._config.transient_supervision.far_pre_echo_window_ms > 0.0:
                 far_pre_echo_mask = compute_pre_echo_mask(
@@ -374,6 +397,12 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             # an all-gentle solution.
             flat_mask = np.zeros_like(flat_mask)
             quiet_mask = np.zeros_like(quiet_mask)
+        active_threshold = max(float(np.max(np.abs(clean_chunk))) * 1.0e-3, 1.0e-8)
+        active_mask = (np.abs(clean_chunk) > active_threshold).astype(np.float64)
+        risk_mask = np.maximum.reduce(
+            (edge_mask, pre_echo_mask, post_echo_mask, far_pre_echo_mask)
+        )
+        safe_active_mask = active_mask * (1.0 - np.clip(risk_mask, 0.0, 1.0))
 
         return {
             "source": torch.from_numpy(source_chunk.astype(np.float32)),
@@ -382,7 +411,9 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             "quiet_mask": torch.from_numpy(quiet_mask.astype(np.float32)),
             "edge_mask": torch.from_numpy(edge_mask.astype(np.float32)),
             "pre_echo_mask": torch.from_numpy(pre_echo_mask.astype(np.float32)),
+            "post_echo_mask": torch.from_numpy(post_echo_mask.astype(np.float32)),
             "far_pre_echo_mask": torch.from_numpy(far_pre_echo_mask.astype(np.float32)),
+            "safe_active_mask": torch.from_numpy(safe_active_mask.astype(np.float32)),
             "stationary": torch.tensor(
                 signal_type in STATIONARY_SIGNAL_TYPES, dtype=torch.bool
             ),
@@ -484,6 +515,29 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
             }
         elif signal_type == "isolated_click":
             params = {"click_width_samples": int(rng.integers(1, 6))}
+        elif signal_type == "damped_string":
+            params = {
+                "fundamental_hz": _log_uniform(rng, 55.0, 880.0),
+                "event_duration_ms": float(rng.uniform(40.0, 140.0)),
+            }
+        elif signal_type == "clustered_impacts":
+            params = {
+                "impact_count": int(rng.integers(2, 9)),
+                "cluster_duration_ms": float(rng.uniform(5.0, 60.0)),
+            }
+        elif signal_type == "flowing_noise":
+            params = {
+                "low_hz": float(rng.uniform(40.0, 300.0)),
+                "high_hz": float(rng.uniform(8_000.0, 20_000.0)),
+                "modulation_hz": float(rng.uniform(0.2, 4.0)),
+            }
+        elif signal_type == "string_riff":
+            params = {
+                "fundamental_hz": _log_uniform(rng, 55.0, 440.0),
+                "interval_ms": float(rng.uniform(60.0, 300.0)),
+            }
+        elif signal_type == "impact_stream":
+            params = {"event_rate_hz": float(rng.uniform(4.0, 30.0))}
         elif signal_type == "band_limited_noise":
             low = float(rng.uniform(40.0, 4_000.0))
             params = {
@@ -506,9 +560,8 @@ class CAPBUpsampleDataset(Dataset[dict[str, Any]]):
         )
 
     def _rng_for_index(self, index: int) -> np.random.Generator:
-        worker_info = torch.utils.data.get_worker_info()
-        worker_id = worker_info.id if worker_info is not None else 0
-        seed = int(self._base_seed + index + worker_id * 1_000_000)
+        """Return an index-stable RNG independent of DataLoader assignment."""
+        seed = int(self._base_seed + index)
         return np.random.default_rng(seed)
 
 
@@ -587,6 +640,8 @@ def load_capb_data_config(path: Path) -> CAPBDataConfig:
         context_ms=float(transient_raw.get("context_ms", 5.0)),
         pre_echo_guard_ms=float(transient_raw.get("pre_echo_guard_ms", 0.5)),
         pre_echo_window_ms=float(transient_raw.get("pre_echo_window_ms", 3.5)),
+        post_echo_guard_ms=float(transient_raw.get("post_echo_guard_ms", 0.5)),
+        post_echo_window_ms=float(transient_raw.get("post_echo_window_ms", 3.5)),
         far_pre_echo_guard_ms=float(transient_raw.get("far_pre_echo_guard_ms", 4.0)),
         far_pre_echo_window_ms=float(transient_raw.get("far_pre_echo_window_ms", 0.0)),
         edge_supervision_signal_types=tuple(
@@ -767,6 +822,43 @@ def compute_edge_mask(
         transitions = np.maximum(transitions, spikes)
     half_window = max(1, int(round(EDGE_MASK_DILATION_MS * sample_rate / 1_000.0)))
     return (_moving_max(transitions, half_window) > 0.0).astype(np.float64)
+
+
+def compute_envelope_edge_mask(
+    clean_signal: np.ndarray, sample_rate: int
+) -> np.ndarray:
+    """Mark onset/offset neighborhoods from a short absolute envelope.
+
+    Args:
+        clean_signal: Non-empty one-dimensional clean waveform.
+        sample_rate: Waveform sample rate in Hz.
+
+    Returns:
+        Float mask that excludes stationary carrier cycles.
+
+    Physical Basis:
+        Resonant strings and impacts contain steep carrier slopes throughout
+        their decay. Ringing risk changes at envelope onsets and offsets, so
+        labelling every carrier cycle as an edge would incorrectly request
+        gentle filtering during safe sustain.
+    """
+    if clean_signal.ndim != 1 or clean_signal.size == 0:
+        raise ValueError("clean_signal must be a non-empty 1D array.")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive.")
+    from scipy.ndimage import uniform_filter1d
+
+    smooth = max(3, round(0.5e-3 * sample_rate))
+    envelope = uniform_filter1d(
+        np.abs(np.asarray(clean_signal, dtype=np.float64)), size=smooth, mode="nearest"
+    )
+    lag = max(1, round(0.5e-3 * sample_rate))
+    change = np.zeros_like(envelope)
+    change[lag:] = np.abs(envelope[lag:] - envelope[:-lag])
+    threshold = max(float(np.max(envelope)) * 0.05, 1.0e-10)
+    events = (change > threshold).astype(np.float64)
+    half_window = max(1, round(EDGE_MASK_DILATION_MS * sample_rate / 1_000.0))
+    return (_moving_max(events, half_window) > 0.0).astype(np.float64)
 
 
 def _moving_max(values: np.ndarray, half_window: int) -> np.ndarray:

@@ -11,6 +11,13 @@ from scipy import signal as sp_signal
 from totton_audio_de_mirroring.data.probe_generators import (
     PROBE_FAMILY_GENERATORS,
 )
+from totton_audio_de_mirroring.data.realistic_signals import (
+    generate_clustered_impacts,
+    generate_damped_string,
+    generate_flowing_noise,
+    generate_impact_stream,
+    generate_string_riff,
+)
 
 DEFAULT_SAMPLE_RATE = 44_100
 DEFAULT_DURATION_SEC = 1.0
@@ -756,6 +763,11 @@ _SIGNAL_GENERATORS: dict[str, Callable[..., np.ndarray]] = {
     "pink_noise": generate_pink_noise,
     "band_limited_noise": generate_band_limited_noise,
     "soft_clipped_tone": generate_soft_clipped_tone,
+    "damped_string": generate_damped_string,
+    "clustered_impacts": generate_clustered_impacts,
+    "flowing_noise": generate_flowing_noise,
+    "string_riff": generate_string_riff,
+    "impact_stream": generate_impact_stream,
     **PROBE_FAMILY_GENERATORS,
 }
 

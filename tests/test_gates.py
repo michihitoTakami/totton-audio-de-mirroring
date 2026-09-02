@@ -108,6 +108,37 @@ def test_config_override_tightens_gate() -> None:
     assert not gate.passed
 
 
+def test_post_echo_gate_binds_against_bessel_reference() -> None:
+    evaluation = ProbeEvaluation(
+        spec=ProbeSpec(
+            probe_id="impulse",
+            kind="impulse",
+            tier=TIER_CANONICAL,
+            amplitude=0.5,
+        ),
+        metrics={
+            "pre_echo_energy_before": 1.0e-6,
+            "pre_echo_energy_after": 1.0e-6,
+            "post_echo_energy_before": 1.0e-4,
+            "post_echo_energy_after": 2.0e-4,
+            "image_rel_db": -100.0,
+            "image_abs_db": -150.0,
+            "image_before_abs_db": -150.0,
+            "gain_error_db": 0.0,
+            "gain_band_fraction": 1.0,
+        },
+    )
+
+    gate = next(
+        result
+        for result in evaluate_gates([evaluation]).gates
+        if result.gate_id == "G2c_post_echo"
+    )
+
+    assert not gate.passed
+    assert gate.worst_probe_id == "impulse"
+
+
 def test_sweep_peak_image_metric_is_worst_case_binding() -> None:
     evaluation = ProbeEvaluation(
         spec=ProbeSpec(

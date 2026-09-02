@@ -44,7 +44,7 @@ from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
 
-GATE_SPEC_VERSION = 4
+GATE_SPEC_VERSION = 5
 _EPSILON = 1e-300
 
 LF_RINGING_MAX_FREQ_HZ = 2_000.0
@@ -72,6 +72,8 @@ class Stage1GateConfig:
         overshoot_floor_rel: Absolute overshoot floor relative to amplitude.
         pre_echo_energy_ratio_max: Allowed pre-echo energy growth (energy).
         pre_echo_floor_rel: Amplitude-relative pre-echo absolute floor.
+        post_echo_energy_ratio_max: Allowed post-echo energy growth.
+        post_echo_floor_rel: Amplitude-relative post-echo absolute floor.
         image_rel_max_db: Max image-band level relative to main band (steady).
         image_peak_rel_max_db: Max swept-ridge image peak relative to main peak.
         added_hf_max_db: Max image-band increase over the Bessel reference.
@@ -97,6 +99,8 @@ class Stage1GateConfig:
     overshoot_floor_rel: float = 0.02
     pre_echo_energy_ratio_max: float = 1.44
     pre_echo_floor_rel: float = 1.0e-3
+    post_echo_energy_ratio_max: float = 1.44
+    post_echo_floor_rel: float = 1.0e-3
     image_rel_max_db: float = -65.0
     image_peak_rel_max_db: float = -65.0
     added_hf_max_db: float = 3.0
@@ -253,15 +257,21 @@ def evaluate_probe(
         )
 
     if spec.kind in {KIND_IMPULSE, KIND_IMPULSE_TRAIN, KIND_TONE_BURST}:
-        center = _event_center_index(spec, output.size, target_sample_rate)
+        onset = _event_center_index(spec, output.size, target_sample_rate)
+        event_stop = _event_stop_index(spec, onset, target_sample_rate)
         pre_before, _ = _event_echo_energies(
-            bessel_reference, center, target_sample_rate
+            bessel_reference, onset, target_sample_rate
         )
-        pre_after, post_after = _event_echo_energies(output, center, target_sample_rate)
+        _, post_before = _event_echo_energies(
+            bessel_reference, event_stop, target_sample_rate
+        )
+        pre_after, _ = _event_echo_energies(output, onset, target_sample_rate)
+        _, post_after = _event_echo_energies(output, event_stop, target_sample_rate)
         metrics.update(
             {
                 "pre_echo_energy_before": pre_before,
                 "pre_echo_energy_after": pre_after,
+                "post_echo_energy_before": post_before,
                 "post_echo_energy_after": post_after,
             }
         )
@@ -339,6 +349,7 @@ def evaluate_gates(
         _gate_ringing("G1_lf_ringing", evaluations, cfg, low_frequency=True),
         _gate_ringing("G2_hf_ringing", evaluations, cfg, low_frequency=False),
         _gate_pre_echo(evaluations, cfg),
+        _gate_post_echo(evaluations, cfg),
         _gate_mirror(evaluations, cfg),
         _gate_flatness(evaluations, cfg),
         _gate_gain(evaluations, cfg),
@@ -467,6 +478,30 @@ def _gate_pre_echo(
             ),
         )
     return _finalize("G2b_pre_echo", rows)
+
+
+def _gate_post_echo(
+    evaluations: list[ProbeEvaluation], cfg: Stage1GateConfig
+) -> GateResult:
+    """Gate post-event energy against the same Bessel-relative policy as G2b."""
+    rows: list[GateRow] = []
+    for evaluation in evaluations:
+        metrics = evaluation.metrics
+        if "post_echo_energy_after" not in metrics:
+            continue
+        amp = evaluation.spec.amplitude
+        rows += _threshold_rows(
+            evaluation.spec,
+            (
+                (
+                    "post_echo_energy_after",
+                    metrics["post_echo_energy_after"],
+                    cfg.post_echo_energy_ratio_max * metrics["post_echo_energy_before"],
+                    (cfg.post_echo_floor_rel * amp) ** 2,
+                ),
+            ),
+        )
+    return _finalize("G2c_post_echo", rows)
 
 
 def _gate_mirror(
@@ -713,6 +748,14 @@ def _event_center_index(spec: ProbeSpec, length: int, sample_rate: int) -> int:
         burst_len = max(3, int(round(spec.burst_ms * sample_rate / 1_000.0)))
         return (length - burst_len) // 2
     return length // 2
+
+
+def _event_stop_index(spec: ProbeSpec, onset: int, sample_rate: int) -> int:
+    """Return the exclusive event end used to start post-echo measurement."""
+    if spec.kind == KIND_TONE_BURST and spec.burst_ms:
+        burst_len = max(3, int(round(spec.burst_ms * sample_rate / 1_000.0)))
+        return onset + burst_len
+    return onset + 1
 
 
 def _event_echo_energies(

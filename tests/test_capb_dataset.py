@@ -14,7 +14,9 @@ from totton_audio_de_mirroring.data.capb_dataset import (
     CAPBUpsampleDataset,
     TransientSupervisionConfig,
     compute_edge_mask,
+    compute_envelope_edge_mask,
     compute_flat_mask,
+    compute_post_echo_mask,
     compute_pre_echo_mask,
     compute_quiet_mask,
     load_capb_data_config,
@@ -54,6 +56,8 @@ def test_sample_shapes(dataset) -> None:
     assert sample["source"].shape == (chunk_len // UPSAMPLE_RATIO,)
     assert sample["flat_mask"].shape == (chunk_len,)
     assert sample["quiet_mask"].shape == (chunk_len,)
+    assert sample["post_echo_mask"].shape == (chunk_len,)
+    assert sample["safe_active_mask"].shape == (chunk_len,)
     assert sample["stationary"].shape == ()
 
 
@@ -74,6 +78,19 @@ def test_deterministic_by_index(dataset) -> None:
     second = dataset[3]
     torch.testing.assert_close(first["target"], second["target"])
     assert first["signal_type"] == second["signal_type"]
+
+
+def test_deterministic_seed_is_independent_of_worker_assignment(
+    dataset: CAPBUpsampleDataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Worker:
+        id = 7
+
+    baseline = dataset._rng_for_index(3).standard_normal(8)
+    monkeypatch.setattr(torch.utils.data, "get_worker_info", lambda: Worker())
+    worker_values = dataset._rng_for_index(3).standard_normal(8)
+
+    np.testing.assert_array_equal(baseline, worker_values)
 
 
 def test_flat_mask_marks_square_plateaus() -> None:
@@ -119,6 +136,7 @@ def test_focused_edge_family_uses_dedicated_transient_masks() -> None:
     assert float(sample["quiet_mask"].sum()) == 0.0
     assert float(sample["edge_mask"].sum()) > 0.0
     assert float(sample["pre_echo_mask"].sum()) > 0.0
+    assert float(sample["post_echo_mask"].sum()) > 0.0
     assert not bool(sample["stationary"])
 
 
@@ -139,6 +157,7 @@ def test_focused_click_always_has_gate_aligned_mask(focused_click_dataset) -> No
         sample = focused_click_dataset[index]
         assert bool(sample["focused_event"])
         assert int(torch.count_nonzero(sample["pre_echo_mask"])) == expected
+        assert int(torch.count_nonzero(sample["post_echo_mask"])) == expected
         torch.testing.assert_close(sample["source"], sample["target"][::2])
 
 
@@ -200,6 +219,34 @@ def test_pre_echo_mask_matches_gate_window() -> None:
     mask = compute_pre_echo_mask(2_000, event_start=1_000, sample_rate=100_000)
     assert np.all(mask[600:950] == 1.0)
     assert float(mask[:600].sum() + mask[950:].sum()) == 0.0
+
+
+def test_post_echo_mask_matches_gate_window() -> None:
+    mask = compute_post_echo_mask(2_000, event_stop=1_000, sample_rate=100_000)
+    assert np.all(mask[1_050:1_400] == 1.0)
+    assert float(mask[:1_050].sum() + mask[1_400:].sum()) == 0.0
+
+
+def test_safe_active_mask_excludes_transient_risk_windows(
+    focused_click_dataset,
+) -> None:
+    sample = focused_click_dataset[0]
+    risk = torch.maximum(sample["edge_mask"], sample["pre_echo_mask"])
+    risk = torch.maximum(risk, sample["post_echo_mask"])
+
+    assert int(torch.count_nonzero(sample["safe_active_mask"] * risk)) == 0
+
+
+def test_envelope_edge_mask_ignores_stationary_carrier_cycles() -> None:
+    time = np.arange(TARGET_SAMPLE_RATE // 2) / TARGET_SAMPLE_RATE
+    signal = np.sin(2.0 * np.pi * 8_000.0 * time)
+    signal[: TARGET_SAMPLE_RATE // 10] = 0.0
+
+    mask = compute_envelope_edge_mask(signal, TARGET_SAMPLE_RATE)
+
+    assert float(np.mean(mask)) < 0.05
+    onset = TARGET_SAMPLE_RATE // 10
+    assert float(np.sum(mask[onset - 512 : onset + 512])) > 0.0
 
 
 def test_imd_two_tone_is_marked_stationary() -> None:

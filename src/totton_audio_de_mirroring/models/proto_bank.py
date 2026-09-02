@@ -33,6 +33,7 @@ DEFAULT_BESSEL_ORDER = 6
 _RESPONSE_FFT_SIZE = 1 << 17
 _MAGNITUDE_FIT_GRID = 2049
 RELEASE_PROTOTYPE_PROFILE = "release_v4"
+TWO_PROTOTYPE_PROFILE = "release_v4_2p"
 LONG_FIR_PROTOTYPE_PROFILES: dict[str, tuple[int, float]] = {
     "long_sharp_1023_a120": (1023, 120.0),
     "long_sharp_1535_a120": (1535, 120.0),
@@ -180,7 +181,11 @@ def prototype_specs_for_target_rate(
 
 def supported_prototype_profiles() -> tuple[str, ...]:
     """Return all stable release and experimental profile identifiers."""
-    return (RELEASE_PROTOTYPE_PROFILE, *LONG_FIR_PROTOTYPE_PROFILES)
+    return (
+        RELEASE_PROTOTYPE_PROFILE,
+        TWO_PROTOTYPE_PROFILE,
+        *LONG_FIR_PROTOTYPE_PROFILES,
+    )
 
 
 def prototype_specs_for_profile(
@@ -207,6 +212,8 @@ def prototype_specs_for_profile(
     base_specs = prototype_specs_for_target_rate(target_sample_rate)
     if profile_name == RELEASE_PROTOTYPE_PROFILE:
         return base_specs
+    if profile_name == TWO_PROTOTYPE_PROFILE:
+        return (base_specs[0], base_specs[-1])
     profile = LONG_FIR_PROTOTYPE_PROFILES.get(profile_name)
     if profile is None:
         supported = ", ".join(supported_prototype_profiles())
