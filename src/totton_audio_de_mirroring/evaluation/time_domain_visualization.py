@@ -7,6 +7,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import signal as sp_signal
 
 EPSILON = 1.0e-12
 
@@ -250,6 +251,7 @@ def compare_edge_aligned_ringing(
     plateau_start_ms: float = 0.1,
     plateau_end_ms: float = 0.8,
     ringing_window_ms: float = 0.8,
+    oversample: int = 1,
 ) -> RingingComparisonMetrics:
     """Compare edge-aligned ringing metrics between before/after signals.
 
@@ -260,9 +262,13 @@ def compare_edge_aligned_ringing(
         plateau_start_ms: Plateau window start after edge in ms.
         plateau_end_ms: Plateau window end after edge in ms.
         ringing_window_ms: Window length for pre/post ringing energy in ms.
+        oversample: Integer sinc-interpolation factor applied to both signals
+            before edge detection and windowing. One keeps the native grid.
 
     Returns:
-        RingingComparisonMetrics with relative degradation indicators.
+        RingingComparisonMetrics with relative degradation indicators. When
+        ``oversample`` exceeds one, ``edge_index`` values refer to the
+        oversampled grid while ``edge_time_ms`` stays in real time.
 
     Raises:
         ValueError: If inputs are invalid.
@@ -270,11 +276,28 @@ def compare_edge_aligned_ringing(
     Physical Basis:
         Relative regression metrics are robust against absolute level changes
         and directly encode "worse than before" behavior for quality gates.
+        Square edges of the frozen probes can fall exactly between output
+        samples (48 kHz: 2 kHz squares span 24 samples), so a native-grid edge
+        detector and the 0.1--0.8 ms plateau window move by a whole sample
+        with sub-sample changes in the signal, and the Bessel reference is
+        measured at a different sub-sample phase than at 44.1 kHz. Sinc
+        oversampling makes edge alignment and window boundaries sub-sample so
+        the metric reflects the filter response rather than grid phase.
     """
     if before_signal.ndim != 1 or after_signal.ndim != 1:
         raise ValueError("before_signal and after_signal must be 1D")
     if before_signal.shape != after_signal.shape:
         raise ValueError("before_signal and after_signal must have same shape")
+    if oversample < 1:
+        raise ValueError(f"oversample must be a positive integer, got {oversample}")
+    if oversample > 1:
+        before_signal = np.asarray(
+            sp_signal.resample_poly(before_signal, oversample, 1), dtype=np.float64
+        )
+        after_signal = np.asarray(
+            sp_signal.resample_poly(after_signal, oversample, 1), dtype=np.float64
+        )
+        sample_rate = sample_rate * oversample
 
     before = compute_edge_aligned_ringing_metrics(
         signal=before_signal,

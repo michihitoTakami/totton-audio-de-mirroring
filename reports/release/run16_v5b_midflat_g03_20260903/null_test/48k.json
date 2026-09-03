@@ -1,0 +1,29 @@
+{
+  "input_wav": "/tmp/capb_null_inputs_20260903/probe_48000.wav",
+  "checkpoint_path": "/tmp/capb_v5b_ft_48_g0.3_s1234/capb_best.pt",
+  "onnx_path": "/tmp/capb_v5b_g03_eval_20260903/onnx/capb_stage1_48k_to_96k.onnx",
+  "onnx_contract": "waveform",
+  "sample_rates": {
+    "input": 48000,
+    "output": 96000
+  },
+  "stats": {
+    "pt": {
+      "rms": 0.2835681059879134,
+      "peak": 0.768868088722229,
+      "rms_dbfs": -10.946852350765734,
+      "peak_dbfs": -2.2829632755996903
+    },
+    "onnx": {
+      "rms": 0.2835681074640855,
+      "peak": 0.7688679695129395,
+      "rms_dbfs": -10.946852305549548,
+      "peak_dbfs": -2.2829646223050983
+    }
+  },
+  "null_pt_minus_onnx": {
+    "diff_rms": 1.1055381490518869e-07,
+    "diff_peak": 5.960464477539062e-07,
+    "null_depth_db": -128.18167297983396
+  }
+}

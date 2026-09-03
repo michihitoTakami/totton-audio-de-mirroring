@@ -44,7 +44,14 @@ from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
 
-GATE_SPEC_VERSION = 5
+# Spec 6: square/DC-step ringing metrics are measured on 8x sinc-oversampled
+# signals so edge alignment and plateau windows are sub-sample. Thresholds and
+# their Bessel-relative definitions are unchanged; the change removes the
+# output-grid phase dependence that made 48 kHz square rows (edges exactly
+# between 96 kHz samples) jump by a whole sample and gave the two rate
+# families different effective thresholds for the same filter behavior.
+GATE_SPEC_VERSION = 6
+SQUARE_EDGE_OVERSAMPLE = 8
 _EPSILON = 1e-300
 
 LF_RINGING_MAX_FREQ_HZ = 2_000.0
@@ -244,6 +251,7 @@ def evaluate_probe(
             before_signal=bessel_reference,
             after_signal=output,
             sample_rate=target_sample_rate,
+            oversample=SQUARE_EDGE_OVERSAMPLE,
         )
         metrics.update(
             {

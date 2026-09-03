@@ -1,14 +1,14 @@
 {
   "release_date": "2026-09-03",
   "recommended": {
-    "44k1": "run15_v5b_midflat_g06_20260903",
-    "48k": "run15_v5b_midflat_g06_20260903"
+    "44k1": "run16_v5b_midflat_g03_20260903",
+    "48k": "run16_v5b_midflat_g03_20260903"
   },
   "recommended_checkpoints": {
-    "44k1": "data/checkpoints/capb/run15_v5b_midflat_g06_20260903_44k1/capb_best.pt",
-    "48k": "data/checkpoints/capb_48k/run15_v5b_midflat_g06_20260903_48k/capb_best.pt"
+    "44k1": "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt",
+    "48k": "data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt"
   },
-  "recommended_pair_release_quality": "run15_v5b_midflat_g06_20260903/release_quality/release_quality.json",
+  "recommended_pair_release_quality": "run16_v5b_midflat_g03_20260903/release_quality/release_quality.json",
   "candidates": {
     "run13_routing_v2_sharpfloor_20260903": {
       "manifest": "run13_routing_v2_sharpfloor_20260903/release_manifest.json",
@@ -33,7 +33,15 @@
         "44k1": "data/checkpoints/capb/run15_v5b_midflat_g06_20260903_44k1/capb_best.pt",
         "48k": "data/checkpoints/capb_48k/run15_v5b_midflat_g06_20260903_48k/capb_best.pt"
       }
+    },
+    "run16_v5b_midflat_g03_20260903": {
+      "manifest": "run16_v5b_midflat_g03_20260903/release_manifest.json",
+      "prototype_profile": "v5b_sharp1023_midflat70",
+      "families": {
+        "44k1": "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt",
+        "48k": "data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt"
+      }
     }
   },
-  "recommendation_note": "run15 keeps the 1023-tap sharp bank, replaces the 80 dB middle with a ~100-tap flat Kaiser (20-24 kHz, 70 dB) and lowers the impulse gentle fraction to 0.6 for both families. All three seeds pass G1-G9 on CPU and strict-FP32 CUDA; G5 headroom grows from ~10 % to ~40 %, G2b improves by an order of magnitude, hit-time HF is closer to sharp; isolated-impulse ringing is -23 dB instead of -32 dB."
+  "recommendation_note": "run16 keeps the run15 v5b bank and lowers the impulse gentle fraction to 0.3 for both families. Gate spec 6 measures square/DC-step ringing on 8x sinc-oversampled signals so the 48 kHz square rows no longer depend on output-grid phase. All three seeds pass G1-G9 (spec 6) on CPU and strict-FP32 CUDA; G5 headroom grows further, hit-time HF is closer to sharp, and isolated-impulse ringing is about -20 dB (sharp alone -15 dB, run15 -23 dB)."
 }

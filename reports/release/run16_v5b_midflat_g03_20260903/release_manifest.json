@@ -1,0 +1,53 @@
+{
+  "run": "run16_v5b_midflat_g03_20260903",
+  "release_date": "2026-09-03",
+  "prototype_profile": "v5b_sharp1023_midflat70",
+  "recipe": "routing_v2 + stationary_sharp_floor; controller transferred from run14 onto the v5b bank (sharp 1023 taps / Kaiser 140 dB, flat middle Kaiser 20-24 kHz 70 dB, gentle Bessel6@20k) with focused_gentle_fraction 0.3 for both families (gate spec 6)",
+  "selected_seed": 1234,
+  "seeds": [
+    1234,
+    2026,
+    4649
+  ],
+  "precision": {
+    "mode": "strict_fp32",
+    "allow_tf32": false,
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "cudnn": 91002,
+    "gpu": "NVIDIA GeForce RTX 5060 Ti"
+  },
+  "gate_spec_version": 6,
+  "families": {
+    "44k1": {
+      "checkpoint": "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt",
+      "checkpoint_sha256": "9bb3c9c6397a1873ee063e721009cd48328462580cd730a4a771d9d6abe5da49",
+      "prototype_hash": "3ae37d4d562df740dc3945c2a2dfb5f2c4ba807f5ee10725a85e9529a077252a",
+      "manifest_hash": "085959477798407d",
+      "routing_prior": {
+        "focused_gentle_fraction": 0.3,
+        "level_change_threshold": 0.3
+      },
+      "all_passed_cpu": true,
+      "onnx_sha256": "51c20d0dae549c0a6172a0513a09cde026323dee0a6705a42ba770059b25a06e",
+      "onnx_max_abs_error": 1.0132789611816406e-06,
+      "wav_null_peak": 1.1175870895385742e-06,
+      "wav_null_depth_db": -128.15430715205434
+    },
+    "48k": {
+      "checkpoint": "data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt",
+      "checkpoint_sha256": "e00b31382ac3da3305741ae7c18ec349261ca140265972d3dd7edb3f966983bd",
+      "prototype_hash": "06e8efc5a724059613cc45afdedab7c101d2ca0753da4494a5bbcf10ee2ac363",
+      "manifest_hash": "6529deadaab177fe",
+      "routing_prior": {
+        "focused_gentle_fraction": 0.3,
+        "level_change_threshold": 0.3
+      },
+      "all_passed_cpu": true,
+      "onnx_sha256": "766286442e752ccca0932c0ea026117ea5f7f195b5c93c789eecfa98bcad2fa6",
+      "onnx_max_abs_error": 1.1324882507324219e-06,
+      "wav_null_peak": 5.960464477539062e-07,
+      "wav_null_depth_db": -128.18167297983396
+    }
+  }
+}

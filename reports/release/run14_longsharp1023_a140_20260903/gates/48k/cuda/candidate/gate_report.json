@@ -1,6 +1,6 @@
 {
   "all_passed": true,
-  "spec_version": 5,
+  "spec_version": 6,
   "manifest_hash": "6529deadaab177fe",
   "config": {
     "plateau_ripple_ratio_max": 1.1,
@@ -29,13 +29,13 @@
     {
       "gate_id": "G1_lf_ringing",
       "passed": true,
-      "worst_probe_id": "square_1730hz_held",
+      "worst_probe_id": "square_2000hz",
       "rows": [
         {
           "probe_id": "square_50hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 1.5030608233135998e-05,
+          "value": 0.0001741618279252792,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -44,17 +44,17 @@
           "probe_id": "square_50hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.00158,
+          "value": 0.0006528420815773428,
+          "threshold": 0.001869930035321521,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "square_50hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -62,7 +62,7 @@
           "probe_id": "square_100hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 1.5030608233135998e-05,
+          "value": 0.0001741618279252792,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -71,17 +71,17 @@
           "probe_id": "square_100hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.00158,
+          "value": 0.0006528420815773428,
+          "threshold": 0.0019522671311408225,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "square_100hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -89,7 +89,7 @@
           "probe_id": "square_500hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 1.5035158457676399e-05,
+          "value": 0.00017403786390003255,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -98,17 +98,17 @@
           "probe_id": "square_500hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.00158,
+          "value": 0.0006528420815773428,
+          "threshold": 0.0019522671311408225,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "square_500hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.030006018205003038,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -116,8 +116,8 @@
           "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.659330589774772,
-          "threshold": 0.7236717679700103,
+          "value": 0.6511156146358542,
+          "threshold": 0.71751774642668,
           "passed": true,
           "binding": "relative"
         },
@@ -125,8 +125,8 @@
           "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 1.0498719215393066,
-          "threshold": 1.1739559343913657,
+          "value": 1.061730851787979,
+          "threshold": 1.180684012895177,
           "passed": true,
           "binding": "relative"
         },
@@ -134,8 +134,8 @@
           "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.024476826190948486,
-          "threshold": 0.07186889259763063,
+          "value": 0.03014799180916683,
+          "threshold": 0.07776373442649825,
           "passed": true,
           "binding": "relative"
         },
@@ -143,8 +143,8 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.5545959992528369,
-          "threshold": 0.6203969981910715,
+          "value": 0.6224856991557192,
+          "threshold": 0.6644783838871772,
           "passed": true,
           "binding": "relative"
         },
@@ -152,8 +152,8 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 1.0498727560043335,
-          "threshold": 1.2469314469993513,
+          "value": 1.0617312521853992,
+          "threshold": 1.2596430100688023,
           "passed": true,
           "binding": "relative"
         },
@@ -161,8 +161,8 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.18118292093276978,
-          "threshold": 0.20817925167482548,
+          "value": 0.05795688031201213,
+          "threshold": 0.1367460779222182,
           "passed": true,
           "binding": "relative"
         },
@@ -170,7 +170,7 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 1.5031111079696276e-06,
+          "value": 1.7403657729755814e-05,
           "threshold": 5e-05,
           "passed": true,
           "binding": "absolute"
@@ -179,17 +179,17 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 1.1868774890899658e-05,
-          "threshold": 0.00015800000000000002,
+          "value": 6.528222480042811e-05,
+          "threshold": 0.00019522671311408837,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.0024031363427639008,
-          "threshold": 0.01167870227442119,
+          "value": 0.0030005976482035054,
+          "threshold": 0.012261009621053785,
           "passed": true,
           "binding": "relative"
         },
@@ -197,7 +197,7 @@
           "probe_id": "dc_step_up",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 1.5030608233135998e-05,
+          "value": 0.00017492299875620734,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -206,8 +206,8 @@
           "probe_id": "dc_step_up",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.0019509686673307271,
+          "value": 0.0006528420815773428,
+          "threshold": 0.002287554458478991,
           "passed": true,
           "binding": "relative"
         },
@@ -215,8 +215,8 @@
           "probe_id": "dc_step_up",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -224,7 +224,7 @@
           "probe_id": "dc_step_down",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 1.5030608233135998e-05,
+          "value": 0.00017492299875620734,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -233,8 +233,8 @@
           "probe_id": "dc_step_down",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.0019509686673307271,
+          "value": 0.0006528420815773428,
+          "threshold": 0.002287554458478991,
           "passed": true,
           "binding": "relative"
         },
@@ -242,8 +242,8 @@
           "probe_id": "dc_step_down",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -251,7 +251,7 @@
           "probe_id": "square_73hz_held",
           "tier": "held_out",
           "metric": "plateau_rms_after",
-          "value": 1.5030608233135998e-05,
+          "value": 0.00017404146741000414,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -260,17 +260,17 @@
           "probe_id": "square_73hz_held",
           "tier": "held_out",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.00158,
+          "value": 0.0006528420815773428,
+          "threshold": 0.0021838188858614663,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "square_73hz_held",
           "tier": "held_out",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -278,7 +278,7 @@
           "probe_id": "square_331hz_held",
           "tier": "held_out",
           "metric": "plateau_rms_after",
-          "value": 1.5030608233135998e-05,
+          "value": 0.00017404146741000414,
           "threshold": 0.0005,
           "passed": true,
           "binding": "absolute"
@@ -287,17 +287,17 @@
           "probe_id": "square_331hz_held",
           "tier": "held_out",
           "metric": "plateau_p2p_after",
-          "value": 0.00011873245239257812,
-          "threshold": 0.00158,
+          "value": 0.0006528420815773428,
+          "threshold": 0.0021838188858614663,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "square_331hz_held",
           "tier": "held_out",
           "metric": "overshoot_after",
-          "value": 0.024031460285186768,
-          "threshold": 0.07178702274421189,
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
         },
@@ -305,8 +305,8 @@
           "probe_id": "square_1730hz_held",
           "tier": "held_out",
           "metric": "plateau_rms_after",
-          "value": 0.636741091995377,
-          "threshold": 0.6939546705754495,
+          "value": 0.6339118705208333,
+          "threshold": 0.6927752393027495,
           "passed": true,
           "binding": "relative"
         },
@@ -314,8 +314,8 @@
           "probe_id": "square_1730hz_held",
           "tier": "held_out",
           "metric": "plateau_p2p_after",
-          "value": 1.0498720407485962,
-          "threshold": 1.2469314170413617,
+          "value": 1.0617310195185907,
+          "threshold": 1.25964308445788,
           "passed": true,
           "binding": "relative"
         },
@@ -323,8 +323,8 @@
           "probe_id": "square_1730hz_held",
           "tier": "held_out",
           "metric": "overshoot_after",
-          "value": 0.02453058958053589,
-          "threshold": 0.07951698194571033,
+          "value": 0.03410201336813967,
+          "threshold": 0.08626958145641694,
           "passed": true,
           "binding": "relative"
         }
@@ -339,8 +339,8 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.5400793354636411,
-          "threshold": 0.562973416799242,
+          "value": 0.4734104990514686,
+          "threshold": 0.5129512524983283,
           "passed": true,
           "binding": "relative"
         },
@@ -348,8 +348,8 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 1.0530312657356262,
-          "threshold": 1.2468891735032086,
+          "value": 1.0654274937859651,
+          "threshold": 1.2609128216131438,
           "passed": true,
           "binding": "relative"
         },
@@ -357,8 +357,8 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.1832675039768219,
-          "threshold": 0.28298553231815193,
+          "value": 0.34636525271735996,
+          "threshold": 0.4149723382603677,
           "passed": true,
           "binding": "relative"
         },
@@ -366,8 +366,8 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "plateau_rms_after",
-          "value": 0.5407902619960532,
-          "threshold": 0.5631104671868424,
+          "value": 0.4888809969391962,
+          "threshold": 0.5272034157385747,
           "passed": true,
           "binding": "relative"
         },
@@ -375,8 +375,8 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "plateau_p2p_after",
-          "value": 1.0510412454605103,
-          "threshold": 1.2468718275280881,
+          "value": 1.0636607614326041,
+          "threshold": 1.2605535165231245,
           "passed": true,
           "binding": "relative"
         },
@@ -384,8 +384,8 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "overshoot_after",
-          "value": 0.18078461289405823,
-          "threshold": 0.28297122943429487,
+          "value": 0.30151572716906927,
+          "threshold": 0.3732436823072677,
           "passed": true,
           "binding": "relative"
         }
