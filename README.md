@@ -151,12 +151,14 @@ uv run python scripts/train_capb.py \
   --config configs/training_stage1_capb.yaml
 ```
 
-44.1 kHzの最終margin polishは、同梱したpre-polish checkpointから再現できます。
+44.1 kHzのmargin polishは、親checkpointと出力先をCLIで指定する1 epochの追学習です。同じrecipeを、別のprototype bankへcontrollerだけを移す転写にも使います。
 
 ```bash
 uv run python scripts/train_capb.py \
   --data-config configs/data_generation_capb.yaml \
   --config configs/training_stage1_capb_44k1_margin.yaml \
+  --init-checkpoint <parent-checkpoint> \
+  --checkpoint-dir <output-dir> \
   --summary-json /tmp/capb-44k1-margin.json
 ```
 
@@ -174,8 +176,8 @@ uv run python scripts/train_capb.py \
 uv run python scripts/train_capb.py \
   --data-config configs/data_generation_capb_48k_balanced.yaml \
   --config configs/training_stage1_capb_48k_balanced_margin.yaml \
-  --init-checkpoint data/checkpoints/capb_48k/run11_48k_optimized_20260830/capb_best.pt \
-  --checkpoint-dir data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830 \
+  --init-checkpoint <parent-checkpoint> \
+  --checkpoint-dir <output-dir> \
   --summary-json /tmp/capb-48k-margin.json
 ```
 
@@ -193,7 +195,7 @@ uv run python scripts/audit_capb_training_data.py \
 
 ### Routing v2（Sharp既定・過渡時のみ保護側）
 
-実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配し（44.1 kHz `0.90`、48 kHz `0.85`）、Midは曖昧な常用クラスではなく、48 kHz Gentleのimpulse利得誤差を補償しつつG2b/G2cを守る限定的な役割です。初期の候補はimpulseでMid=1.0を選びリンギングがSharpに近づいたため、Gentle主体へ改めました。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。それでも学習ヘッドが定常ノイズ上でGentleを足す残りはseed依存で（3 seed中1 seedがG3を落としました）、定常サンプルの安全フレームでSharp重みが`sharp_floor`（`0.995`）を下回った分を罰する`stationary_sharp_floor`損失（重み`1000`）で解消しています。この処方は3 seed×両系列でG1〜G9を通過し、2026-09-03のrelease pairになりました。20 kHzの帯域分割は導入していません。
+実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配します。現在の推奨値は両系列とも`0.3`で、残る`0.7`をフラットなMidが受けます（routing v2導入時は44.1 kHz `0.90`、48 kHz `0.85`でしたが、打撃の高域減衰を避けるため下げました。詳細は「学習済み成果物」節）。Midは曖昧な常用クラスではなく、Gentleのimpulse利得誤差と高域ロールオフを補償しつつG2b/G2cを守る限定的な役割です。比率`0.0`はMidのGibbsリップルが5 kHz矩形でG2を落とすため採用しません。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。それでも学習ヘッドが定常ノイズ上でGentleを足す残りはseed依存で（3 seed中1 seedがG3を落としました）、定常サンプルの安全フレームでSharp重みが`sharp_floor`（`0.995`）を下回った分を罰する`stationary_sharp_floor`損失（重み`1000`）で解消しています。この処方は3 seed×両系列でG1〜G9を通過し、現在の推奨ペアの土台になっています。20 kHzの帯域分割は導入していません。
 
 2-prototype（Sharp/Gentle）も比較できますが、48 kHzのGentle固定端点自体がimpulseで`0.514 dB`、10 ms impulse列で`0.527 dB`のG5誤差となり、上限`0.5 dB`を超えます。このため両rate family共通の候補は3-prototypeを維持します。
 
@@ -256,22 +258,22 @@ uv run python scripts/train_capb.py \
 
 長尺化は自動的な高音質化ではありません。固定FIRのFP32累積誤差は演算床を分離する診断値であり、それだけで採否を決めません。採用には両rate familyの全probe、controller 64位相、Hann-OLA境界64 offset、近距離・長距離echoを通過したうえで、worst image leakageをrelease比0.5 dB以上改善することを要求します。image差が0.5 dB未満ならG2b、G9、歪み、短いtap数の順で決め、どれも満たさなければrelease bankを維持します。
 
-2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。当時はイメージ抑制が改善してもhard gateを満たさなかったため`release_v4`を維持しました。checkpointを含まない1535-tap研究比較は`reports/research/long_fir_1535/`にあります。
+2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。当時はイメージ抑制が改善してもhard gateを満たさなかったため`release_v4`を維持しました。この1535-tap研究比較は2026-09-04に削除しました（commit `1541917`から復元可能）。
 
-2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を両系列で採用し（48 kHzはG3最悪`-107.8` → `-128.1 dB`）、その後Midをフラットな短いKaiserに置き換えた`v5b_sharp1023_midflat70`（run15、比率0.6 → run16、比率0.3）が現在の推奨です。詳細は`reports/release/README.md`を参照してください。
+2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を採用し（48 kHzはG3最悪`-107.8` → `-128.1 dB`）、その後Midをフラットな短いKaiserに置き換えた`v5b_sharp1023_midflat70`で打撃時のGentle比率を0.9 → 0.6 → 0.3と下げたrun16が現在の推奨です。走査値は`reports/release/run16_v5b_midflat_g03_20260903/selection/long_fir_sweep_summary.json`、経緯は`reports/release/README.md`にあります。
 
 ### 学習済み成果物
 
-2026-09-03のrelease候補は4ペアを並置しています。いずれもrouting v2 + sharp floor処方のcontrollerで、違いはprototype bankと打撃時のGentle比率です。推奨は両系列とも**run16**（`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.3`）で、`reports/release/release_manifest.json`の`recommended`に記録しています。
+推奨は両系列とも**run16**（2026-09-03、`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.3`、gate spec 6）です。`reports/release/release_manifest.json`の`recommended`が正史で、受入証跡は`reports/release/run16_v5b_midflat_g03_20260903/`にあります。
 
 | 系列 | 推奨checkpoint | 主要値（gate spec 6） |
 |---|---|---|
 | 44.1→88.2 kHz | `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.6 dB`、impulse列利得誤差 `0.164 dB`、G2b `4.6e-11`、G3最悪 `-133.1 dB`、64位相worst `-37.3 dB`、群遅延5.8 ms |
 | 48→96 kHz | `data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.9 dB`、impulse列利得誤差 `0.175 dB`、G2b `3.3e-11`、G3最悪 `-133.5 dB`、64位相worst `-38.4 dB`、群遅延5.3 ms |
 
-run16の`v5b_sharp1023_midflat70` bankは、Sharp 1023 taps（Kaiser 140 dB）、Midは20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleはBessel6@20 kHzです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9 → 0.6（run15）→ 0.3（run16）と下げ、残りをフラットなMidで受けて打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.16〜0.18 dB`に改善し、孤立impulseのリンギングは`-32` → `-19〜-20 dB`（Sharp単体は`-15 dB`）です。比率0.0はMidのリップルが5 kHz矩形でG2を落とすため採用しません。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。非推奨側のrun13〜run15も有効な候補として保存しています。
+run16の`v5b_sharp1023_midflat70` bankは、Sharp 1023 taps（Kaiser 140 dB）、Midは20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleはBessel6@20 kHzです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9 → 0.6（run15）→ 0.3（run16）と下げ、残りをフラットなMidで受けて打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.16〜0.18 dB`に改善し、孤立impulseのリンギングは`-32` → `-19〜-20 dB`（Sharp単体は`-15 dB`）です。比率0.0はMidのリップルが5 kHz矩形でG2を落とすため採用しません。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。run16へ至る中間候補run13〜run15のcheckpointは学習系譜の再現用に残していますが、証跡バンドルは2026-09-04に削除し、受入判定はrun16のみを正とします（commit `1541917`から復元可能）。
 
-旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-19.7 dB`、48 kHzで`-25.7` → `-18.5 dB`で、G2b pre-echoは`1.05e-7` → `4.6e-11`、`1.33e-8` → `3.3e-11`です。代償は群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧checkpointは履歴として残しています。
+旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-19.7 dB`、48 kHzで`-25.7` → `-18.5 dB`で、G2b pre-echoは`1.05e-7` → `4.6e-11`、`1.33e-8` → `3.3e-11`です。代償は群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧世代checkpoint（run9〜run12）は2026-09-04に削除しました（commit `1541917`から復元可能）。
 
 release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。クロスレート検査（`evaluation/release_quality.py`）は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容にcheckpointへ保存された`focused_gentle_fraction`の差を加えます。G1〜G9本体は変更していません。選定・gate・robustness・可視化・ONNX parity・null test・タップ数走査の根拠は`reports/release/`にあります。
 
@@ -298,7 +300,7 @@ uv run python scripts/evaluate_probe_gates.py \
 
 # controller phase / Hann-OLA boundary（48 kHzは--rate-family 48k）
 uv run python scripts/evaluate_capb_transient_robustness.py \
-  --checkpoint data/checkpoints/capb/run13_routing_v2_sharpfloor_20260903_44k1/capb_best.pt \
+  --checkpoint data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt \
   --rate-family 44k1 \
   --output-dir /tmp/capb-robustness-44k1
 ```
@@ -313,7 +315,7 @@ uv run python scripts/evaluate_capb_transient_robustness.py \
 - 不要な高域成分: Bessel基準に対する増加を制限する
 - SMPTE/held-out two-tone: controller変調によるsidebandを`-110 dBc`以下にする
 
-レポートは指定した`--report-dir`以下の`gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。採用品の固定release evidenceは`reports/release/`へ保存し、不採用候補を残す場合はcheckpointを含まない研究資料として`reports/research/`へ分離します。
+レポートは指定した`--report-dir`以下の`gate_report.json`と`gate_report.md`へ出力されます。平均値は参考情報にすぎず、各gateの合否は最も悪いprobeで決まります。採用品の固定release evidenceは`reports/release/`へ保存します。不採用候補の証跡は残さず、必要になればgit履歴から復元します。
 
 固定prototypeだけを検証する場合:
 
@@ -372,17 +374,18 @@ uv run pytest -v
 ```text
 configs/
   data_generation_capb.yaml
-  data_generation_capb_run9_legacy.yaml
   data_generation_capb_48k.yaml
   data_generation_capb_48k_balanced.yaml
+  data_generation_capb_routing_v2.yaml
+  data_generation_capb_48k_routing_v2.yaml
   training_stage1_capb.yaml
-  training_stage1_capb_44k1_margin.yaml
   training_stage1_capb_48k.yaml
+  training_stage1_capb_routing_v2_3p.yaml
+  training_stage1_capb_48k_routing_v2_3p.yaml
+  training_stage1_capb_routing_v2_2p.yaml
+  training_stage1_capb_48k_routing_v2_2p.yaml
+  training_stage1_capb_44k1_margin.yaml
   training_stage1_capb_48k_balanced_margin.yaml
-  training_stage1_capb_48k_relearn_075.yaml
-  training_stage1_capb_48k_relearn_085.yaml
-  training_stage1_capb_48k_stationary_warmup.yaml
-  training_stage1_capb_48k_stationary.yaml
   stage1_stage2_pipeline.yaml
 src/totton_audio_de_mirroring/
   data/capb_dataset.py

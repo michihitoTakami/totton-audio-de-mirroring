@@ -1,8 +1,11 @@
-# CAPB 44.1 kHz final margin polish.
+# CAPB 44.1 kHz single-epoch controller polish / fine-tune recipe.
 #
-# The selected pre-polish checkpoint already suppresses stationary blend
-# modulation. This single low-rate epoch restores a safe pre-echo margin
-# without collapsing every transient to the gentle endpoint.
+# One low-rate epoch that restores a safe pre-echo margin without collapsing
+# every transient to the gentle endpoint. Also used for controller-only
+# transfers onto a different prototype bank.
+#
+# The parent checkpoint and the output directory are not pinned here: pass
+# --init-checkpoint and --checkpoint-dir on the command line.
 
 epochs: 1
 batch_size: 16
@@ -13,8 +16,7 @@ val_fraction: 0.1
 num_workers: 4
 seed: 1234
 border_trim: 512
-checkpoint_dir: data/checkpoints/capb/run11_44k1_optimized_20260829
-initial_checkpoint: data/checkpoints/capb/run11_44k1_optimized_20260829/capb_pre_polish.pt
+checkpoint_dir: data/checkpoints/experiments/capb_44k1_margin
 checkpoint_interval_epochs: 1
 log_interval: 20
 

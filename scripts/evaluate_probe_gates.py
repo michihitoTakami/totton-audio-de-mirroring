@@ -9,7 +9,7 @@ Backends:
 Usage examples:
     uv run python scripts/evaluate_probe_gates.py --backend prototype:gentle
     uv run python scripts/evaluate_probe_gates.py --backend capb \
-        --checkpoint data/checkpoints/capb/capb_best.pt
+        --checkpoint data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt
 """
 
 from __future__ import annotations
