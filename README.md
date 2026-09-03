@@ -193,7 +193,7 @@ uv run python scripts/audit_capb_training_data.py \
 
 ### Routing v2（Sharp既定・過渡時のみ保護側）
 
-実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配し（44.1 kHz `0.90`、48 kHz `0.85`）、Midは曖昧な常用クラスではなく、48 kHz Gentleのimpulse利得誤差を補償しつつG2b/G2cを守る限定的な役割です。初期の候補はimpulseでMid=1.0を選びリンギングがSharpに近づいたため、Gentle主体へ改めました。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。20 kHzの帯域分割は導入していません。
+実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配し（44.1 kHz `0.90`、48 kHz `0.85`）、Midは曖昧な常用クラスではなく、48 kHz Gentleのimpulse利得誤差を補償しつつG2b/G2cを守る限定的な役割です。初期の候補はimpulseでMid=1.0を選びリンギングがSharpに近づいたため、Gentle主体へ改めました。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。それでも学習ヘッドが定常ノイズ上でGentleを足す残りはseed依存で（3 seed中1 seedがG3を落としました）、定常サンプルの安全フレームでSharp重みが`sharp_floor`（`0.995`）を下回った分を罰する`stationary_sharp_floor`損失（重み`1000`）で解消しています。この処方は3 seed×両系列でG1〜G9を通過し、2026-09-03のrelease pairになりました。20 kHzの帯域分割は導入していません。
 
 2-prototype（Sharp/Gentle）も比較できますが、48 kHzのGentle固定端点自体がimpulseで`0.514 dB`、10 ms impulse列で`0.527 dB`のG5誤差となり、上限`0.5 dB`を超えます。このため両rate family共通の候補は3-prototypeを維持します。
 
@@ -256,15 +256,18 @@ uv run python scripts/train_capb.py \
 
 長尺化は自動的な高音質化ではありません。固定FIRのFP32累積誤差は演算床を分離する診断値であり、それだけで採否を決めません。採用には両rate familyの全probe、controller 64位相、Hann-OLA境界64 offset、近距離・長距離echoを通過したうえで、worst image leakageをrelease比0.5 dB以上改善することを要求します。image差が0.5 dB未満ならG2b、G9、歪み、短いtap数の順で決め、どれも満たさなければrelease bankを維持します。
 
-2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。イメージ抑制は改善したもののhard gateを満たさないため、採用品は`release_v4`のままです。正式な受入証跡は`reports/release/`、checkpointを含まない1535-tap研究比較は`reports/research/long_fir_1535/`にあります。
+2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。イメージ抑制は改善したもののhard gateを満たさないため、prototype bankは`release_v4`のままです。checkpointを含まない1535-tap研究比較は`reports/research/long_fir_1535/`にあります。
 
 ### 学習済み成果物
 
-44.1 kHz系列の採用候補は`data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt`です。v4のcanonical/held-out G1〜G9をすべて通過し、SMPTE sidebandは`-125.6 dB`、impulse列の利得誤差は`0.446 dB`、G2b pre-echoは`1.05e-7`です。さらにcontroller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して最悪`-2.84 dB`で通過します。
+release pair（2026-09-03、routing v2 + sharp floor、seed 1234）は次の2つです。
 
-48 kHz系列の採用候補は`data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt`です。v4のcanonical/held-out G1〜G9をCPUとstrict-FP32 CUDAの両方で通過し、SMPTE sidebandは`-144.67 dB`、CCIF IMDは`-142.73 dB`、impulse列の利得誤差は`0.400 dB`、G2b pre-echoは`1.33e-8`です。controller strideの64位相とHann-OLA境界64 offsetも、変更していないG2b閾値に対して通過します。この48 kHz checkpointと上記44.1 kHz checkpointをrelease pairとして扱います。
+- 44.1 kHz系列: `data/checkpoints/capb/run13_routing_v2_sharpfloor_20260903_44k1/capb_best.pt`。spec v5のcanonical/held-out G1〜G9をCPUとstrict-FP32 CUDAの両方で通過し、SMPTE sidebandは`-142.9 dB`、impulse列の利得誤差は`0.447 dB`、G2b pre-echoは`5.2e-11`、pink noiseのimage抑制は`-117.6 dB`です。controller strideの64位相とHann-OLA境界64 offsetは、変更していないG2b閾値に対して最悪`-35.9 dB`で通過します。
+- 48 kHz系列: `data/checkpoints/capb_48k/run13_routing_v2_sharpfloor_20260903_48k/capb_best.pt`。同じくCPUとstrict-FP32 CUDAで全通過し、SMPTE sidebandは`-143.9 dB`、CCIF IMDは`-142.6 dB`、impulse列の利得誤差は`0.451 dB`、G2b pre-echoは`1.6e-11`、pink noiseのimage抑制は`-112.1 dB`、64位相・OLA境界は最悪`-42.0 dB`です。
 
-run11で48 kHzだけ悪く見えたTHD/IMD図は、CUDA TF32で長い固定FIRを畳み込んだ数値誤差でした。同じcheckpointでTF32を禁止すると、48 kHz THDは`-76.70 dB`から`-140.00 dB`、CCIF IMDは`-85.86 dB`から`-142.73 dB`へ戻ります。release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。現在の完全な選定・gate・可視化・ONNX parity根拠は`reports/release/`にあります。
+旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-32.5 dB`、48 kHzで`-25.7` → `-28.9 dB`に下がりました。代償はimpulse列の利得誤差が48 kHzで`0.400` → `0.451 dB`へ増えたこと（上限`0.5 dB`）です。旧checkpointは履歴として残しています。
+
+release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。クロスレート検査（`evaluation/release_quality.py`）は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容にcheckpointへ保存された`focused_gentle_fraction`の差を加えます（48 kHz Gentle端点の利得誤差が44.1 kHzより大きいため、48 kHzに44.1 kHzを上回る保護を要求するとSharp寄りに戻すしかなくなるためです）。G1〜G9本体は変更していません。選定・gate・robustness・可視化・ONNX parity・null testの根拠は`reports/release/`にあります。
 
 ## 受入評価
 
@@ -287,7 +290,7 @@ uv run python scripts/evaluate_probe_gates.py \
 
 # controller phase / Hann-OLA boundary（48 kHzは--rate-family 48k）
 uv run python scripts/evaluate_capb_transient_robustness.py \
-  --checkpoint data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt \
+  --checkpoint data/checkpoints/capb/run13_routing_v2_sharpfloor_20260903_44k1/capb_best.pt \
   --rate-family 44k1 \
   --output-dir /tmp/capb-robustness-44k1
 ```

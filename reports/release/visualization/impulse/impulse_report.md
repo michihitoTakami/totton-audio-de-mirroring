@@ -2,8 +2,8 @@
 
 ## 44k1
 
-- Checkpoint: `data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt`
-- CAPB G2b-window energy: 1.0466e-07
+- Checkpoint: `/tmp/capb_routing_v2_floor_44_s1234/capb_best.pt`
+- CAPB G2b-window energy: 5.1465e-11
 - Gentle G2b-window energy: 4.6435e-29
 - Sharp G2b-window energy: 1.1398e-06
 
@@ -13,8 +13,8 @@
 
 ## 48k
 
-- Checkpoint: `data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt`
-- CAPB G2b-window energy: 1.3257e-08
+- Checkpoint: `/tmp/capb_routing_v2_floor_48_s1234/capb_best.pt`
+- CAPB G2b-window energy: 1.5683e-11
 - Gentle G2b-window energy: 7.8101e-31
 - Sharp G2b-window energy: 2.4733e-07
 
