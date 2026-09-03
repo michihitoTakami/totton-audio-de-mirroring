@@ -1,4 +1,7 @@
 # One strict-FP32 balanced margin epoch for a screened 48 kHz candidate.
+#
+# The parent checkpoint and the output directory are not pinned here: pass
+# --init-checkpoint and --checkpoint-dir on the command line.
 
 epochs: 1
 batch_size: 16
@@ -13,7 +16,7 @@ allow_tf32: false
 deterministic: false
 initial_head_scale: 1.0
 border_trim: 512
-checkpoint_dir: data/checkpoints/capb_48k/run12_candidate_margin
+checkpoint_dir: data/checkpoints/experiments/capb_48k_balanced_margin
 checkpoint_interval_epochs: 1
 log_interval: 20
 

@@ -20,10 +20,8 @@ from totton_audio_de_mirroring.evaluation.routing_analysis import (
 from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
 
 _RELEASE_CHECKPOINTS = (
-    Path("data/checkpoints/capb/run11_44k1_optimized_20260829/capb_best.pt"),
-    Path(
-        "data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt"
-    ),
+    Path("data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt"),
+    Path("data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt"),
 )
 
 
