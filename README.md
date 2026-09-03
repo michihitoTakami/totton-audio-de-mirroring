@@ -258,20 +258,20 @@ uv run python scripts/train_capb.py \
 
 2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。当時はイメージ抑制が改善してもhard gateを満たさなかったため`release_v4`を維持しました。checkpointを含まない1535-tap研究比較は`reports/research/long_fir_1535/`にあります。
 
-2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`は48 kHzで採用され（G3最悪`-107.8` → `-128.1 dB`）、44.1 kHzでは採用規則を満たさず`release_v4`のままです。詳細は`reports/release/README.md`を参照してください。
+2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を両系列で採用しました（48 kHzはG3最悪`-107.8` → `-128.1 dB`、44.1 kHzは測定上同等でbank統一のため）。詳細は`reports/release/README.md`を参照してください。
 
 ### 学習済み成果物
 
-2026-09-03のrelease候補は2ペアを並置しています。どちらもrouting v2 + sharp floor処方のcontrollerで、違いはSharp prototypeの長さです。推奨は系列ごとに異なり、`reports/release/release_manifest.json`の`recommended`に記録しています。
+2026-09-03のrelease候補は2ペアを並置しています。どちらもrouting v2 + sharp floor処方のcontrollerで、違いはSharp prototypeの長さです。推奨は両系列とも**run14**（`long_sharp_1023_a140`、Sharp 1023 taps）で、`reports/release/release_manifest.json`の`recommended`に記録しています。
 
-| 系列 | 推奨 | checkpoint | 主要値 |
-|---|---|---|---|
-| 44.1→88.2 kHz | **run13**（`release_v4`、Sharp 483 taps） | `data/checkpoints/capb/run13_routing_v2_sharpfloor_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-142.9 dB`、impulse列利得誤差 `0.447 dB`、G2b `5.1e-11`、pink image `-116.1 dB`、64位相worst `-35.9 dB` |
-| 48→96 kHz | **run14**（`long_sharp_1023_a140`、Sharp 1023 taps） | `data/checkpoints/capb_48k/run14_longsharp1023_a140_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-138.2 dB`、impulse列利得誤差 `0.457 dB`、G2b `1.3e-11`、G3最悪 `-128.1 dB`、64位相worst `-42.4 dB` |
+| 系列 | 推奨checkpoint | 主要値 |
+|---|---|---|
+| 44.1→88.2 kHz | `data/checkpoints/capb/run14_longsharp1023_a140_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-138.1 dB`、impulse列利得誤差 `0.447 dB`、G2b `5.6e-11`、sweepイメージ `-133.1 dB`、G3最悪（pink）`-108.8 dB`、64位相worst `-36.1 dB`、群遅延5.8 ms |
+| 48→96 kHz | `data/checkpoints/capb_48k/run14_longsharp1023_a140_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-138.2 dB`、impulse列利得誤差 `0.457 dB`、G2b `1.3e-11`、G3最悪 `-128.1 dB`、64位相worst `-42.4 dB`、群遅延5.3 ms |
 
-非推奨側も保存しています: 44.1 kHzのrun14（`data/checkpoints/capb/run14_longsharp1023_a140_20260903_44k1/`）はsweepイメージが`4.4 dB`改善する一方で最悪行のpink noiseが`-116.1` → `-108.8 dB`と後退し、採用規則（最悪イメージ`0.5 dB`以上改善）を満たしません。48 kHzのrun13（`data/checkpoints/capb_48k/run13_routing_v2_sharpfloor_20260903_48k/`）は277 tapsのSharpの阻止帯が`-115 dB`で底を打つため、G3最悪が`-107.8 dB`にとどまります。
+48 kHzは最悪イメージ行が`-107.8` → `-128.1 dB`と明確に改善します。44.1 kHzは測定上run13（483 taps）と同等で、最悪行のpink noise（controller律速）はseed間ばらつきの内側、sweepイメージは`4.4 dB`改善、G9は`-142.9` → `-138.1 dB`、群遅延は2.7 → 5.8 msです。両系列のbank・群遅延・ONNXグラフを統一するために44.1 kHzも1023 tapsを採用しました。非推奨側のrun13ペア（`run13_routing_v2_sharpfloor_20260903_*`）も同じ処方の有効な候補として保存しています。
 
-旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-32.5 dB`、48 kHzで`-25.7` → `-29.7 dB`に下がりました。代償はimpulse列の利得誤差が48 kHzで`0.400` → `0.457 dB`へ増えたこと（上限`0.5 dB`）と、48 kHzの群遅延が1.4 → 5.3 msになったことです。旧checkpointは履歴として残しています。
+旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-32.4 dB`、48 kHzで`-25.7` → `-29.7 dB`に下がりました。代償はimpulse列の利得誤差が48 kHzで`0.400` → `0.457 dB`へ増えたこと（上限`0.5 dB`）と、群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧checkpointは履歴として残しています。
 
 release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。クロスレート検査（`evaluation/release_quality.py`）は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容にcheckpointへ保存された`focused_gentle_fraction`の差を加えます。G1〜G9本体は変更していません。選定・gate・robustness・可視化・ONNX parity・null test・タップ数走査の根拠は`reports/release/`にあります。
 

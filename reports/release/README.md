@@ -1,16 +1,19 @@
 # CAPB release evidence — 2026-09-03
 
 2つの候補ペアを並置して保存しています。どちらもrouting v2 + sharp floor処方のcontrollerで、
-違いはSharp prototypeの長さだけです。**推奨は系列ごとに異なります**（`release_manifest.json`の
-`recommended`）。
+違いはSharp prototypeの長さだけです。**推奨は両系列ともrun14（`long_sharp_1023_a140`、Sharp 1023 taps）**
+です（`release_manifest.json`の`recommended`）。
 
 | 系列 | 推奨 | 理由 |
 |---|---|---|
-| 44.1→88.2 kHz | **run13**（`release_v4`、Sharp 483 taps） | 最悪イメージ行（pink noise、controller律速）はrun14で`-116.1` → `-108.8 dB`と後退し、sweepの`+4.4 dB`改善では採用規則（最悪イメージが`0.5 dB`以上改善）を満たさない。G9も`-142.9` → `-138.1 dB`、群遅延は2.7 → 5.8 ms。 |
-| 48→96 kHz | **run14**（`long_sharp_1023_a140`、Sharp 1023 taps） | 最悪イメージ行が`-107.8` → `-128.1 dB`（`+20 dB`）。G1〜G9、ロバストネス、pink漏れは同等。代償はG9 `-143.9` → `-138.2 dB`、群遅延1.4 → 5.3 ms、G5余裕9.7 → 8.6%。 |
+| 48→96 kHz | **run14** | 最悪イメージ行が`-107.8` → `-128.1 dB`（`+20 dB`）。G1〜G9、ロバストネス、pink漏れは同等。代償はG9 `-143.9` → `-138.2 dB`、群遅延1.4 → 5.3 ms、G5余裕9.7 → 8.6%。 |
+| 44.1→88.2 kHz | **run14** | 測定上はrun13と同等。最悪イメージ行（pink noise、controller律速）は`-116.1` → `-108.8 dB`だがseed間ばらつき（run13 `-111〜-120`、run14 `-109〜-115 dB`）の内側で、sweepイメージは`-128.7` → `-133.1 dB`と改善。G9 `-142.9` → `-138.1 dB`、群遅延2.7 → 5.8 ms。両系列でbank・群遅延・ONNXグラフを統一するために採用。 |
 
-推奨ペア（run13 44.1 kHz + run14 48 kHz）のクロスレートrelease_qualityは
-[recommended_pair/release_quality](recommended_pair/release_quality/release_quality.md)でPASSです。
+44.1 kHzの採用は「最悪イメージ行が`0.5 dB`以上改善」という長尺FIRの採用規則を機械的には満たしません。
+この規則はSharp filterが最悪行を決めている場合の判定基準で、44.1 kHzの最悪行はcontrollerのpink noise
+漏れが決めており、フィルタ長を変えても動かないためです。run14ペアのクロスレートrelease_qualityは
+[run14 release_quality](run14_longsharp1023_a140_20260903/release_quality/release_quality.md)でPASSです。
+非推奨側のrun13も同じ処方の有効なペアとして保存しています。
 
 ## run13 — `run13_routing_v2_sharpfloor_20260903/`
 
@@ -59,6 +62,6 @@ controller 64位相マージンが`-36` → `-14 dB`へ縮み、G9が悪化し�
 - ゲート本体（G1〜G9、probe manifest、閾値）は変更していません。release_qualityのクロスレート
   検査はrun13採用時に明文化した定義（impulse列G5は凍結ゲートに対して判定、位置許容に
   `focused_gentle_fraction`差を加算）です。
-- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`は現在run13ペア
-  （PR #696）で、48 kHzをrun14へ差し替える場合は別PRです。
+- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`はrun14ペアへ差し替えます
+  （run13ペアはPR #696で導入済み）。
 - 数値の正史はstrict-FP32のworst-probe gateです。`routing/`の診断R1〜R4と図は補助です。
