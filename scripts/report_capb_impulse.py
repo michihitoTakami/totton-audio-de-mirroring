@@ -319,6 +319,7 @@ def main() -> None:
                 "prototype_profile": model.prototype_profile,
                 "prototype_hash": model.prototype_hash,
                 "fir_compute_dtype": model.fir_compute_dtype,
+                "routing_prior": model.routing_prior.to_dict(),
                 "source_sample_rate": case.source_rate,
                 "metrics": _metrics(outputs, center, case.target_rate),
             }

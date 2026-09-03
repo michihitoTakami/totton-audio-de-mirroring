@@ -101,6 +101,17 @@ class RoutingPriorConfig:
         )
 
 
+def _backward_difference(signal: torch.Tensor) -> torch.Tensor:
+    """Return x[n] - x[n-1] with a zero first sample (ONNX-exportable form).
+
+    Physical Basis:
+        Equivalent to ``torch.diff`` with the first sample prepended; written
+        with slicing so the traced graph avoids the unsupported Diff operator.
+    """
+    padded = torch.cat([signal[..., :1], signal], dim=-1)
+    return padded[..., 1:] - padded[..., :-1]
+
+
 class CAPBController(nn.Module):
     """Waveform-domain controller predicting prototype blend logits.
 
@@ -208,7 +219,7 @@ class CAPBController(nn.Module):
         lagged = F.pad(envelope[..., :-lag], (lag, 0), mode="replicate")
         envelope_change = torch.abs(envelope - lagged)
         if self.feature_mode in {"envelope_flux", "physics_routing"}:
-            slope = torch.abs(torch.diff(waveform, dim=-1, prepend=waveform[..., :1]))
+            slope = torch.abs(_backward_difference(waveform))
             slope_envelope = F.avg_pool1d(slope, kernel_size=65, stride=1, padding=32)
             lagged_slope = F.pad(slope_envelope[..., :-lag], (lag, 0), mode="replicate")
             envelope_flux = envelope_change / (envelope + lagged + 1.0e-3)
@@ -400,7 +411,7 @@ class CAPB(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """Return (level_risk, crest_risk, sustained) at the controller rate."""
         waveform = normalized_source.unsqueeze(1)
-        derivative = torch.diff(waveform, dim=-1, prepend=waveform[..., :1])
+        derivative = _backward_difference(waveform)
         waveform_risk = self._local_level_change(waveform)
         derivative_risk = self._local_level_change(derivative)
         level_change = torch.maximum(waveform_risk, derivative_risk)
@@ -445,9 +456,9 @@ class CAPB(nn.Module):
             normalized_source, logits.shape[-1]
         )
         residual = _PRIOR_RESIDUAL
-        probabilities = torch.full_like(logits, residual)
         sharp_index = self.prototype_names.index("sharp")
         gentle_index = self.prototype_names.index("gentle")
+        channels: dict[int, torch.Tensor] = {}
         if sustained is not None:
             middle_index = self.prototype_names.index("mid")
             middle_floor = _PRIOR_MIDDLE_FLOOR
@@ -460,13 +471,22 @@ class CAPB(nn.Module):
             middle = middle_floor + routable_mass * middle_risk
             gentle = residual + routable_mass * gentle_risk
             sharp = 1.0 - middle - gentle
-            probabilities[:, middle_index, :] = middle.squeeze(1)
+            channels[middle_index] = middle
         else:
             risk = torch.maximum(level_risk, crest_risk)
             gentle = residual + (1.0 - 2.0 * residual) * risk
             sharp = 1.0 - gentle
-        probabilities[:, sharp_index, :] = sharp.squeeze(1)
-        probabilities[:, gentle_index, :] = gentle.squeeze(1)
+        channels[sharp_index] = sharp
+        channels[gentle_index] = gentle
+        # Concatenate per-prototype channels instead of in-place index writes so
+        # the ONNX trace stays a plain Concat graph.
+        probabilities = torch.cat(
+            [
+                channels.get(index, torch.full_like(sharp, residual))
+                for index in range(self.num_prototypes)
+            ],
+            dim=1,
+        )
         bias = self.controller.head.bias
         if bias is None:
             raise RuntimeError("Controller head must retain its fixed bias.")

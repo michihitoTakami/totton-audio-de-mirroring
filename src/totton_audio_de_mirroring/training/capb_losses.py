@@ -45,8 +45,12 @@ class CAPBLossWeights:
             prototype on focused transient samples.
         post_echo_excess: Equivalent penalty after an impulse or burst end.
         prototype_routing: Label-supervised prototype-role routing penalty.
+        stationary_sharp_floor: Hinge penalty when the sharp weight drops
+            below ``sharp_floor`` on active non-risk frames of stationary
+            signals (the differentiable form of routing gate R1).
         min_entropy: Per-frame entropy floor in nats (~0.05 allows a max
             blend weight of roughly 0.99).
+        sharp_floor: Minimum sharp weight demanded by stationary_sharp_floor.
 
     Physical Basis:
         wave/stft define fidelity to the alias-free teacher; plateau/quiet
@@ -67,7 +71,9 @@ class CAPBLossWeights:
     pre_echo_excess: float = 0.0
     post_echo_excess: float = 0.0
     prototype_routing: float = 0.0
+    stationary_sharp_floor: float = 0.0
     min_entropy: float = 0.05
+    sharp_floor: float = 0.995
 
 
 def compute_capb_losses(
@@ -228,6 +234,17 @@ def compute_capb_losses(
         )
     else:
         losses["prototype_routing"] = output.new_zeros(())
+    if stationary is not None:
+        losses["stationary_sharp_floor"] = stationary_sharp_floor_loss(
+            weights_frames,
+            stationary,
+            sharp_index=sharp_index,
+            sharp_floor=loss_weights.sharp_floor,
+            safe_active_mask=safe_active_mask,
+            edge_mask=edge_mask,
+        )
+    else:
+        losses["stationary_sharp_floor"] = output.new_zeros(())
     losses["total"] = (
         loss_weights.wave * losses["wave"]
         + loss_weights.stft * losses["stft"]
@@ -240,8 +257,81 @@ def compute_capb_losses(
         + loss_weights.pre_echo_excess * losses["pre_echo_excess"]
         + loss_weights.post_echo_excess * losses["post_echo_excess"]
         + loss_weights.prototype_routing * losses["prototype_routing"]
+        + loss_weights.stationary_sharp_floor * losses["stationary_sharp_floor"]
     )
     return losses
+
+
+def stationary_sharp_floor_loss(
+    weights_frames: torch.Tensor,
+    stationary: torch.Tensor,
+    *,
+    sharp_index: int,
+    sharp_floor: float = 0.995,
+    safe_active_mask: torch.Tensor | None = None,
+    edge_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Penalize sharp-weight dips on stationary, non-risk frames.
+
+    Args:
+        weights_frames: Convex prototype weights (batch, K, frames).
+        stationary: Boolean batch flags for stationary signal families.
+        sharp_index: Prototype index of the sharp endpoint.
+        sharp_floor: Minimum acceptable sharp weight on eligible frames.
+        safe_active_mask: Optional target-rate active non-risk mask; when
+            omitted every frame outside ``edge_mask`` is eligible.
+        edge_mask: Optional target-rate edge mask excluded from the penalty.
+
+    Returns:
+        Mean of the per-frame hinge and the worst-frame hinge over eligible
+        frames, or zero when no stationary frame is eligible.
+
+    Raises:
+        ValueError: If shapes or ``sharp_floor`` are invalid.
+
+    Physical Basis:
+        Stationary noise carries random peaks that a local transient
+        detector can mistake for onsets. Every gentle excursion on such
+        content leaks the gentle prototype's weak image rejection into the
+        output, so the acceptance gates measure the worst stationary frame.
+        The routing cross-entropy averages over frames and its worst-quartile
+        mining ignores small leaks; this hinge is zero once the floor holds
+        and adds the worst frame so rare excursions still carry gradient.
+    """
+    if weights_frames.dim() != 3:
+        raise ValueError("weights_frames must be (batch, K, frames).")
+    if stationary.dim() != 1 or stationary.shape[0] != weights_frames.shape[0]:
+        raise ValueError("stationary must be a batch-length vector.")
+    if not 0.0 < sharp_floor <= 1.0:
+        raise ValueError("sharp_floor must lie in (0, 1].")
+    if not 0 <= sharp_index < weights_frames.shape[1]:
+        raise ValueError("sharp_index is out of range.")
+    frames = weights_frames.shape[-1]
+    eligible = (
+        stationary.to(weights_frames.dtype).unsqueeze(1).expand(-1, frames).clone()
+    )
+    if safe_active_mask is not None:
+        if (
+            safe_active_mask.dim() != 2
+            or safe_active_mask.shape[0] != eligible.shape[0]
+        ):
+            raise ValueError(
+                "safe_active_mask must be a matching (batch, time) tensor."
+            )
+        frame_safe = F.adaptive_max_pool1d(safe_active_mask.unsqueeze(1), frames)
+        eligible = eligible * torch.clamp(frame_safe.squeeze(1), 0.0, 1.0)
+    if edge_mask is not None:
+        if edge_mask.dim() != 2 or edge_mask.shape[0] != eligible.shape[0]:
+            raise ValueError("edge_mask must be a matching (batch, time) tensor.")
+        frame_edges = F.adaptive_max_pool1d(edge_mask.unsqueeze(1), frames)
+        eligible = eligible * (1.0 - torch.clamp(frame_edges.squeeze(1), 0.0, 1.0))
+    count = torch.sum(eligible)
+    if float(count) <= 0.0:
+        return weights_frames.new_zeros(())
+    hinge = torch.relu(sharp_floor - weights_frames[:, sharp_index, :]) * eligible
+    mean_hinge = torch.sum(hinge) / count
+    worst_hinge = torch.max(hinge)
+    return 0.5 * (mean_hinge + worst_hinge)
 
 
 def plateau_ripple_loss(

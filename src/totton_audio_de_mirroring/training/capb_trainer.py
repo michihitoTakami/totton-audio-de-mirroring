@@ -145,7 +145,9 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         pre_echo_excess=float(weights_raw.get("pre_echo_excess", 0.0)),
         post_echo_excess=float(weights_raw.get("post_echo_excess", 0.0)),
         prototype_routing=float(weights_raw.get("prototype_routing", 0.0)),
+        stationary_sharp_floor=float(weights_raw.get("stationary_sharp_floor", 0.0)),
         min_entropy=float(weights_raw.get("min_entropy", 0.05)),
+        sharp_floor=float(weights_raw.get("sharp_floor", 0.995)),
     )
     checkpoint_interval = int(raw.get("checkpoint_interval_epochs", 0))
     if checkpoint_interval < 0:

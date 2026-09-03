@@ -69,6 +69,7 @@ def main() -> None:
     parser.add_argument("--edge-ring", type=float, default=None)
     parser.add_argument("--prototype-routing", type=float, default=None)
     parser.add_argument("--stationary-modulation", type=float, default=None)
+    parser.add_argument("--stationary-sharp-floor", type=float, default=None)
     parser.add_argument("--focused-gentle-fraction", type=float, default=None)
     parser.add_argument("--level-change-threshold", type=float, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
@@ -145,6 +146,8 @@ def main() -> None:
         loss_overrides["prototype_routing"] = args.prototype_routing
     if args.stationary_modulation is not None:
         loss_overrides["stationary_modulation"] = args.stationary_modulation
+    if args.stationary_sharp_floor is not None:
+        loss_overrides["stationary_sharp_floor"] = args.stationary_sharp_floor
     if any(value < 0.0 for value in loss_overrides.values()):
         raise ValueError("Loss-weight overrides must be non-negative.")
     if loss_overrides:

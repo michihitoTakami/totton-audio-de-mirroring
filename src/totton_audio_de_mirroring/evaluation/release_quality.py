@@ -48,7 +48,8 @@ def evaluate_release_quality(
         gate_48k: Strict frozen-gate report for 48 kHz.
         distortion_tolerance_db: Allowed margin above the applicable dB floor.
         transient_position_tolerance: Allowed normalized transient-position
-            increase against the 44.1 kHz checkpoint.
+            increase against the 44.1 kHz checkpoint, on top of any documented
+            gap between the two families' ``focused_gentle_fraction``.
 
     Returns:
         Serializable release decision and individual checks.
@@ -61,6 +62,13 @@ def evaluate_release_quality(
         accumulation floors. The controller is accepted only when it stays
         within the worse of the 44.1 kHz result and its own rate-local floor,
         while transient response is compared on the prototype continuum.
+        The 48 kHz gentle endpoint loses more impulse gain than the 44.1 kHz
+        one, so a checkpoint pair may deliberately keep a larger middle share
+        at 48 kHz through its routing prior; that documented fraction gap is
+        added to the position allowance, and impulse-train gain is judged
+        against the frozen G5 gate for both families instead of demanding
+        48 kHz to beat 44.1 kHz, which would force 48 kHz back toward the
+        ringing sharp endpoint.
     """
     if distortion_tolerance_db < 0.0 or transient_position_tolerance < 0.0:
         raise ValueError("Release-quality tolerances must be non-negative.")
@@ -81,6 +89,10 @@ def evaluate_release_quality(
 
     impulse_44 = impulse["44k1"]["metrics"]
     impulse_48 = impulse["48k"]["metrics"]
+    fraction_gap = max(
+        0.0,
+        _gentle_fraction(impulse["44k1"]) - _gentle_fraction(impulse["48k"]),
+    )
     for metric in ("local_energy", "peak"):
         position_44 = normalized_prototype_position(
             impulse_44["capb"][metric],
@@ -96,7 +108,7 @@ def evaluate_release_quality(
             _numeric_check(
                 f"48k_normalized_{metric}",
                 position_48,
-                position_44 + transient_position_tolerance,
+                position_44 + transient_position_tolerance + fraction_gap,
             )
         )
 
@@ -107,19 +119,33 @@ def evaluate_release_quality(
             impulse_44["capb"]["pre_echo_mean_square"],
         )
     )
-    checks.append(
-        _numeric_check(
-            "48k_impulse_train_gain_error_db",
-            _gate_row_value(gate_48k, "G5_gain", "impulse_train_10ms"),
-            _gate_row_value(gate_44k1, "G5_gain", "impulse_train_10ms"),
+    for label, report in (("44k1", gate_44k1), ("48k", gate_48k)):
+        row = _gate_row(report, "G5_gain", "impulse_train_10ms")
+        checks.append(
+            _numeric_check(
+                f"{label}_impulse_train_gain_error_db",
+                float(row["value"]),
+                float(row["threshold"]),
+            )
         )
-    )
     return {
         "all_passed": all(bool(check["passed"]) for check in checks),
         "distortion_tolerance_db": distortion_tolerance_db,
         "transient_position_tolerance": transient_position_tolerance,
+        "focused_gentle_fraction_gap": fraction_gap,
         "checks": checks,
     }
+
+
+def _gentle_fraction(family_report: dict[str, Any]) -> float:
+    """Return the checkpoint's documented gentle share of impulse routing."""
+    prior = family_report.get("routing_prior")
+    if not isinstance(prior, dict):
+        return 0.0
+    fraction = float(prior.get("focused_gentle_fraction", 0.0))
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError("focused_gentle_fraction must lie in [0, 1].")
+    return fraction
 
 
 def _require_strict_precision(report: dict[str, Any], label: str) -> None:
@@ -130,13 +156,15 @@ def _require_strict_precision(report: dict[str, Any], label: str) -> None:
         raise ValueError(f"{label} report must use strict_fp32.")
 
 
-def _gate_row_value(report: dict[str, Any], gate_id: str, probe_id: str) -> float:
+def _gate_row(report: dict[str, Any], gate_id: str, probe_id: str) -> dict[str, Any]:
     for gate in report.get("gates", []):
         if gate.get("gate_id") != gate_id:
             continue
         for row in gate.get("rows", []):
             if row.get("probe_id") == probe_id:
-                return float(row["value"])
+                if "threshold" not in row:
+                    raise ValueError(f"{gate_id}/{probe_id} row lacks a threshold.")
+                return dict(row)
     raise ValueError(f"Missing {gate_id}/{probe_id} gate row.")
 
 

@@ -31,6 +31,7 @@ from totton_audio_de_mirroring.training.capb_losses import (
     prototype_routing_loss,
     quiet_energy_loss,
     stationary_modulation_loss,
+    stationary_sharp_floor_loss,
     weight_tv_loss,
 )
 from totton_audio_de_mirroring.training.capb_trainer import (
@@ -622,6 +623,51 @@ def test_prototype_routing_prefers_sharp_on_safe_active_focused_body() -> None:
     assert float(correct_loss) < float(reversed_loss)
 
 
+def test_stationary_sharp_floor_is_zero_when_sharp_holds() -> None:
+    weights = torch.tensor(
+        [[[0.999, 0.999, 0.999], [0.0005, 0.0005, 0.0005], [0.0005, 0.0005, 0.0005]]]
+    )
+    loss = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, sharp_floor=0.995
+    )
+    assert float(loss) == pytest.approx(0.0)
+
+
+def test_stationary_sharp_floor_penalizes_gentle_leak_on_stationary_only() -> None:
+    weights = torch.tensor(
+        [[[0.999, 0.80, 0.999], [0.0005, 0.0, 0.0005], [0.0005, 0.20, 0.0005]]]
+    )
+    leak = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, sharp_floor=0.995
+    )
+    ignored = stationary_sharp_floor_loss(
+        weights, torch.tensor([False]), sharp_index=0, sharp_floor=0.995
+    )
+    expected = 0.5 * ((0.195 / 3.0) + 0.195)
+    assert float(leak) == pytest.approx(expected, rel=1e-4)
+    assert float(ignored) == pytest.approx(0.0)
+
+
+def test_stationary_sharp_floor_excludes_edge_and_inactive_frames() -> None:
+    weights = torch.tensor(
+        [[[0.999, 0.80, 0.999], [0.0005, 0.0, 0.0005], [0.0005, 0.20, 0.0005]]]
+    )
+    edge = torch.tensor([[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]])
+    safe = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0]])
+    by_edge = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, edge_mask=edge
+    )
+    by_safe = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, safe_active_mask=safe
+    )
+    assert float(by_edge) == pytest.approx(0.0)
+    assert float(by_safe) == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="sharp_floor"):
+        stationary_sharp_floor_loss(
+            weights, torch.tensor([True]), sharp_index=0, sharp_floor=0.0
+        )
+
+
 def test_tv_loss_zero_for_constant_weights() -> None:
     weights = torch.full((2, 3, 10), 1.0 / 3.0)
     assert float(weight_tv_loss(weights)) == pytest.approx(0.0)
@@ -694,6 +740,7 @@ def test_compute_capb_losses_total(model: CAPB) -> None:
         "pre_echo_excess",
         "post_echo_excess",
         "prototype_routing",
+        "stationary_sharp_floor",
         "total",
     }
     assert torch.isfinite(losses["total"])

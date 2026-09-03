@@ -34,3 +34,5 @@ loss_weights:
   post_echo_excess: 300.0
   stationary_modulation: 300.0
   prototype_routing: 300.0
+  stationary_sharp_floor: 1000.0
+  sharp_floor: 0.995
