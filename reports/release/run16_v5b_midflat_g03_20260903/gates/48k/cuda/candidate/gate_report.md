@@ -1,10 +1,10 @@
 # Stage 1 probe gate report
 
 - all_passed: **True**
-- spec_version: 6
+- spec_version: 7
 - manifest_hash: 6529deadaab177fe
 
-## G1_lf_ringing: PASS (worst: square_2000hz)
+## G1_lf_ringing: PASS (worst: square_500hz)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|
@@ -17,12 +17,6 @@
 | square_500hz | canonical | plateau_rms_after | 0.000174 | 0.0005 | absolute | PASS |
 | square_500hz | canonical | plateau_p2p_after | 0.0006528 | 0.001952 | relative | PASS |
 | square_500hz | canonical | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
-| square_1000hz | canonical | plateau_rms_after | 0.6511 | 0.7175 | relative | PASS |
-| square_1000hz | canonical | plateau_p2p_after | 1.062 | 1.181 | relative | PASS |
-| square_1000hz | canonical | overshoot_after | 0.03015 | 0.07776 | relative | PASS |
-| square_2000hz | canonical | plateau_rms_after | 0.6211 | 0.6645 | relative | PASS |
-| square_2000hz | canonical | plateau_p2p_after | 1.062 | 1.26 | relative | PASS |
-| square_2000hz | canonical | overshoot_after | 0.05796 | 0.1367 | relative | PASS |
 | square_500hz_a005 | canonical | plateau_rms_after | 1.74e-05 | 5e-05 | absolute | PASS |
 | square_500hz_a005 | canonical | plateau_p2p_after | 6.528e-05 | 0.0001952 | relative | PASS |
 | square_500hz_a005 | canonical | overshoot_after | 0.003001 | 0.01226 | relative | PASS |
@@ -38,20 +32,23 @@
 | square_331hz_held | held_out | plateau_rms_after | 0.000174 | 0.0005 | absolute | PASS |
 | square_331hz_held | held_out | plateau_p2p_after | 0.0006528 | 0.002184 | relative | PASS |
 | square_331hz_held | held_out | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
-| square_1730hz_held | held_out | plateau_rms_after | 0.6339 | 0.6928 | relative | PASS |
-| square_1730hz_held | held_out | plateau_p2p_after | 1.062 | 1.26 | relative | PASS |
-| square_1730hz_held | held_out | overshoot_after | 0.0341 | 0.08627 | relative | PASS |
 
-## G2_hf_ringing: PASS (worst: square_4400hz_held)
+## G2_hf_ringing: PASS (worst: square_1000hz)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|
-| square_5000hz | canonical | plateau_rms_after | 0.4734 | 0.513 | relative | PASS |
-| square_5000hz | canonical | plateau_p2p_after | 1.065 | 1.261 | relative | PASS |
-| square_5000hz | canonical | overshoot_after | 0.3464 | 0.415 | relative | PASS |
-| square_4400hz_held | held_out | plateau_rms_after | 0.4889 | 0.5272 | relative | PASS |
-| square_4400hz_held | held_out | plateau_p2p_after | 1.064 | 1.261 | relative | PASS |
-| square_4400hz_held | held_out | overshoot_after | 0.3015 | 0.3732 | relative | PASS |
+| square_1000hz | canonical | plateau_rms_after | 0.0001772 | 0.0005 | absolute | PASS |
+| square_1000hz | canonical | plateau_p2p_after | 0.0006529 | 0.001952 | relative | PASS |
+| square_1000hz | canonical | overshoot_after | 0.03 | 0.07761 | relative | PASS |
+
+Not gated (no row emitted - this is NOT a pass):
+
+| probe | tier | metric group | half period | reason |
+|---|---|---|---|---|
+| square_2000hz | canonical | plateau_ripple_and_overshoot | 0.25 ms | no settled plateau exists: half period 0.25 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
+| square_5000hz | canonical | plateau_ripple_and_overshoot | 0.1 ms | no settled plateau exists: half period 0.1 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
+| square_1730hz_held | held_out | plateau_ripple_and_overshoot | 0.289 ms | no settled plateau exists: half period 0.289 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
+| square_4400hz_held | held_out | plateau_ripple_and_overshoot | 0.1136 ms | no settled plateau exists: half period 0.1136 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
 
 ## G2b_pre_echo: PASS (worst: impulse_train_10ms)
 
@@ -65,7 +62,7 @@
 | tone_burst_3700hz_held | held_out | pre_echo_energy_after | 3.33e-23 | 2.5e-07 | absolute | PASS |
 | tone_burst_14300hz_held | held_out | pre_echo_energy_after | 2.84e-20 | 2.5e-07 | absolute | PASS |
 
-## G2c_post_echo: PASS (worst: impulse)
+## G2c_post_echo: PASS (worst: impulse_train_10ms)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|

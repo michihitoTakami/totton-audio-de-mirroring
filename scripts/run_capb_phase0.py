@@ -17,7 +17,10 @@ import numpy as np
 from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
-from totton_audio_de_mirroring.evaluation.gates import image_band_low_hz
+from totton_audio_de_mirroring.evaluation.gates import (
+    image_band_low_hz,
+    plateau_window_for_frequency,
+)
 from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
@@ -152,6 +155,25 @@ def _evaluate_bank(
     return results
 
 
+def _square_frequency_hz(probe_id: str) -> float:
+    """Return the square frequency encoded in a probe id built by this script.
+
+    Args:
+        probe_id: Probe identifier of the form ``square_<hz>hz``.
+
+    Returns:
+        Frequency in Hz.
+
+    Raises:
+        ValueError: If the id does not carry a frequency.
+    """
+    body = probe_id.removeprefix("square_").removesuffix("hz")
+    try:
+        return float(body)
+    except ValueError as error:
+        raise ValueError(f"Cannot read a frequency from {probe_id!r}.") from error
+
+
 def _probe_metrics(
     probe_id: str, before: np.ndarray, after: np.ndarray, target_sr: int
 ) -> dict[str, Any]:
@@ -170,11 +192,22 @@ def _probe_metrics(
         metrics["image_band_before_db"] - metrics["image_band_after_db"]
     )
 
-    if probe_id.startswith("square_"):
+    plateau = (
+        plateau_window_for_frequency(_square_frequency_hz(probe_id))
+        if probe_id.startswith("square_")
+        else None
+    )
+    if probe_id.startswith("square_") and plateau is None:
+        # Above ~1.67 kHz a square has no settled plateau, so the gate emits
+        # no ripple row and neither does this structural report.
+        metrics["plateau_ripple"] = "not measurable"
+    elif plateau is not None:
         comparison = compare_edge_aligned_ringing(
             before_signal=before,
             after_signal=after,
             sample_rate=target_sr,
+            plateau_start_ms=plateau[0],
+            plateau_end_ms=plateau[1],
         )
         metrics.update(
             {

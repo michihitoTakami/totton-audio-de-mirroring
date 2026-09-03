@@ -14,13 +14,34 @@ Design principles (fixing the flaws that let a 15.8x plateau-ripple pass):
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from typing import Any
+from dataclasses import asdict
 
 import numpy as np
-from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.evaluation.distortion import smpte_imd_db
+from totton_audio_de_mirroring.evaluation.gate_reporting import (
+    render_markdown_report as render_markdown_report,
+)
+from totton_audio_de_mirroring.evaluation.gate_reporting import (
+    report_to_dict as report_to_dict,
+)
+from totton_audio_de_mirroring.evaluation.gate_spectral import (
+    GAIN_APPLICABILITY_HIGH_HZ,
+    GAIN_BAND_HIGH_HZ,
+    _band_energy_fraction,
+    _band_level_db,
+    _image_minus_main_db,
+    _peak_image_minus_main_db,
+    image_band_low_hz,
+)
+from totton_audio_de_mirroring.evaluation.gate_types import (
+    GateReport,
+    GateResult,
+    GateRow,
+    ProbeEvaluation,
+    SkippedProbe,
+    Stage1GateConfig,
+)
 from totton_audio_de_mirroring.evaluation.lb_preservation import (
     evaluate_lowband_preservation,
 )
@@ -50,139 +71,127 @@ from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
 # output-grid phase dependence that made 48 kHz square rows (edges exactly
 # between 96 kHz samples) jump by a whole sample and gave the two rate
 # families different effective thresholds for the same filter behavior.
-GATE_SPEC_VERSION = 6
+#
+# Spec 7: the plateau window is bounded by the probe's own half period, and a
+# probe whose half period cannot hold a settled plateau emits no plateau or
+# overshoot row at all. Spec 6 used a fixed 0.1-0.8 ms window for every square,
+# so from 625 Hz upward the window straddled the next transition and the
+# "plateau ripple" was the square wave itself: at 2 kHz three prototypes whose
+# post-edge ringing differs by 48x collapsed into a 3% spread against a 10%
+# allowance, and at 5 kHz the ordering inverted so a flatter FIR scored worse.
+# Thresholds, their Bessel-relative definitions and the probe manifest are
+# unchanged; only which rows are emitted, over which window, changes.
 SQUARE_EDGE_OVERSAMPLE = 8
 _EPSILON = 1e-300
 
-LF_RINGING_MAX_FREQ_HZ = 2_000.0
-# Image-band guard offset above the input Nyquist; the actual band edge is
-# rate-dependent (22.55 kHz at 88.2k target, 24.5 kHz at 96k target).
-IMAGE_BAND_NYQUIST_OFFSET_HZ = 500.0
-IMAGE_BAND_LOW_HZ = 22_550.0  # 44.1k-family value, kept for reference.
-MAIN_BAND_HIGH_HZ = 20_000.0
-GAIN_BAND_HIGH_HZ = 10_000.0
-GAIN_APPLICABILITY_HIGH_HZ = 8_000.0
+# Plateau window geometry, in milliseconds after the detected edge. The start
+# is a filter-settling allowance and does not scale with the probe period. The
+# guard keeps the window clear of the *next* transition by the same margin, and
+# a window shorter than the minimum span cannot carry a meaningful ripple RMS.
+PLATEAU_START_MS = 0.1
+PLATEAU_END_MS_DEFAULT = 0.8
+PLATEAU_EDGE_GUARD_MS = 0.1
+PLATEAU_MIN_SPAN_MS = 0.1
+
+# The G1/G2 split is derived from the window rule, not chosen: G1 holds probes
+# whose plateau reaches the full settled span, G2 those whose plateau is cut
+# short by the next transition. Above PLATEAU_MAX_FREQ_HZ no plateau exists at
+# all and the probe carries no plateau row in either gate.
+LF_RINGING_MAX_FREQ_HZ = 500.0 / (PLATEAU_END_MS_DEFAULT + PLATEAU_EDGE_GUARD_MS)
+PLATEAU_MIN_HALF_PERIOD_MS = (
+    PLATEAU_START_MS + PLATEAU_MIN_SPAN_MS + PLATEAU_EDGE_GUARD_MS
+)
+PLATEAU_MAX_FREQ_HZ = 500.0 / PLATEAU_MIN_HALF_PERIOD_MS
 GAIN_MIN_BAND_FRACTION = 0.05
 _ECHO_GUARD_MS = 0.5
 _ECHO_WINDOW_MS = 3.5
 
 
-@dataclass(frozen=True)
-class Stage1GateConfig:
-    """Thresholds for the probe-based Stage 1 gates.
+def probe_half_period_ms(spec: ProbeSpec) -> float | None:
+    """Return the probe's half period in milliseconds, or None if aperiodic.
 
     Args:
-        plateau_ripple_ratio_max: Relative plateau-ripple bound (after/before).
-        plateau_rms_floor_rel: Absolute RMS floor relative to probe amplitude.
-        plateau_p2p_floor_rel: Absolute P2P floor relative to probe amplitude.
-        overshoot_delta_max: Allowed overshoot increase over the reference.
-        overshoot_floor_rel: Absolute overshoot floor relative to amplitude.
-        pre_echo_energy_ratio_max: Allowed pre-echo energy growth (energy).
-        pre_echo_floor_rel: Amplitude-relative pre-echo absolute floor.
-        post_echo_energy_ratio_max: Allowed post-echo energy growth.
-        post_echo_floor_rel: Amplitude-relative post-echo absolute floor.
-        image_rel_max_db: Max image-band level relative to main band (steady).
-        image_peak_rel_max_db: Max swept-ridge image peak relative to main peak.
-        added_hf_max_db: Max image-band increase over the Bessel reference.
-        flatness_dip_max_db: Max smoothed response dip 100 Hz-18 kHz.
-        flatness_boost_max_db: Max smoothed response boost 100 Hz-18 kHz.
-        flatness_hf_dip_max_db: Max smoothed response dip 18-20 kHz.
-        gain_error_max_db: Max low-band RMS gain error vs ideal reference.
-        lb_phase_error_max_deg: Max low-band phase error vs ideal reference.
-        lb_group_delay_error_max_samples: Max low-band group-delay error.
-        lb_waveform_error_max_db: Max low-band waveform error in dB.
-        modulation_sideband_max_db: Maximum two-tone modulation products in dBc.
+        spec: Probe specification.
+
+    Returns:
+        Half period in milliseconds, or None for a DC step or an unspecified
+        frequency.
+
+    Raises:
+        ValueError: If the probe declares a non-positive frequency.
 
     Physical Basis:
-        Relative terms guard regressions against the reference SRC; absolute
-        floors encode audibility-scaled limits so that comparisons between
-        two inaudibly small quantities can never fail or pass a gate.
+        A square wave settles for at most one half period before the opposite
+        transition arrives, so the half period is the hard ceiling on any
+        post-edge measurement window.
     """
-
-    plateau_ripple_ratio_max: float = 1.10
-    plateau_rms_floor_rel: float = 1.0e-3
-    plateau_p2p_floor_rel: float = 3.16e-3
-    overshoot_delta_max: float = 5.0e-3
-    overshoot_floor_rel: float = 0.02
-    pre_echo_energy_ratio_max: float = 1.44
-    pre_echo_floor_rel: float = 1.0e-3
-    post_echo_energy_ratio_max: float = 1.44
-    post_echo_floor_rel: float = 1.0e-3
-    image_rel_max_db: float = -65.0
-    image_peak_rel_max_db: float = -65.0
-    added_hf_max_db: float = 3.0
-    image_negligible_rel_db: float = -70.0
-    flatness_dip_max_db: float = 1.0
-    flatness_boost_max_db: float = 1.0
-    flatness_hf_dip_max_db: float = 3.0
-    gain_error_max_db: float = 0.5
-    lb_phase_error_max_deg: float = 15.0
-    lb_group_delay_error_max_samples: float = 600.0
-    lb_waveform_error_max_db: float = -20.0
-    modulation_sideband_max_db: float = -110.0
+    if spec.kind == KIND_DC_STEP:
+        return None
+    frequency = spec.frequency_hz
+    if frequency is None:
+        return None
+    if frequency <= 0.0:
+        raise ValueError(f"Probe {spec.probe_id} declares frequency {frequency}.")
+    return 1_000.0 / frequency / 2.0
 
 
-@dataclass(frozen=True)
-class ProbeEvaluation:
-    """Raw metrics computed for one probe.
+def plateau_window_for_half_period(
+    half_period_ms: float | None,
+) -> tuple[float, float] | None:
+    """Return the post-edge plateau window in ms, or None if unresolvable.
 
     Args:
-        spec: The probe specification.
-        metrics: Flat metric mapping computed by evaluate_probe.
+        half_period_ms: Half period of the probe waveform, or None when the
+            waveform has no following transition (a DC step).
+
+    Returns:
+        ``(start_ms, end_ms)`` measured from the detected edge, or None when
+        the half period cannot hold a settled plateau.
+
+    Raises:
+        ValueError: If the half period is not positive.
 
     Physical Basis:
-        Separating metric computation from gating keeps a single metric
-        source of truth that multiple gates (and reports) can consume.
+        The window must start after the interpolation filter has settled and
+        end before the next transition, so it is clamped to
+        ``half_period - guard``. When that leaves less than the minimum span,
+        no ringing-free plateau exists at any window, and a ripple statistic
+        computed there would describe the waveform rather than the ringing.
     """
-
-    spec: ProbeSpec
-    metrics: dict[str, float]
-
-
-@dataclass(frozen=True)
-class GateRow:
-    """One gated criterion on one probe."""
-
-    probe_id: str
-    tier: str
-    metric: str
-    value: float
-    threshold: float
-    passed: bool
-    binding: str
+    if half_period_ms is None:
+        return (PLATEAU_START_MS, PLATEAU_END_MS_DEFAULT)
+    if half_period_ms <= 0.0:
+        raise ValueError(f"half_period_ms must be positive, got {half_period_ms}")
+    end = min(PLATEAU_END_MS_DEFAULT, half_period_ms - PLATEAU_EDGE_GUARD_MS)
+    if end - PLATEAU_START_MS < PLATEAU_MIN_SPAN_MS:
+        return None
+    return (PLATEAU_START_MS, end)
 
 
-@dataclass(frozen=True)
-class GateResult:
-    """Result of one gate over all applicable probes."""
-
-    gate_id: str
-    passed: bool
-    worst_probe_id: str | None
-    rows: tuple[GateRow, ...]
-
-
-@dataclass(frozen=True)
-class GateReport:
-    """Full gate report for one candidate.
+def plateau_window_for_frequency(
+    frequency_hz: float | None,
+) -> tuple[float, float] | None:
+    """Return the plateau window for a square of the given frequency.
 
     Args:
-        all_passed: True when every gate passed on every applicable probe.
-        gates: Per-gate results.
-        spec_version: Gate specification version.
-        manifest_hash: Hash of the probe manifest used.
-        config: Threshold configuration snapshot.
+        frequency_hz: Square-wave frequency in Hz, or None for a DC step.
 
-    Physical Basis:
-        A pass is only meaningful relative to the probe suite and threshold
-        set it was earned against, so both are embedded in the report.
+    Returns:
+        ``(start_ms, end_ms)``, or None when no settled plateau exists.
+
+    Raises:
+        ValueError: If the frequency is not positive.
     """
+    if frequency_hz is None:
+        return plateau_window_for_half_period(None)
+    if frequency_hz <= 0.0:
+        raise ValueError(f"frequency_hz must be positive, got {frequency_hz}")
+    return plateau_window_for_half_period(500.0 / frequency_hz)
 
-    all_passed: bool
-    gates: tuple[GateResult, ...]
-    spec_version: int = GATE_SPEC_VERSION
-    manifest_hash: str = ""
-    config: dict[str, float] = field(default_factory=dict)
+
+def resolve_plateau_window(spec: ProbeSpec) -> tuple[float, float] | None:
+    """Return the plateau window for one probe, or None if unresolvable."""
+    return plateau_window_for_half_period(probe_half_period_ms(spec))
 
 
 def evaluate_probe(
@@ -246,11 +255,16 @@ def evaluate_probe(
         source, source_sample_rate, GAIN_APPLICABILITY_HIGH_HZ
     )
 
+    plateau_window: tuple[float, float] | None = None
     if spec.kind in {KIND_SQUARE, KIND_DC_STEP}:
+        plateau_window = resolve_plateau_window(spec)
+    if plateau_window is not None:
         comparison = compare_edge_aligned_ringing(
             before_signal=bessel_reference,
             after_signal=output,
             sample_rate=target_sample_rate,
+            plateau_start_ms=plateau_window[0],
+            plateau_end_ms=plateau_window[1],
             oversample=SQUARE_EDGE_OVERSAMPLE,
         )
         metrics.update(
@@ -323,7 +337,7 @@ def evaluate_probe(
                 "lb_waveform_error_db": lb.waveform_error_db,
             }
         )
-    return ProbeEvaluation(spec=spec, metrics=metrics)
+    return ProbeEvaluation(spec=spec, metrics=metrics, plateau_window_ms=plateau_window)
 
 
 def evaluate_gates(
@@ -373,55 +387,6 @@ def evaluate_gates(
     )
 
 
-def report_to_dict(report: GateReport) -> dict[str, Any]:
-    """Serialize a GateReport into a JSON-compatible dictionary."""
-    return {
-        "all_passed": report.all_passed,
-        "spec_version": report.spec_version,
-        "manifest_hash": report.manifest_hash,
-        "config": report.config,
-        "gates": [
-            {
-                "gate_id": gate.gate_id,
-                "passed": gate.passed,
-                "worst_probe_id": gate.worst_probe_id,
-                "rows": [asdict(row) for row in gate.rows],
-            }
-            for gate in report.gates
-        ],
-    }
-
-
-def render_markdown_report(report: GateReport) -> str:
-    """Render a GateReport as a per-probe markdown table (worst-first)."""
-    lines = [
-        "# Stage 1 probe gate report",
-        "",
-        f"- all_passed: **{report.all_passed}**",
-        f"- spec_version: {report.spec_version}",
-        f"- manifest_hash: {report.manifest_hash}",
-        "",
-    ]
-    for gate in report.gates:
-        status = "PASS" if gate.passed else "FAIL"
-        lines += [
-            f"## {gate.gate_id}: {status}"
-            + (f" (worst: {gate.worst_probe_id})" if gate.worst_probe_id else ""),
-            "",
-            "| probe | tier | metric | value | threshold | binding | pass |",
-            "|---|---|---|---|---|---|---|",
-        ]
-        rows = sorted(gate.rows, key=lambda row: row.passed)
-        for row in rows:
-            lines.append(
-                f"| {row.probe_id} | {row.tier} | {row.metric} |"
-                f" {row.value:.4g} | {row.threshold:.4g} | {row.binding} |"
-                f" {'PASS' if row.passed else 'FAIL'} |"
-            )
-        lines.append("")
-    return "\n".join(lines)
-
-
 def _gate_ringing(
     gate_id: str,
     evaluations: list[ProbeEvaluation],
@@ -429,13 +394,34 @@ def _gate_ringing(
     low_frequency: bool,
 ) -> GateResult:
     rows: list[GateRow] = []
+    skipped: list[SkippedProbe] = []
     for evaluation in evaluations:
         spec = evaluation.spec
-        if "plateau_rms_after" not in evaluation.metrics:
+        if spec.kind not in {KIND_SQUARE, KIND_DC_STEP}:
             continue
         freq = spec.frequency_hz or 0.0
         is_low = spec.kind == KIND_DC_STEP or freq <= LF_RINGING_MAX_FREQ_HZ
         if is_low != low_frequency:
+            continue
+        if "plateau_rms_after" not in evaluation.metrics:
+            half_period = probe_half_period_ms(spec)
+            skipped.append(
+                SkippedProbe(
+                    probe_id=spec.probe_id,
+                    tier=spec.tier,
+                    metric_group="plateau_ripple_and_overshoot",
+                    reason=(
+                        "no settled plateau exists: half period "
+                        f"{half_period:.4g} ms leaves less than "
+                        f"{PLATEAU_MIN_SPAN_MS:.4g} ms between the "
+                        f"{PLATEAU_START_MS:.4g} ms settling start and the "
+                        f"{PLATEAU_EDGE_GUARD_MS:.4g} ms next-edge guard"
+                    )
+                    if half_period is not None
+                    else "plateau metrics unavailable",
+                    half_period_ms=half_period,
+                )
+            )
             continue
         metrics = evaluation.metrics
         amp = spec.amplitude
@@ -462,7 +448,7 @@ def _gate_ringing(
                 ),
             ),
         )
-    return _finalize(gate_id, rows)
+    return _finalize(gate_id, rows, skipped)
 
 
 def _gate_pre_echo(
@@ -722,22 +708,36 @@ def _threshold_rows(
     return rows
 
 
-def _finalize(gate_id: str, rows: list[GateRow]) -> GateResult:
+def _worst_row_key(row: GateRow) -> tuple[float, str]:
+    """Return the ordering key that selects a gate's worst row.
+
+    Physical Basis:
+        A gate binds on the largest fraction of its own threshold. Several
+        probes routinely reach the same fraction (the low-frequency overshoot
+        rows all sit on one absolute floor), so the probe id breaks the tie and
+        keeps the reported worst probe independent of suite ordering.
+    """
+    return (row.value / max(row.threshold, 1e-12), row.probe_id)
+
+
+def _finalize(
+    gate_id: str,
+    rows: list[GateRow],
+    skipped: list[SkippedProbe] | None = None,
+) -> GateResult:
     failing = [row for row in rows if not row.passed]
     worst: str | None = None
-    if failing:
-        worst = max(
-            failing, key=lambda row: row.value / max(row.threshold, 1e-12)
-        ).probe_id
-    elif rows:
-        worst = max(
-            rows, key=lambda row: row.value / max(row.threshold, 1e-12)
-        ).probe_id
+    ranked = failing or rows
+    if ranked:
+        # Ties are common on the low-frequency overshoot rows, so break them on
+        # the probe id to keep the reported worst probe reproducible.
+        worst = max(ranked, key=_worst_row_key).probe_id
     return GateResult(
         gate_id=gate_id,
         passed=not failing,
         worst_probe_id=worst,
         rows=tuple(rows),
+        skipped=tuple(skipped or ()),
     )
 
 
@@ -780,80 +780,3 @@ def _mean_square(window: np.ndarray) -> float:
     if window.size == 0:
         return 0.0
     return float(np.mean(np.square(window)))
-
-
-def _band_level_db(
-    signal: np.ndarray, sample_rate: int, low_hz: float, high_hz: float
-) -> float:
-    spectrum = np.abs(np.fft.rfft(signal * np.hanning(signal.size)))
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
-    band = (freqs >= low_hz) & (freqs <= high_hz)
-    if not np.any(band):
-        return -300.0
-    level = np.sqrt(np.mean(np.square(spectrum[band]))) / signal.size
-    return float(20.0 * np.log10(max(level, _EPSILON)))
-
-
-def _band_energy_fraction(
-    signal: np.ndarray, sample_rate: int, cutoff_hz: float
-) -> float:
-    spectrum = np.square(np.abs(np.fft.rfft(signal)))
-    freqs = np.fft.rfftfreq(signal.size, d=1.0 / sample_rate)
-    total = float(np.sum(spectrum))
-    if total <= 0.0:
-        return 0.0
-    return float(np.sum(spectrum[freqs <= cutoff_hz]) / total)
-
-
-def image_band_low_hz(target_sample_rate: int) -> float:
-    """Return the image-band lower edge for a 2x-upsampled target rate.
-
-    Physical Basis:
-        Mirror images of a 2x upsampler start at the input Nyquist
-        (target_rate / 4); the fixed offset keeps the measurement clear of
-        brickwall transition skirts. Evaluates to 22 550 Hz at 88.2 kHz and
-        24 500 Hz at 96 kHz.
-    """
-    if target_sample_rate <= 0:
-        raise ValueError(
-            f"target_sample_rate must be positive, got {target_sample_rate}."
-        )
-    return target_sample_rate / 4.0 + IMAGE_BAND_NYQUIST_OFFSET_HZ
-
-
-def _image_minus_main_db(signal: np.ndarray, sample_rate: int) -> float:
-    image = _band_level_db(
-        signal, sample_rate, image_band_low_hz(sample_rate), sample_rate / 2
-    )
-    main = _band_level_db(signal, sample_rate, 20.0, MAIN_BAND_HIGH_HZ)
-    return image - main
-
-
-def _peak_image_minus_main_db(signal: np.ndarray, sample_rate: int) -> float:
-    """Return peak swept-image ridge relative to the main swept ridge.
-
-    Physical Basis:
-        An integrated image-band average can hide a narrow residual confined
-        to the end of a sweep. The maximum Hann-STFT magnitude over time
-        follows the swept ridge at each frequency and makes that worst-case
-        residual binding.
-    """
-    nperseg = min(2_048, signal.size)
-    if nperseg < 16:
-        raise ValueError("signal is too short for peak image measurement.")
-    frequencies, _, spectrum = sp_signal.stft(
-        signal,
-        fs=sample_rate,
-        window="hann",
-        nperseg=nperseg,
-        noverlap=nperseg * 7 // 8,
-        nfft=nperseg,
-        boundary=None,
-        padded=False,
-    )
-    envelope = np.max(np.abs(spectrum), axis=1)
-    main = (frequencies >= 20.0) & (frequencies <= MAIN_BAND_HIGH_HZ)
-    image = frequencies >= image_band_low_hz(sample_rate)
-    main_peak = float(np.max(envelope[main]))
-    image_peak = float(np.max(envelope[image]))
-    return float(20.0 * np.log10(max(image_peak, _EPSILON) / max(main_peak, _EPSILON)))

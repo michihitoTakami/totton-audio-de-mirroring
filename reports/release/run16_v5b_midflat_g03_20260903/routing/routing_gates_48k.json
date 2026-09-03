@@ -37,7 +37,7 @@
       "passed": false,
       "worst_tier": "canonical",
       "worst_signal_type": "string_riff",
-      "value": 0.5653408386821386,
+      "value": 0.5653408386858939,
       "threshold": 0.9
     }
   ],
@@ -75,7 +75,7 @@
       },
       "damped_string": {
         "safe_active": 0.4248309716068465,
-        "pre_echo": 0.9815429113805294,
+        "pre_echo": 0.9815429076552391,
         "post_echo": 0.00010451526103787697,
         "edge": 0.6586062002530261
       },
@@ -113,7 +113,7 @@
         "safe_active": 0.0048525259996067644,
         "pre_echo": NaN,
         "post_echo": NaN,
-        "edge": 0.5653408386821386
+        "edge": 0.5653408386858939
       },
       "impact_stream": {
         "safe_active": 0.8013030634782112,
@@ -154,16 +154,16 @@
         "edge": NaN
       },
       "damped_string": {
-        "safe_active": 0.07257778681469063,
-        "pre_echo": 0.9891642406582832,
+        "safe_active": 0.07257778686125675,
+        "pre_echo": 0.989164225757122,
         "post_echo": 0.00010560873871149525,
         "edge": 0.6973796698019674
       },
       "isolated_click": {
         "safe_active": NaN,
         "pre_echo": 0.9364267885684967,
-        "post_echo": 0.967528410255909,
-        "edge": 0.7596568188598786
+        "post_echo": 0.9675283953547478,
+        "edge": 0.7596568122371402
       },
       "tone_burst": {
         "safe_active": 0.7455803386802817,
@@ -184,7 +184,7 @@
         "edge": 0.9989190727472306
       },
       "step_plateau": {
-        "safe_active": 0.8004325932864017,
+        "safe_active": 0.8004325932744616,
         "pre_echo": NaN,
         "post_echo": NaN,
         "edge": 0.5582076821167272
@@ -193,7 +193,7 @@
         "safe_active": 0.0003161880537163597,
         "pre_echo": NaN,
         "post_echo": NaN,
-        "edge": 0.5933854156898127
+        "edge": 0.593385415772597
       },
       "impact_stream": {
         "safe_active": 0.8324982802802142,

@@ -1,101 +1,103 @@
 {
- "44k1": {
-  "g0.0": {
-   "all_passed": true,
-   "failed_gates": [],
-   "g5_impulse_train_db": 0.022001228627769397,
-   "g2b_max": 9.437649014116176e-11,
-   "g1_headroom": 0.07819892091112321,
-   "g2_headroom": 0.028011133260317716,
-   "impulse_ring_db": -17.425952148775185,
-   "weights_at_impulse": {
-    "sharp": 0.00139999995008111,
-    "mid": 0.9927999973297119,
-    "gentle": 0.005799999926239252
-   },
-   "pink_image_db": -116.45675227295939
+  "gate_spec_version": 6,
+  "provenance_note": "Measured on the spec 6 plateau window. The g0.0 and g0.6 rows came from separately fine-tuned controllers that are no longer on disk, so this sweep cannot be reproduced without retraining. Note that changing focused_gentle_fraction on a fixed checkpoint leaves every square and DC-step gate row bit-identical, so the square rows here reflect the different controllers, not the fraction.",
+  "44k1": {
+    "g0.0": {
+      "all_passed": true,
+      "failed_gates": [],
+      "g5_impulse_train_db": 0.022001228627769397,
+      "g2b_max": 9.437649014116176e-11,
+      "g1_headroom": 0.07819892091112321,
+      "g2_headroom": 0.028011133260317716,
+      "impulse_ring_db": -17.425952148775185,
+      "weights_at_impulse": {
+        "sharp": 0.00139999995008111,
+        "mid": 0.9927999973297119,
+        "gentle": 0.005799999926239252
+      },
+      "pink_image_db": -116.45675227295939
+    },
+    "g0.3": {
+      "all_passed": true,
+      "failed_gates": [],
+      "g5_impulse_train_db": 0.16430271467144725,
+      "g2b_max": 4.652572493657215e-11,
+      "g1_headroom": 0.07819892091112321,
+      "g2_headroom": 0.02801113299501889,
+      "impulse_ring_db": -19.73175391399565,
+      "weights_at_impulse": {
+        "sharp": 0.0007999999797903001,
+        "mid": 0.704800009727478,
+        "gentle": 0.29440000653266907
+      },
+      "pink_image_db": -112.10774030015165
+    },
+    "g0.6": {
+      "all_passed": true,
+      "failed_gates": [],
+      "g5_impulse_train_db": 0.29428038243754506,
+      "g2b_max": 1.7155699800012864e-11,
+      "g1_headroom": 0.07819892091112321,
+      "g2_headroom": 0.02801113299501889,
+      "impulse_ring_db": -23.356033581821798,
+      "weights_at_impulse": {
+        "sharp": 0.0031999999191612005,
+        "mid": 0.4198000133037567,
+        "gentle": 0.5770000219345093
+      },
+      "pink_image_db": -109.30813040556855
+    }
   },
-  "g0.3": {
-   "all_passed": true,
-   "failed_gates": [],
-   "g5_impulse_train_db": 0.16430271467144725,
-   "g2b_max": 4.652572493657215e-11,
-   "g1_headroom": 0.07819892091112321,
-   "g2_headroom": 0.02801113299501889,
-   "impulse_ring_db": -19.73175391399565,
-   "weights_at_impulse": {
-    "sharp": 0.0007999999797903001,
-    "mid": 0.704800009727478,
-    "gentle": 0.29440000653266907
-   },
-   "pink_image_db": -112.10774030015165
-  },
-  "g0.6": {
-   "all_passed": true,
-   "failed_gates": [],
-   "g5_impulse_train_db": 0.29428038243754506,
-   "g2b_max": 1.7155699800012864e-11,
-   "g1_headroom": 0.07819892091112321,
-   "g2_headroom": 0.02801113299501889,
-   "impulse_ring_db": -23.356033581821798,
-   "weights_at_impulse": {
-    "sharp": 0.0031999999191612005,
-    "mid": 0.4198000133037567,
-    "gentle": 0.5770000219345093
-   },
-   "pink_image_db": -109.30813040556855
+  "48k": {
+    "g0.0": {
+      "all_passed": false,
+      "failed_gates": [
+        "G1_lf_ringing",
+        "G2_hf_ringing"
+      ],
+      "g5_impulse_train_db": 0.028078346620104135,
+      "g2b_max": 6.500871739709596e-11,
+      "g1_headroom": -0.021530504325669587,
+      "g2_headroom": -1.1990104155505001,
+      "impulse_ring_db": -16.288236154129386,
+      "weights_at_impulse": {
+        "sharp": 0.0006000000284984708,
+        "mid": 0.9883000254631042,
+        "gentle": 0.011099999770522118
+      },
+      "pink_image_db": -127.79268640010204
+    },
+    "g0.3": {
+      "all_passed": false,
+      "failed_gates": [
+        "G1_lf_ringing"
+      ],
+      "g5_impulse_train_db": 0.17532870065971443,
+      "g2b_max": 3.319256124525441e-11,
+      "g1_headroom": -0.021801578657559984,
+      "g2_headroom": 0.039635817490942686,
+      "impulse_ring_db": -18.52395541584621,
+      "weights_at_impulse": {
+        "sharp": 0.0006000000284984708,
+        "mid": 0.7005000114440918,
+        "gentle": 0.2989000082015991
+      },
+      "pink_image_db": -126.43647313417225
+    },
+    "g0.6": {
+      "all_passed": true,
+      "failed_gates": [],
+      "g5_impulse_train_db": 0.3111673791148403,
+      "g2b_max": 1.2230534570987858e-11,
+      "g1_headroom": 0.08244576506968473,
+      "g2_headroom": 0.039637393016931755,
+      "impulse_ring_db": -21.926709719446336,
+      "weights_at_impulse": {
+        "sharp": 0.0008999999845400453,
+        "mid": 0.414900004863739,
+        "gentle": 0.5842000246047974
+      },
+      "pink_image_db": -128.8129162020067
+    }
   }
- },
- "48k": {
-  "g0.0": {
-   "all_passed": false,
-   "failed_gates": [
-    "G1_lf_ringing",
-    "G2_hf_ringing"
-   ],
-   "g5_impulse_train_db": 0.028078346620104135,
-   "g2b_max": 6.500871739709596e-11,
-   "g1_headroom": -0.021530504325669587,
-   "g2_headroom": -1.1990104155505001,
-   "impulse_ring_db": -16.288236154129386,
-   "weights_at_impulse": {
-    "sharp": 0.0006000000284984708,
-    "mid": 0.9883000254631042,
-    "gentle": 0.011099999770522118
-   },
-   "pink_image_db": -127.79268640010204
-  },
-  "g0.3": {
-   "all_passed": false,
-   "failed_gates": [
-    "G1_lf_ringing"
-   ],
-   "g5_impulse_train_db": 0.17532870065971443,
-   "g2b_max": 3.319256124525441e-11,
-   "g1_headroom": -0.021801578657559984,
-   "g2_headroom": 0.039635817490942686,
-   "impulse_ring_db": -18.52395541584621,
-   "weights_at_impulse": {
-    "sharp": 0.0006000000284984708,
-    "mid": 0.7005000114440918,
-    "gentle": 0.2989000082015991
-   },
-   "pink_image_db": -126.43647313417225
-  },
-  "g0.6": {
-   "all_passed": true,
-   "failed_gates": [],
-   "g5_impulse_train_db": 0.3111673791148403,
-   "g2b_max": 1.2230534570987858e-11,
-   "g1_headroom": 0.08244576506968473,
-   "g2_headroom": 0.039637393016931755,
-   "impulse_ring_db": -21.926709719446336,
-   "weights_at_impulse": {
-    "sharp": 0.0008999999845400453,
-    "mid": 0.414900004863739,
-    "gentle": 0.5842000246047974
-   },
-   "pink_image_db": -128.8129162020067
-  }
- }
 }

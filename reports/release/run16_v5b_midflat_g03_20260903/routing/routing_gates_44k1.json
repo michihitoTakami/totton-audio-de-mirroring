@@ -37,7 +37,7 @@
       "passed": false,
       "worst_tier": "canonical",
       "worst_signal_type": "string_riff",
-      "value": 0.4319292218999657,
+      "value": 0.43192922617715085,
       "threshold": 0.9
     }
   ],
@@ -77,13 +77,13 @@
         "safe_active": 0.7182204744811379,
         "pre_echo": 0.9573032855987549,
         "post_echo": 4.4301777993934875e-06,
-        "edge": 0.8535427440102045
+        "edge": 0.8535427435272964
       },
       "isolated_click": {
         "safe_active": NaN,
-        "pre_echo": 0.9927055090665817,
+        "pre_echo": 0.9927055239677429,
         "post_echo": 0.9999298254648844,
-        "edge": 0.9164965361986155
+        "edge": 0.9164965391788478
       },
       "tone_burst": {
         "safe_active": 0.4178131172433496,
@@ -94,17 +94,17 @@
       "clustered_impacts": {
         "safe_active": 0.8542338828244991,
         "pre_echo": 0.9400567484532871,
-        "post_echo": 0.11960238742184524,
-        "edge": 0.759726298668251
+        "post_echo": 0.11960227566313629,
+        "edge": 0.7597262930023833
       },
       "square_wave": {
         "safe_active": 0.8520207139460937,
         "pre_echo": NaN,
         "post_echo": NaN,
-        "edge": 0.9095662753766237
+        "edge": 0.9095662765569137
       },
       "step_plateau": {
-        "safe_active": 0.9200497386678628,
+        "safe_active": 0.9200497388920701,
         "pre_echo": NaN,
         "post_echo": NaN,
         "edge": 0.708628137020002
@@ -113,13 +113,13 @@
         "safe_active": 0.15362177057912518,
         "pre_echo": NaN,
         "post_echo": NaN,
-        "edge": 0.4319292218999657
+        "edge": 0.43192922617715085
       },
       "impact_stream": {
         "safe_active": 0.8422665918866793,
         "pre_echo": NaN,
         "post_echo": NaN,
-        "edge": 0.786908790569214
+        "edge": 0.7869087905619381
       }
     },
     "held_out": {
@@ -157,7 +157,7 @@
         "safe_active": 0.7194792470579747,
         "pre_echo": 0.8425685223191977,
         "post_echo": 4.231236661183777e-05,
-        "edge": 0.6506465832594596
+        "edge": 0.6506465837674537
       },
       "isolated_click": {
         "safe_active": NaN,
@@ -166,7 +166,7 @@
         "edge": 0.8342599358699954
       },
       "tone_burst": {
-        "safe_active": 0.7011513691869806,
+        "safe_active": 0.7011513702907703,
         "pre_echo": 0.5561941464756198,
         "post_echo": 0.021347558591565285,
         "edge": 0.46605144356568345
@@ -184,7 +184,7 @@
         "edge": 0.9971054951349895
       },
       "step_plateau": {
-        "safe_active": 0.8704663146487304,
+        "safe_active": 0.870466320739716,
         "pre_echo": NaN,
         "post_echo": NaN,
         "edge": 0.735868041546872
@@ -193,7 +193,7 @@
         "safe_active": 0.007742826114908989,
         "pre_echo": NaN,
         "post_echo": NaN,
-        "edge": 0.6603609504867839
+        "edge": 0.6603609510286443
       },
       "impact_stream": {
         "safe_active": 0.8760228054154486,

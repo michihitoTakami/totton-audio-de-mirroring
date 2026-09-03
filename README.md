@@ -264,14 +264,14 @@ uv run python scripts/train_capb.py \
 
 ### 学習済み成果物
 
-推奨は両系列とも**run16**（2026-09-03、`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.3`、gate spec 6）です。`reports/release/release_manifest.json`の`recommended`が正史で、受入証跡は`reports/release/run16_v5b_midflat_g03_20260903/`にあります。
+推奨は両系列とも**run16**（2026-09-03、`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.3`、gate spec 7）です。`reports/release/release_manifest.json`の`recommended`が正史で、受入証跡は`reports/release/run16_v5b_midflat_g03_20260903/`にあります。
 
-| 系列 | 推奨checkpoint | 主要値（gate spec 6） |
+| 系列 | 推奨checkpoint | 主要値（gate spec 7） |
 |---|---|---|
 | 44.1→88.2 kHz | `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.6 dB`、impulse列利得誤差 `0.164 dB`、G2b `4.6e-11`、G3最悪 `-133.1 dB`、64位相worst `-37.3 dB`、群遅延5.8 ms |
 | 48→96 kHz | `data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.9 dB`、impulse列利得誤差 `0.175 dB`、G2b `3.3e-11`、G3最悪 `-133.5 dB`、64位相worst `-38.4 dB`、群遅延5.3 ms |
 
-run16の`v5b_sharp1023_midflat70` bankは、Sharp 1023 taps（Kaiser 140 dB）、Midは20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleはBessel6@20 kHzです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9 → 0.6（run15）→ 0.3（run16）と下げ、残りをフラットなMidで受けて打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.16〜0.18 dB`に改善し、孤立impulseのリンギングは`-32` → `-19〜-20 dB`（Sharp単体は`-15 dB`）です。比率0.0はMidのリップルが5 kHz矩形でG2を落とすため採用しません。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。run16へ至る中間候補run13〜run15のcheckpointは学習系譜の再現用に残していますが、証跡バンドルは2026-09-04に削除し、受入判定はrun16のみを正とします（commit `1541917`から復元可能）。
+run16の`v5b_sharp1023_midflat70` bankは、Sharp 1023 taps（Kaiser 140 dB）、Midは20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleはBessel6@20 kHzです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9 → 0.6（run15）→ 0.3（run16）と下げ、残りをフラットなMidで受けて打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.16〜0.18 dB`に改善し、孤立impulseのリンギングは`-32` → `-19〜-20 dB`（Sharp単体は`-15 dB`）です。比率`0.3`が両系列共通で通る下限です（spec 6まで記載していた「比率0.0は5 kHz矩形でG2を落とす」は再現できないため撤回しました。詳細は`reports/release/README.md`）。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。run16へ至る中間候補run13〜run15のcheckpointは学習系譜の再現用に残していますが、証跡バンドルは2026-09-04に削除し、受入判定はrun16のみを正とします（commit `1541917`から復元可能）。
 
 旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-19.7 dB`、48 kHzで`-25.7` → `-18.5 dB`で、G2b pre-echoは`1.05e-7` → `4.6e-11`、`1.33e-8` → `3.3e-11`です。代償は群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧世代checkpoint（run9〜run12）は2026-09-04に削除しました（commit `1541917`から復元可能）。
 
@@ -283,7 +283,9 @@ CAPB checkpointは、44.1→88.2 kHzと48→96 kHzの両系列で、通常評価
 
 Torch/CUDA評価はstrict FP32が既定です。`--allow-tf32`は原因調査専用で、release reportには使用できません。レポートにはTorch、CUDA、cuDNN、GPU、TF32設定を含む実行metadataが保存されます。
 
-ゲート仕様はspec 6です（2026-09-03）。矩形波とDC stepのリンギング指標（G1/G2の平坦部リップル・オーバーシュート）は、出力とBessel参照を8倍にsincオーバーサンプルした上でエッジ整列と窓切りを行います。閾値の定義（Bessel参照比1.1倍、オーバーシュート+0.005）は変えていません。spec 5では出力サンプル格子上でエッジを検出していたため、48 kHzの2 kHz / 5 kHz矩形（エッジが96 kHzサンプルの中間に揃う）で窓が1サンプル飛び、同じフィルタ挙動に対して44.1 kHzと48 kHzで実効閾値が2倍違っていました。spec 6では両系列の閾値がほぼ一致し、`focused_gentle_fraction 0.0`のようにMidのリップルが実際にBessel参照を超える構成は引き続き不合格になります。
+ゲート仕様はspec 7です（2026-09-04）。矩形波とDC stepのリンギング指標（G1/G2の平坦部リップル・オーバーシュート）は、出力とBessel参照を8倍にsincオーバーサンプルした上でエッジ整列と窓切りを行います。閾値の定義（Bessel参照比1.1倍、オーバーシュート+0.005）とprobe manifestは変えていません。
+
+spec 6まで窓はprobe周波数に依らずエッジ後0.1–0.8 ms固定だったため、矩形の半周期がこの0.70 msより短い625 Hz以上の全probeで窓が次の遷移を跨ぎ、平坦部リップルではなく矩形波自体を測っていました。spec 7は窓を`min(0.8 ms, 半周期 − 0.1 ms)`へ制限し、それでも0.1 ms幅を確保できないprobe（1730 / 2000 / 4400 / 5000 Hz）では平坦部・オーバーシュートの行を出しません。半周期がsharpの整定より短い矩形にはリンギングのない平坦部が物理的に存在しないためで、閾値の緩和ではなく未定義量の測定停止です。行を落としたprobeは`gate_report.json`の`skipped`に理由付きで記録されます。既存の有効な窓（500 Hz以下とDC step）の値はbit一致で保たれます。G1/G2の境界も規則から導出し（`500 / (0.8 + 0.1) = 555.56 Hz`）、G1は平坦部が完全に整定する矩形とDC step、G2は次のエッジで平坦部が切れる矩形（現行probeでは1000 Hzのみ）を見ます。1666.7 Hzを超える矩形は平坦部リンギングを測られなくなり、probe自体はG5とG7で引き続き判定されます。この穴を埋めるにはprobe manifestの改訂が必要です。
 
 ```bash
 # 44.1 kHz family

@@ -1,10 +1,10 @@
 # Stage 1 probe gate report
 
 - all_passed: **True**
-- spec_version: 6
+- spec_version: 7
 - manifest_hash: 085959477798407d
 
-## G1_lf_ringing: PASS (worst: square_2000hz)
+## G1_lf_ringing: PASS (worst: square_73hz_held)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|
@@ -17,12 +17,6 @@
 | square_500hz | canonical | plateau_rms_after | 0.000181 | 0.0005 | absolute | PASS |
 | square_500hz | canonical | plateau_p2p_after | 0.0007605 | 0.003282 | relative | PASS |
 | square_500hz | canonical | overshoot_after | 0.03753 | 0.0962 | relative | PASS |
-| square_1000hz | canonical | plateau_rms_after | 0.6512 | 0.7174 | relative | PASS |
-| square_1000hz | canonical | plateau_p2p_after | 1.077 | 1.201 | relative | PASS |
-| square_1000hz | canonical | overshoot_after | 0.03771 | 0.09648 | relative | PASS |
-| square_2000hz | canonical | plateau_rms_after | 0.6305 | 0.6615 | relative | PASS |
-| square_2000hz | canonical | plateau_p2p_after | 1.077 | 1.301 | relative | PASS |
-| square_2000hz | canonical | overshoot_after | 0.05471 | 0.1636 | relative | PASS |
 | square_500hz_a005 | canonical | plateau_rms_after | 1.809e-05 | 5e-05 | absolute | PASS |
 | square_500hz_a005 | canonical | plateau_p2p_after | 7.604e-05 | 0.0003282 | relative | PASS |
 | square_500hz_a005 | canonical | overshoot_after | 0.003753 | 0.01412 | relative | PASS |
@@ -38,20 +32,23 @@
 | square_331hz_held | held_out | plateau_rms_after | 0.000181 | 0.0005 | absolute | PASS |
 | square_331hz_held | held_out | plateau_p2p_after | 0.0007605 | 0.003282 | relative | PASS |
 | square_331hz_held | held_out | overshoot_after | 0.03753 | 0.0962 | relative | PASS |
-| square_1730hz_held | held_out | plateau_rms_after | 0.637 | 0.6953 | relative | PASS |
-| square_1730hz_held | held_out | plateau_p2p_after | 1.077 | 1.301 | relative | PASS |
-| square_1730hz_held | held_out | overshoot_after | 0.04372 | 0.1083 | relative | PASS |
 
-## G2_hf_ringing: PASS (worst: square_5000hz)
+## G2_hf_ringing: PASS (worst: square_1000hz)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|
-| square_5000hz | canonical | plateau_rms_after | 0.4616 | 0.5057 | relative | PASS |
-| square_5000hz | canonical | plateau_p2p_after | 1.08 | 1.3 | relative | PASS |
-| square_5000hz | canonical | overshoot_after | 0.4345 | 0.4973 | relative | PASS |
-| square_4400hz_held | held_out | plateau_rms_after | 0.4645 | 0.5093 | relative | PASS |
-| square_4400hz_held | held_out | plateau_p2p_after | 1.077 | 1.301 | relative | PASS |
-| square_4400hz_held | held_out | overshoot_after | 0.4856 | 0.54 | relative | PASS |
+| square_1000hz | canonical | plateau_rms_after | 0.0002043 | 0.0005 | absolute | PASS |
+| square_1000hz | canonical | plateau_p2p_after | 0.0007605 | 0.003495 | relative | PASS |
+| square_1000hz | canonical | overshoot_after | 0.03752 | 0.0962 | relative | PASS |
+
+Not gated (no row emitted - this is NOT a pass):
+
+| probe | tier | metric group | half period | reason |
+|---|---|---|---|---|
+| square_2000hz | canonical | plateau_ripple_and_overshoot | 0.25 ms | no settled plateau exists: half period 0.25 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
+| square_5000hz | canonical | plateau_ripple_and_overshoot | 0.1 ms | no settled plateau exists: half period 0.1 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
+| square_1730hz_held | held_out | plateau_ripple_and_overshoot | 0.289 ms | no settled plateau exists: half period 0.289 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
+| square_4400hz_held | held_out | plateau_ripple_and_overshoot | 0.1136 ms | no settled plateau exists: half period 0.1136 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard |
 
 ## G2b_pre_echo: PASS (worst: impulse_train_10ms)
 

@@ -1,6 +1,6 @@
 # CAPB transient robustness
 
-- Checkpoint: `/tmp/capb_v5b_ft_44_g0.3_s1234/capb_best.pt`
+- Checkpoint: `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt`
 - Overall: **PASS**
 - Direct 64-phase worst: -37.25 dB at offset 12
 - OLA-boundary worst: -37.23 dB at offset -27

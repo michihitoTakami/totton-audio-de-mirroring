@@ -19,7 +19,7 @@
       }
     }
   },
-  "recommendation_note": "run16 uses the v5b_sharp1023_midflat70 bank with impulse gentle fraction 0.3 for both rate families. Gate spec 6 measures square/DC-step ringing on 8x sinc-oversampled signals so the 48 kHz square rows no longer depend on output-grid phase. All three seeds pass G1-G9 (spec 6) on CPU and strict-FP32 CUDA; G5 headroom grows further, hit-time HF is closer to sharp, and isolated-impulse ringing is about -20 dB (sharp alone -15 dB). Superseded candidates run13-run15 were retired on 2026-09-04; their evidence bundles are recoverable from git history at commit 1541917.",
+  "recommendation_note": "run16 uses the v5b_sharp1023_midflat70 bank with impulse gentle fraction 0.3 for both rate families. Evidence is regenerated under gate spec 7, which bounds the square plateau window by the probe's own half period: the spec 6 fixed 0.1-0.8 ms window straddled the next transition from 625 Hz upward, so the row previously advertised as run16's worst binding probe (square_2000hz plateau_rms, 4.7% / 6.3% margin) was measuring the square wave rather than its ripple. Under spec 7 both families still pass G1-G9 on CPU and strict-FP32 CUDA, and the true ringing margin is 59-61%. Squares above 1666.7 Hz now carry no plateau row; closing that coverage gap needs a probe manifest revision. Superseded candidates run13-run15 were retired on 2026-09-04; their evidence bundles are recoverable from git history at commit 1541917.",
   "retired_candidates": {
     "retired_on": "2026-09-04",
     "recover_from_commit": "1541917",
@@ -28,5 +28,6 @@
       "run14_longsharp1023_a140_20260903",
       "run15_v5b_midflat_g06_20260903"
     ]
-  }
+  },
+  "gate_spec_version": 7
 }

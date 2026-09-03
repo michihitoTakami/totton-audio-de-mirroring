@@ -2,20 +2,20 @@
 
 ## Checkpoints
 
-- `44k1`: `/tmp/capb_v5b_ft_44_g0.3_s1234/capb_best.pt`
-- `48k`: `/tmp/capb_v5b_ft_48_g0.3_s1234/capb_best.pt`
+- `44k1`: `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt`
+- `48k`: `data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt`
 
 ## Coherent-line results
 
 | Diagnostic | 44.1→88.2 kHz | 48→96 kHz |
 |---|---:|---:|
-| 1 kHz THD, harmonics through 20 kHz | -142.05 dB | -133.08 dB |
-| SMPTE IMD, 60 Hz + 7 kHz | -137.65 dB | -137.93 dB |
-| CCIF IMD, 19 + 20 kHz | -152.48 dB | -140.85 dB |
-| Strongest added 10 kHz AM sideband | -143.94 dB | -157.15 dB |
+| 1 kHz THD, harmonics through 20 kHz | -141.95 dB | -133.05 dB |
+| SMPTE IMD, 60 Hz + 7 kHz | -137.47 dB | -137.57 dB |
+| CCIF IMD, 19 + 20 kHz | -152.33 dB | -141.00 dB |
+| Strongest added 10 kHz AM sideband | -143.94 dB | -157.25 dB |
 
 Both checkpoints are below the unchanged -110 dB
-SMPTE modulation-sideband gate. The 48 kHz result is 0.29 dB
+SMPTE modulation-sideband gate. The 48 kHz result is 0.10 dB
 lower than the 44.1 kHz result and corresponds to an amplitude ratio of
 approximately 0.000013%. The per-family plots confirm that the
 symmetric `7 kHz ± n·60 Hz` family and controller-weight excursion are

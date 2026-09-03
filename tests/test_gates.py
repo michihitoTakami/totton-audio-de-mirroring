@@ -6,16 +6,28 @@ from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
 from totton_audio_de_mirroring.evaluation.gates import (
+    LF_RINGING_MAX_FREQ_HZ,
+    PLATEAU_EDGE_GUARD_MS,
+    PLATEAU_END_MS_DEFAULT,
+    PLATEAU_MAX_FREQ_HZ,
+    PLATEAU_MIN_HALF_PERIOD_MS,
+    PLATEAU_MIN_SPAN_MS,
+    PLATEAU_START_MS,
     ProbeEvaluation,
     Stage1GateConfig,
     evaluate_gates,
     evaluate_probe,
+    probe_half_period_ms,
     render_markdown_report,
     report_to_dict,
+    resolve_plateau_window,
 )
 from totton_audio_de_mirroring.evaluation.probe_suite import (
+    KIND_DC_STEP,
+    KIND_SQUARE,
     TIER_CANONICAL,
     ProbeSpec,
+    build_default_probe_suite,
     generate_probe,
 )
 from totton_audio_de_mirroring.models.proto_bank import (
@@ -285,3 +297,214 @@ def test_oversampled_edge_metrics_are_insensitive_to_half_sample_edge_phase() ->
     )
     with pytest.raises(ValueError, match="oversample"):
         compare_edge_aligned_ringing(reference, reference, rate, oversample=0)
+
+
+# --- Spec 7: probe-frequency-aware plateau window -------------------------
+
+_EXPECTED_PLATEAU_WINDOWS: dict[str, tuple[float, float] | None] = {
+    "square_50hz": (0.1, 0.8),
+    "square_73hz_held": (0.1, 0.8),
+    "square_100hz": (0.1, 0.8),
+    "square_331hz_held": (0.1, 0.8),
+    "square_500hz": (0.1, 0.8),
+    "square_500hz_a005": (0.1, 0.8),
+    "dc_step_up": (0.1, 0.8),
+    "dc_step_down": (0.1, 0.8),
+    "square_1000hz": (0.1, 0.4),
+    "square_1730hz_held": None,
+    "square_2000hz": None,
+    "square_4400hz_held": None,
+    "square_5000hz": None,
+}
+
+
+def _edge_probe_specs() -> list[ProbeSpec]:
+    return [
+        spec
+        for spec in build_default_probe_suite()
+        if spec.kind in {KIND_SQUARE, KIND_DC_STEP}
+    ]
+
+
+def test_plateau_window_constants_are_self_consistent() -> None:
+    """The G1/G2 split and the no-plateau ceiling are derived, not chosen."""
+    assert (
+        pytest.approx(PLATEAU_START_MS + PLATEAU_MIN_SPAN_MS + PLATEAU_EDGE_GUARD_MS)
+        == PLATEAU_MIN_HALF_PERIOD_MS
+    )
+    assert pytest.approx(500.0 / PLATEAU_MIN_HALF_PERIOD_MS) == PLATEAU_MAX_FREQ_HZ
+    assert (
+        pytest.approx(500.0 / (PLATEAU_END_MS_DEFAULT + PLATEAU_EDGE_GUARD_MS))
+        == LF_RINGING_MAX_FREQ_HZ
+    )
+
+
+def test_derived_plateau_window_table_is_frozen() -> None:
+    """Every square/step probe resolves to the recorded spec 7 window."""
+    resolved = {
+        spec.probe_id: resolve_plateau_window(spec) for spec in _edge_probe_specs()
+    }
+    assert set(resolved) == set(_EXPECTED_PLATEAU_WINDOWS)
+    for probe_id, expected in _EXPECTED_PLATEAU_WINDOWS.items():
+        actual = resolved[probe_id]
+        if expected is None:
+            assert actual is None, probe_id
+            continue
+        assert actual is not None, probe_id
+        assert actual[0] == pytest.approx(expected[0]), probe_id
+        assert actual[1] == pytest.approx(expected[1]), probe_id
+
+
+def test_derived_plateau_window_never_spans_a_transition() -> None:
+    """A resolved window stays one guard clear of the next edge.
+
+    The spec 6 fixed 0.1-0.8 ms window violates this for every probe at or
+    above 1000 Hz, which is the defect spec 7 removes.
+    """
+    for spec in _edge_probe_specs():
+        window = resolve_plateau_window(spec)
+        if window is None:
+            continue
+        assert window[1] - window[0] >= PLATEAU_MIN_SPAN_MS - 1e-12, spec.probe_id
+        half_period = probe_half_period_ms(spec)
+        if half_period is None:
+            continue
+        assert window[1] + PLATEAU_EDGE_GUARD_MS <= half_period + 1e-12, spec.probe_id
+
+
+@pytest.mark.parametrize(
+    ("frequency_hz", "resolvable"),
+    [(1600.0, True), (1700.0, False)],
+)
+def test_plateau_window_resolvability_boundary(
+    frequency_hz: float, resolvable: bool
+) -> None:
+    """The minimum-span rule decides resolvability either side of the ceiling."""
+    spec = ProbeSpec(
+        probe_id=f"square_{int(frequency_hz)}hz",
+        kind=KIND_SQUARE,
+        tier=TIER_CANONICAL,
+        frequency_hz=frequency_hz,
+        amplitude=0.5,
+    )
+    assert (resolve_plateau_window(spec) is not None) is resolvable
+
+
+def _prototype_evaluation(spec: ProbeSpec, prototype: str) -> ProbeEvaluation:
+    """Evaluate one fixed prototype on one probe through the real metric path."""
+    bank = build_prototype_bank()
+    kernel = bank.kernels[bank.names.index(prototype)]
+    source = generate_probe(spec, SOURCE_SR)
+    bessel = upsample_bessel_reference(
+        signal=source,
+        source_sr=SOURCE_SR,
+        target_sr=TARGET_SR,
+        cutoff_hz=20_000.0,
+        order=6,
+    )
+    ideal = np.asarray(sp_signal.resample_poly(source, 2, 1), dtype=np.float64)
+    return evaluate_probe(
+        spec=spec,
+        source=source,
+        source_sample_rate=SOURCE_SR,
+        bessel_reference=bessel,
+        ideal_reference=ideal,
+        output=upsample_with_kernel(source, kernel, bank.upsample_ratio),
+        target_sample_rate=TARGET_SR,
+    )
+
+
+def test_high_frequency_square_emits_no_plateau_rows() -> None:
+    """A 5 kHz square has no settled plateau, so it carries no plateau row.
+
+    Exercises the real metric path rather than a fabricated metric mapping.
+    """
+    spec = next(
+        item for item in _edge_probe_specs() if item.probe_id == "square_5000hz"
+    )
+    evaluation = _prototype_evaluation(spec, "gentle")
+    assert evaluation.plateau_window_ms is None
+    for metric in ("plateau_rms_after", "plateau_p2p_after", "overshoot_after"):
+        assert metric not in evaluation.metrics
+
+    report = evaluate_gates([evaluation])
+    ringing = [gate for gate in report.gates if gate.gate_id.startswith(("G1_", "G2_"))]
+    skipped = [item for gate in ringing for item in gate.skipped]
+    assert [item.probe_id for item in skipped] == ["square_5000hz"]
+    assert skipped[0].metric_group == "plateau_ripple_and_overshoot"
+    assert skipped[0].half_period_ms == pytest.approx(0.1)
+    assert not any(gate.rows for gate in ringing)
+
+
+def test_spec7_plateau_metric_discriminates_ringing_at_1khz() -> None:
+    """The 1 kHz row separates the prototypes instead of measuring the square.
+
+    Under the spec 6 fixed window the same row scored sharp below gentle
+    (0.98 vs 1.00), so this assertion fails on a revert.
+    """
+    spec = next(
+        item for item in _edge_probe_specs() if item.probe_id == "square_1000hz"
+    )
+    ratios = {}
+    for prototype in ("gentle", "sharp"):
+        metrics = _prototype_evaluation(spec, prototype).metrics
+        ratios[prototype] = metrics["plateau_rms_after"] / metrics["plateau_rms_before"]
+    assert ratios["gentle"] < 1.0
+    assert ratios["sharp"] > 10.0
+    assert ratios["sharp"] > ratios["gentle"]
+
+
+def test_skipped_probes_are_never_reported_as_passing() -> None:
+    """A skipped probe must not appear on a PASS line in either report form."""
+    evaluations = [
+        _prototype_evaluation(spec, "gentle")
+        for spec in _edge_probe_specs()
+        if spec.probe_id in {"square_500hz", "square_5000hz"}
+    ]
+    report = evaluate_gates(evaluations)
+    markdown = render_markdown_report(report)
+    assert "NOT a pass" in markdown
+    # Scope the check to the ringing sections: square_5000hz legitimately
+    # appears as a passing G5_gain row, which spec 7 does not touch.
+    section = ""
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            section = line.removeprefix("## ").split(":", 1)[0]
+        if section.startswith(("G1_", "G2_")) and "square_5000hz" in line:
+            assert "PASS" not in line
+
+    payload = report_to_dict(report)
+    skipped = [
+        item["probe_id"] for gate in payload["gates"] for item in gate["skipped"]
+    ]
+    assert skipped == ["square_5000hz"]
+
+
+def test_no_ringing_gate_is_silently_empty() -> None:
+    """Both ringing gates keep at least one measured row on the frozen suite."""
+    evaluations = [
+        _prototype_evaluation(spec, "gentle") for spec in _edge_probe_specs()
+    ]
+    report = evaluate_gates(evaluations)
+    for gate in report.gates:
+        if not gate.gate_id.startswith(("G1_", "G2_")):
+            continue
+        assert gate.rows, f"{gate.gate_id} has no measured row"
+
+
+def test_worst_probe_id_is_independent_of_row_order() -> None:
+    """Tied ratios must not let suite ordering decide the reported worst probe."""
+    forward = [
+        _square_evaluation("square_a", 1.0e-4),
+        _square_evaluation("square_b", 1.0e-4),
+    ]
+    reverse = list(reversed(forward))
+    worst = [
+        next(
+            gate.worst_probe_id
+            for gate in evaluate_gates(order).gates
+            if gate.gate_id.startswith("G1_")
+        )
+        for order in (forward, reverse)
+    ]
+    assert worst[0] == worst[1]
