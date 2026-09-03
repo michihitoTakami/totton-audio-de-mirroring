@@ -1,14 +1,14 @@
 {
   "release_date": "2026-09-03",
   "recommended": {
-    "44k1": "run14_longsharp1023_a140_20260903",
-    "48k": "run14_longsharp1023_a140_20260903"
+    "44k1": "run15_v5b_midflat_g06_20260903",
+    "48k": "run15_v5b_midflat_g06_20260903"
   },
   "recommended_checkpoints": {
-    "44k1": "data/checkpoints/capb/run14_longsharp1023_a140_20260903_44k1/capb_best.pt",
-    "48k": "data/checkpoints/capb_48k/run14_longsharp1023_a140_20260903_48k/capb_best.pt"
+    "44k1": "data/checkpoints/capb/run15_v5b_midflat_g06_20260903_44k1/capb_best.pt",
+    "48k": "data/checkpoints/capb_48k/run15_v5b_midflat_g06_20260903_48k/capb_best.pt"
   },
-  "recommended_pair_release_quality": "run14_longsharp1023_a140_20260903/release_quality/release_quality.json",
+  "recommended_pair_release_quality": "run15_v5b_midflat_g06_20260903/release_quality/release_quality.json",
   "candidates": {
     "run13_routing_v2_sharpfloor_20260903": {
       "manifest": "run13_routing_v2_sharpfloor_20260903/release_manifest.json",
@@ -25,7 +25,15 @@
         "44k1": "data/checkpoints/capb/run14_longsharp1023_a140_20260903_44k1/capb_best.pt",
         "48k": "data/checkpoints/capb_48k/run14_longsharp1023_a140_20260903_48k/capb_best.pt"
       }
+    },
+    "run15_v5b_midflat_g06_20260903": {
+      "manifest": "run15_v5b_midflat_g06_20260903/release_manifest.json",
+      "prototype_profile": "v5b_sharp1023_midflat70",
+      "families": {
+        "44k1": "data/checkpoints/capb/run15_v5b_midflat_g06_20260903_44k1/capb_best.pt",
+        "48k": "data/checkpoints/capb_48k/run15_v5b_midflat_g06_20260903_48k/capb_best.pt"
+      }
     }
   },
-  "recommendation_note": "Both families use the long_sharp_1023_a140 bank. 48 kHz improves its worst image row by 20 dB; 44.1 kHz is measurement-neutral (its worst row is controller-limited pink noise within seed spread) and adopts 1023 taps for a uniform bank, +4.4 dB sweep image, and identical latency/graph across families."
+  "recommendation_note": "run15 keeps the 1023-tap sharp bank, replaces the 80 dB middle with a ~100-tap flat Kaiser (20-24 kHz, 70 dB) and lowers the impulse gentle fraction to 0.6 for both families. All three seeds pass G1-G9 on CPU and strict-FP32 CUDA; G5 headroom grows from ~10 % to ~40 %, G2b improves by an order of magnitude, hit-time HF is closer to sharp; isolated-impulse ringing is -23 dB instead of -32 dB."
 }

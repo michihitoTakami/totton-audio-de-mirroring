@@ -193,6 +193,27 @@ def test_long_fir_profiles_share_requested_length(profile: str, length: int) -> 
     assert len(bank.coefficient_hash) == 64
 
 
+def test_variant_profile_redesigns_mid_and_gentle() -> None:
+    bank = build_prototype_bank_for_profile(
+        TARGET_SR, "v5_sharp1023_midflat70_gentleb4k24"
+    )
+    assert bank.names == ("sharp", "mid", "gentle")
+    assert bank.kernels.shape == (3, 1023)
+    mid = bank.kernels[1]
+    gentle = bank.kernels[2]
+    # The flat middle keeps a short support and its passband to 20 kHz.
+    assert 80 <= np.count_nonzero(mid) <= 120
+    freqs, response = sp_signal.freqz(mid, worN=1 << 14, fs=TARGET_SR)
+    magnitude = 20 * np.log10(np.abs(response) / np.abs(response[0]))
+    assert abs(magnitude[np.argmin(np.abs(freqs - 20_000.0))]) < 0.05
+    assert magnitude[np.argmin(np.abs(freqs - 24_000.0))] < -60.0
+    # The gentle endpoint stays 101 taps and loses less than 2 dB at 15 kHz.
+    assert np.count_nonzero(gentle) == 101
+    freqs, response = sp_signal.freqz(gentle, worN=1 << 14, fs=TARGET_SR)
+    magnitude = 20 * np.log10(np.abs(response) / np.abs(response[0]))
+    assert -2.0 < magnitude[np.argmin(np.abs(freqs - 15_000.0))] < -1.0
+
+
 def test_long_fir_profiles_preserve_mid_and_gentle_responses() -> None:
     release = build_prototype_bank_for_profile(TARGET_SR, RELEASE_PROTOTYPE_PROFILE)
     candidate = build_prototype_bank_for_profile(TARGET_SR, "long_sharp_2047_a120")

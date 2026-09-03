@@ -46,6 +46,26 @@ LONG_FIR_PROTOTYPE_PROFILES: dict[str, tuple[int, float]] = {
     "long_sharp_4095_a120": (4095, 120.0),
     "long_sharp_4095_a140": (4095, 140.0),
 }
+# Variant banks that also redesign the middle and gentle endpoints. Each entry
+# gives (sharp taps, sharp attenuation, middle Kaiser spec, gentle Bessel spec).
+# The flat middle keeps the passband to 20 kHz with a short (~100-tap) kernel
+# instead of the 80 dB design, and the gentle endpoint moves its Bessel corner
+# to 24 kHz at order 4 so the 10--20 kHz band loses at most ~2 dB while the
+# impulse response stays shorter than 0.2 ms.
+VARIANT_PROTOTYPE_PROFILES: dict[
+    str,
+    tuple[int, float, tuple[float, float, float], tuple[int, float, int] | None],
+] = {
+    # sharp taps, sharp dB, (mid pb Hz, mid sb Hz, mid dB),
+    # (gentle taps, cutoff Hz, order) or None to keep the rate-family gentle.
+    "v5_sharp1023_midflat70_gentleb4k24": (
+        1023,
+        140.0,
+        (20_000.0, 24_000.0, 70.0),
+        (101, 24_000.0, 4),
+    ),
+    "v5b_sharp1023_midflat70": (1023, 140.0, (20_000.0, 24_000.0, 70.0), None),
+}
 
 
 @dataclass(frozen=True)
@@ -191,6 +211,7 @@ def supported_prototype_profiles() -> tuple[str, ...]:
         RELEASE_PROTOTYPE_PROFILE,
         TWO_PROTOTYPE_PROFILE,
         *LONG_FIR_PROTOTYPE_PROFILES,
+        *VARIANT_PROTOTYPE_PROFILES,
     )
 
 
@@ -220,6 +241,32 @@ def prototype_specs_for_profile(
         return base_specs
     if profile_name == TWO_PROTOTYPE_PROFILE:
         return (base_specs[0], base_specs[-1])
+    sharp = base_specs[0]
+    if not isinstance(sharp, KaiserPrototypeSpec):
+        raise ValueError("The sharp prototype must use a Kaiser specification.")
+    variant = VARIANT_PROTOTYPE_PROFILES.get(profile_name)
+    if variant is not None:
+        sharp_taps, sharp_db, (mid_pb, mid_sb, mid_db), gentle_spec = variant
+        gentle = (
+            base_specs[-1]
+            if gentle_spec is None
+            else BesselMagnitudePrototypeSpec(
+                name="gentle",
+                num_taps=gentle_spec[0],
+                cutoff_hz=gentle_spec[1],
+                order=gentle_spec[2],
+            )
+        )
+        return (
+            replace(sharp, attenuation_db=sharp_db, num_taps=sharp_taps),
+            KaiserPrototypeSpec(
+                name="mid",
+                passband_edge_hz=mid_pb,
+                stopband_edge_hz=mid_sb,
+                attenuation_db=mid_db,
+            ),
+            gentle,
+        )
     profile = LONG_FIR_PROTOTYPE_PROFILES.get(profile_name)
     if profile is None:
         supported = ", ".join(supported_prototype_profiles())
@@ -227,9 +274,6 @@ def prototype_specs_for_profile(
             f"Unknown prototype profile '{profile_name}'; supported: {supported}."
         )
     num_taps, attenuation_db = profile
-    sharp = base_specs[0]
-    if not isinstance(sharp, KaiserPrototypeSpec):
-        raise ValueError("The sharp prototype must use a Kaiser specification.")
     return (
         replace(sharp, attenuation_db=attenuation_db, num_taps=num_taps),
         *base_specs[1:],
