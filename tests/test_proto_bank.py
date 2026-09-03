@@ -174,9 +174,15 @@ def test_unsupported_target_rate_raises() -> None:
     "profile,length",
     [
         ("long_sharp_1023_a120", 1023),
+        ("long_sharp_1023_a140", 1023),
         ("long_sharp_1535_a120", 1535),
         ("long_sharp_2047_a120", 2047),
         ("long_sharp_2047_a140", 2047),
+        ("long_sharp_2047_a160", 2047),
+        ("long_sharp_3071_a120", 3071),
+        ("long_sharp_3071_a140", 3071),
+        ("long_sharp_4095_a120", 4095),
+        ("long_sharp_4095_a140", 4095),
     ],
 )
 def test_long_fir_profiles_share_requested_length(profile: str, length: int) -> None:

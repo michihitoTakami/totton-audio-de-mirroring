@@ -1,67 +1,64 @@
-# CAPB release evidence — 2026-09-03 (routing v2, sharp floor)
+# CAPB release evidence — 2026-09-03
 
-採用品は`release_v4` prototype bankのまま、controllerを**routing v2 + sharp floor**処方で
-再学習したペアです。定常部はSharp、包絡onset/offsetと持続plateau edgeはGentle、疎な
-impulseはGentle主体（`focused_gentle_fraction` 44.1 kHz `0.90` / 48 kHz `0.85`）に
-ルーティングし、定常フレームのSharp下限損失（`stationary_sharp_floor`）でノイズ上の
-Gentle漏れを抑えています。
+2つの候補ペアを並置して保存しています。どちらもrouting v2 + sharp floor処方のcontrollerで、
+違いはSharp prototypeの長さだけです。**推奨は系列ごとに異なります**（`release_manifest.json`の
+`recommended`）。
 
-| Family | checkpoint | G1〜G9 CPU | G1〜G9 CUDA strict FP32 | G5 impulse列 | G2b pre-echo | G3 pink | 64位相 worst |
-|---|---|---|---|---:|---:|---:|---:|
-| 44.1→88.2 kHz | `data/checkpoints/capb/run13_routing_v2_sharpfloor_20260903_44k1/capb_best.pt` | PASS | PASS | `0.447 dB` | `5.15e-11` | `-117.6 dB` | `-35.93 dB` |
-| 48→96 kHz | `data/checkpoints/capb_48k/run13_routing_v2_sharpfloor_20260903_48k/capb_best.pt` | PASS | PASS | `0.451 dB` | `1.57e-11` | `-112.1 dB` | `-41.98 dB` |
+| 系列 | 推奨 | 理由 |
+|---|---|---|
+| 44.1→88.2 kHz | **run13**（`release_v4`、Sharp 483 taps） | 最悪イメージ行（pink noise、controller律速）はrun14で`-116.1` → `-108.8 dB`と後退し、sweepの`+4.4 dB`改善では採用規則（最悪イメージが`0.5 dB`以上改善）を満たさない。G9も`-142.9` → `-138.1 dB`、群遅延は2.7 → 5.8 ms。 |
+| 48→96 kHz | **run14**（`long_sharp_1023_a140`、Sharp 1023 taps） | 最悪イメージ行が`-107.8` → `-128.1 dB`（`+20 dB`）。G1〜G9、ロバストネス、pink漏れは同等。代償はG9 `-143.9` → `-138.2 dB`、群遅延1.4 → 5.3 ms、G5余裕9.7 → 8.6%。 |
 
-旧release（run11 / run12）との主な差:
+推奨ペア（run13 44.1 kHz + run14 48 kHz）のクロスレートrelease_qualityは
+[recommended_pair/release_quality](recommended_pair/release_quality/release_quality.md)でPASSです。
 
-- 実音源9本中8本で逆向きだったSharp/Gentle遷移（定常でGentle、打撃でSharp）が正方向になった
-  （旧release 0/9 → 8/9）。
-- 孤立impulseのリンギング（主ローブ±0.06 msを除く±4 msのエネルギー比）が
-  44.1 kHz `-24.3 dB` → `-32.5 dB`、48 kHz `-25.7 dB` → `-28.9 dB`。G2b pre-echoは
-  `1.05e-7` → `5.2e-11`、`1.33e-8` → `1.6e-11`。
-- controller 64位相・Hann-OLA境界のマージンは`-2.84 dB` → `-35.9 dB`、`-8.87 dB` → `-42.0 dB`。
-- G5 impulse列利得誤差はGentle主体化の代償で`0.446` → `0.447 dB`、`0.400` → `0.451 dB`
-  （上限`0.5 dB`）。
-- 44.1 kHz SMPTE sidebandは`-125.6` → `-142.9 dB`。48 kHz added AM sidebandは`-157.8` → `-146.7 dB`
-  （G9閾値`-110 dB`は十分に満たす）。
+## run13 — `run13_routing_v2_sharpfloor_20260903/`
 
-## 複数seed
+| Family | checkpoint | G1〜G9 CPU / CUDA | G5 impulse列 | G2b | G3最悪 | 64位相 worst | ONNX parity / null |
+|---|---|---|---:|---:|---:|---:|---|
+| 44.1k | `data/checkpoints/capb/run13_routing_v2_sharpfloor_20260903_44k1/capb_best.pt` | PASS / PASS | `0.447 dB` | `5.1e-11` | `-116.1 dB` | `-35.9 dB` | `7.2e-7` / `-130.8 dB` |
+| 48k | `data/checkpoints/capb_48k/run13_routing_v2_sharpfloor_20260903_48k/capb_best.pt` | PASS / PASS | `0.451 dB` | `1.6e-11` | `-107.8 dB` | `-42.0 dB` | `5.4e-7` / `-138.6 dB` |
 
-同じ処方でseed 1234 / 2026 / 4649を両系列で学習し、いずれもG1〜G9をCPUとstrict-FP32 CUDAの
-両方で通過しました（[seed_summary.json](selection/seed_summary.json)）。impulseリンギングは
-44.1 kHz `-32.5〜-33.0 dB`、48 kHz `-28.9〜-29.0 dB`、pink noiseのSharp<0.99フレームは
-全seedで`0.07%`以下です。sharp floor損失を入れる前の同処方では、seed 4649の44.1 kHzが
-pink noiseでG3を`-58 dB`で落としていました。採用checkpointはseed 1234です。
+## run14 — `run14_longsharp1023_a140_20260903/`
 
-## release_quality（クロスレート検査）の改定
+controllerはrun13から`long_sharp_1023_a140` bank上へcontroller-only転写して3 seed fine-tuneしたもの
+（seed 1234を採用）。mid/gentleは`release_v4`と同一係数を対称ゼロ埋めし、共通群遅延511 sample。
 
-`evaluation/release_quality.py`の過渡検査は「48 kHzが44.1 kHz以上に保護的」を要求していましたが、
-48 kHz Gentle端点の利得誤差（impulse列`0.527 dB`）が44.1 kHz（`0.497 dB`）より大きいため、
-Gentle主体の処方では「normalized peak ≤ 44.1 kHz + 0.02」と「impulse列G5 ≤ 44.1 kHzの値」を
-同時に満たせません。意図（48 kHzを不必要にSharp寄りにしない、過渡応答を両系列で比較する）を
-保ったまま次のように明文化しました。
+| Family | checkpoint | G1〜G9 CPU / CUDA | G5 impulse列 | G2b | G3最悪 | 64位相 worst | ONNX parity / null |
+|---|---|---|---:|---:|---:|---:|---|
+| 44.1k | `data/checkpoints/capb/run14_longsharp1023_a140_20260903_44k1/capb_best.pt` | PASS / PASS | `0.447 dB` | `5.6e-11` | `-108.8 dB` | `-36.1 dB` | `1.0e-6` / `-127.4 dB` |
+| 48k | `data/checkpoints/capb_48k/run14_longsharp1023_a140_20260903_48k/capb_best.pt` | PASS / PASS | `0.457 dB` | `1.3e-11` | `-128.1 dB` | `-42.4 dB` | `1.1e-6` / `-127.5 dB` |
 
-- impulse列G5は両系列とも凍結G5ゲート（`0.5 dB`）に対して判定する。
-- normalized position検査の許容に、checkpointに保存された`focused_gentle_fraction`の差
-  （44.1 kHz − 48 kHz、今回は`0.05`）を加える。
+3 seed（1234 / 2026 / 4649）すべてが両系列でCPU・strict-FP32 CUDAのG1〜G9を通過
+（[selection/seed_summary.json](run14_longsharp1023_a140_20260903/selection/seed_summary.json)）。
+sweep画像は44.1 kHz `-128.7` → `-133.1 dB`、48 kHz `-116.0` → `-133.5 dB`。fp32累積誤差床は
+長いFIRで浅くなり、THDは44.1 kHz `-145.5` → `-142.1 dB`、48 kHz `-140.3` → `-133.1 dB`
+（rate-local固定FIR床に対して評価するrelease_qualityはPASS）。
 
-G1〜G9のゲート本体、probe manifest、閾値は変更していません。
+## タップ数の走査
 
-## ONNXとnull test
+run13 controllerを学習なしで各bankへ載せ替え、483〜4095 tapsを走査しました
+（[long_fir_sweep_summary.json](run14_longsharp1023_a140_20260903/selection/long_fir_sweep_summary.json)）。
 
-- 44.1 kHz ONNX sha256 `65746ffb…4014e95`の前半、parity max abs error `7.15e-7`、wav null `-130.8 dB`
-- 48 kHz ONNX sha256 `6a543b72…`、parity max abs error `5.36e-7`、wav null `-138.6 dB`
+| Sharp taps | 44.1k G3最悪 | 44.1k 64位相 | 44.1k G9 | 48k G3最悪 | 48k 64位相 | 48k G9 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 483 / 277（release_v4） | `-116.1` | `-35.9` | `-142.9` | `-107.8` | `-42.0` | `-143.9` |
+| 1023 a140 | `-117.9` | `-35.8` | `-137.5` | `-128.0` | `-42.0` | `-138.0` |
+| 1535 a120 | `-117.7` | `-30.6` | `-135.7` | `-126.6` | `-42.0` | `-139.5` |
+| 2047 a140 | `-117.7` | `-23.9` | `-135.6` | `-126.0` | `-41.9` | `-134.2` |
+| 3071 a140 | `-117.4` | `-16.8` | `-136.1` | `-124.6` | `-41.4` | `-137.8` |
+| 4095 a140 | `-117.2` | `-14.3` | `-135.2` | `-123.6` | `-41.1` | `-136.9` |
 
-`torch.diff`をslice差分に置き換えてphysics routing priorをONNX opset 17で書き出せるようにしました。
-置き換え前後でcontroller出力は同一です。ONNXファイルはこのリポジトリには含めず、
-`totton-audio-nn/data/nmse/`側の差し替えは別PRで行います。
+1023 tapsが膝です。それ以上ではイメージが改善せず（48 kHzはむしろ後退）、44.1 kHzの
+controller 64位相マージンが`-36` → `-14 dB`へ縮み、G9が悪化します。pre-ringingの長さが
+物理priorの先読み（約13 ms）を超えるためです。2026-09-01に1535/2047 tapsが44.1 kHz G2bで
+落ちた原因（impulseでSharpが約10%混入）はrouting v2で解消しており、今回は全profileが通過しました。
 
-- [release manifest](release_manifest.json)
-- [release quality](release_quality/release_quality.md)
-- [44.1 kHz gate（CPU）](gates/44k1/cpu/candidate/gate_report.md) / [CUDA](gates/44k1/cuda/candidate/gate_report.md)
-- [48 kHz gate（CPU）](gates/48k/cpu/candidate/gate_report.md) / [CUDA](gates/48k/cuda/candidate/gate_report.md)
-- `robustness/`: controller 64位相とHann-OLA境界
-- `routing/`: 診断用routing gate R1〜R4（release条件ではない）、impulseリンギングとpink漏れの比較
-- `visualization/`: impulse応答と歪み図
-- `selection/`: seed比較
+## 共通事項
 
-数値の正史はstrict-FP32のworst-probe gateです。図とrouting診断は補助です。
+- ゲート本体（G1〜G9、probe manifest、閾値）は変更していません。release_qualityのクロスレート
+  検査はrun13採用時に明文化した定義（impulse列G5は凍結ゲートに対して判定、位置許容に
+  `focused_gentle_fraction`差を加算）です。
+- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`は現在run13ペア
+  （PR #696）で、48 kHzをrun14へ差し替える場合は別PRです。
+- 数値の正史はstrict-FP32のworst-probe gateです。`routing/`の診断R1〜R4と図は補助です。
