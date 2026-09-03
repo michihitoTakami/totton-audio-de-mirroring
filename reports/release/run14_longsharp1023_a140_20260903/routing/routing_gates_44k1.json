@@ -1,0 +1,206 @@
+{
+  "all_passed": false,
+  "routing_prior": {
+    "focused_gentle_fraction": 0.9,
+    "level_change_threshold": 0.3
+  },
+  "stationary_sharp_min": 0.995,
+  "transient_gentle_min": 0.9,
+  "samples_per_type": 16,
+  "rows": [
+    {
+      "gate_id": "R1_stationary_sharp",
+      "passed": true,
+      "worst_tier": "held_out",
+      "worst_signal_type": "band_limited_noise",
+      "value": 0.9955990816607619,
+      "threshold": 0.995
+    },
+    {
+      "gate_id": "R2_pre_echo_protective",
+      "passed": false,
+      "worst_tier": "canonical",
+      "worst_signal_type": "tone_burst",
+      "value": 0.15304791528100276,
+      "threshold": 0.9
+    },
+    {
+      "gate_id": "R3_post_echo_protective",
+      "passed": false,
+      "worst_tier": "canonical",
+      "worst_signal_type": "damped_string",
+      "value": 0.0002236187430754747,
+      "threshold": 0.9
+    },
+    {
+      "gate_id": "R4_abrupt_edge_protective",
+      "passed": false,
+      "worst_tier": "canonical",
+      "worst_signal_type": "string_riff",
+      "value": 0.5377293179657899,
+      "threshold": 0.9
+    }
+  ],
+  "blocks": {
+    "canonical": {
+      "flowing_noise": {
+        "safe_active": 0.9999570644263065,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "multitone": {
+        "safe_active": 0.9993704817511818,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "pink_noise": {
+        "safe_active": 0.9993917020884427,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "band_limited_noise": {
+        "safe_active": 0.9962465857014512,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "near_nyquist_noise": {
+        "safe_active": 0.9997136134089846,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "damped_string": {
+        "safe_active": 0.4428384661398552,
+        "pre_echo": 0.981029980652238,
+        "post_echo": 0.0002236187430754747,
+        "edge": 0.8713692796629798
+      },
+      "isolated_click": {
+        "safe_active": NaN,
+        "pre_echo": 0.9966609440743923,
+        "post_echo": 0.9999993164092302,
+        "edge": 0.935072780355463
+      },
+      "tone_burst": {
+        "safe_active": 0.35935113914310934,
+        "pre_echo": 0.15304791528100276,
+        "post_echo": 0.9975455801498067,
+        "edge": 0.5719278146498863
+      },
+      "clustered_impacts": {
+        "safe_active": 0.8008878242786118,
+        "pre_echo": 0.9783281087160915,
+        "post_echo": 0.3174376578539032,
+        "edge": 0.7752273076039291
+      },
+      "square_wave": {
+        "safe_active": 0.974531106326891,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.7766755373336174
+      },
+      "step_plateau": {
+        "safe_active": 0.8555381131314096,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.7401504244557336
+      },
+      "string_riff": {
+        "safe_active": 0.12526023784269924,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.5377293179657899
+      },
+      "impact_stream": {
+        "safe_active": 0.7340010534971952,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.8499189901012869
+      }
+    },
+    "held_out": {
+      "flowing_noise": {
+        "safe_active": 0.9999604301019148,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "multitone": {
+        "safe_active": 0.9997055931524796,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "pink_noise": {
+        "safe_active": 0.9997118725921168,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "band_limited_noise": {
+        "safe_active": 0.9955990816607619,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "near_nyquist_noise": {
+        "safe_active": 0.9995212063644872,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": NaN
+      },
+      "damped_string": {
+        "safe_active": 0.4769044843984268,
+        "pre_echo": 0.9073737822473049,
+        "post_echo": 0.0012743412325160726,
+        "edge": 0.6904995371366262
+      },
+      "isolated_click": {
+        "safe_active": NaN,
+        "pre_echo": 0.9172034834822019,
+        "post_echo": 0.9997136071324348,
+        "edge": 0.8659630074011199
+      },
+      "tone_burst": {
+        "safe_active": 0.6376313594643122,
+        "pre_echo": 0.7662019729625092,
+        "post_echo": 0.04908511104691978,
+        "edge": 0.6572233404635615
+      },
+      "clustered_impacts": {
+        "safe_active": 0.6407177813127253,
+        "pre_echo": 0.9504954815149902,
+        "post_echo": 0.21952406999991528,
+        "edge": 0.7654745377241752
+      },
+      "square_wave": {
+        "safe_active": NaN,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.9441919872255037
+      },
+      "step_plateau": {
+        "safe_active": 0.8522667063583088,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.6772327585724844
+      },
+      "string_riff": {
+        "safe_active": 0.0014054856930384811,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.6878724802475931
+      },
+      "impact_stream": {
+        "safe_active": 0.7917010617706723,
+        "pre_echo": NaN,
+        "post_echo": NaN,
+        "edge": 0.7884124591663879
+      }
+    }
+  }
+}
