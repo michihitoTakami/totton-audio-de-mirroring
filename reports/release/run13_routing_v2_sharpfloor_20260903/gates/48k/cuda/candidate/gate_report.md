@@ -1,57 +1,57 @@
 # Stage 1 probe gate report
 
 - all_passed: **True**
-- spec_version: 5
+- spec_version: 6
 - manifest_hash: 6529deadaab177fe
 
-## G1_lf_ringing: PASS (worst: square_1730hz_held)
+## G1_lf_ringing: PASS (worst: square_2000hz)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|
-| square_50hz | canonical | plateau_rms_after | 1.503e-05 | 0.0005 | absolute | PASS |
-| square_50hz | canonical | plateau_p2p_after | 0.0001187 | 0.00158 | absolute | PASS |
-| square_50hz | canonical | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| square_100hz | canonical | plateau_rms_after | 1.503e-05 | 0.0005 | absolute | PASS |
-| square_100hz | canonical | plateau_p2p_after | 0.0001187 | 0.00158 | absolute | PASS |
-| square_100hz | canonical | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| square_500hz | canonical | plateau_rms_after | 1.504e-05 | 0.0005 | absolute | PASS |
-| square_500hz | canonical | plateau_p2p_after | 0.0001187 | 0.00158 | absolute | PASS |
-| square_500hz | canonical | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| square_1000hz | canonical | plateau_rms_after | 0.6593 | 0.7237 | relative | PASS |
-| square_1000hz | canonical | plateau_p2p_after | 1.05 | 1.174 | relative | PASS |
-| square_1000hz | canonical | overshoot_after | 0.02448 | 0.07187 | relative | PASS |
-| square_2000hz | canonical | plateau_rms_after | 0.5546 | 0.6204 | relative | PASS |
-| square_2000hz | canonical | plateau_p2p_after | 1.05 | 1.247 | relative | PASS |
-| square_2000hz | canonical | overshoot_after | 0.1812 | 0.2082 | relative | PASS |
-| square_500hz_a005 | canonical | plateau_rms_after | 1.503e-06 | 5e-05 | absolute | PASS |
-| square_500hz_a005 | canonical | plateau_p2p_after | 1.187e-05 | 0.000158 | absolute | PASS |
-| square_500hz_a005 | canonical | overshoot_after | 0.002403 | 0.01168 | relative | PASS |
-| dc_step_up | canonical | plateau_rms_after | 1.503e-05 | 0.0005 | absolute | PASS |
-| dc_step_up | canonical | plateau_p2p_after | 0.0001187 | 0.001951 | relative | PASS |
-| dc_step_up | canonical | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| dc_step_down | canonical | plateau_rms_after | 1.503e-05 | 0.0005 | absolute | PASS |
-| dc_step_down | canonical | plateau_p2p_after | 0.0001187 | 0.001951 | relative | PASS |
-| dc_step_down | canonical | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| square_73hz_held | held_out | plateau_rms_after | 1.503e-05 | 0.0005 | absolute | PASS |
-| square_73hz_held | held_out | plateau_p2p_after | 0.0001187 | 0.00158 | absolute | PASS |
-| square_73hz_held | held_out | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| square_331hz_held | held_out | plateau_rms_after | 1.503e-05 | 0.0005 | absolute | PASS |
-| square_331hz_held | held_out | plateau_p2p_after | 0.0001187 | 0.00158 | absolute | PASS |
-| square_331hz_held | held_out | overshoot_after | 0.02403 | 0.07179 | relative | PASS |
-| square_1730hz_held | held_out | plateau_rms_after | 0.6367 | 0.694 | relative | PASS |
-| square_1730hz_held | held_out | plateau_p2p_after | 1.05 | 1.247 | relative | PASS |
-| square_1730hz_held | held_out | overshoot_after | 0.02453 | 0.07952 | relative | PASS |
+| square_50hz | canonical | plateau_rms_after | 0.0001742 | 0.0005 | absolute | PASS |
+| square_50hz | canonical | plateau_p2p_after | 0.0006528 | 0.00187 | relative | PASS |
+| square_50hz | canonical | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| square_100hz | canonical | plateau_rms_after | 0.0001742 | 0.0005 | absolute | PASS |
+| square_100hz | canonical | plateau_p2p_after | 0.0006528 | 0.001952 | relative | PASS |
+| square_100hz | canonical | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| square_500hz | canonical | plateau_rms_after | 0.000174 | 0.0005 | absolute | PASS |
+| square_500hz | canonical | plateau_p2p_after | 0.0006528 | 0.001952 | relative | PASS |
+| square_500hz | canonical | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| square_1000hz | canonical | plateau_rms_after | 0.6511 | 0.7175 | relative | PASS |
+| square_1000hz | canonical | plateau_p2p_after | 1.062 | 1.181 | relative | PASS |
+| square_1000hz | canonical | overshoot_after | 0.03015 | 0.07776 | relative | PASS |
+| square_2000hz | canonical | plateau_rms_after | 0.6225 | 0.6645 | relative | PASS |
+| square_2000hz | canonical | plateau_p2p_after | 1.062 | 1.26 | relative | PASS |
+| square_2000hz | canonical | overshoot_after | 0.05796 | 0.1367 | relative | PASS |
+| square_500hz_a005 | canonical | plateau_rms_after | 1.74e-05 | 5e-05 | absolute | PASS |
+| square_500hz_a005 | canonical | plateau_p2p_after | 6.528e-05 | 0.0001952 | relative | PASS |
+| square_500hz_a005 | canonical | overshoot_after | 0.003001 | 0.01226 | relative | PASS |
+| dc_step_up | canonical | plateau_rms_after | 0.0001749 | 0.0005 | absolute | PASS |
+| dc_step_up | canonical | plateau_p2p_after | 0.0006528 | 0.002288 | relative | PASS |
+| dc_step_up | canonical | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| dc_step_down | canonical | plateau_rms_after | 0.0001749 | 0.0005 | absolute | PASS |
+| dc_step_down | canonical | plateau_p2p_after | 0.0006528 | 0.002288 | relative | PASS |
+| dc_step_down | canonical | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| square_73hz_held | held_out | plateau_rms_after | 0.000174 | 0.0005 | absolute | PASS |
+| square_73hz_held | held_out | plateau_p2p_after | 0.0006528 | 0.002184 | relative | PASS |
+| square_73hz_held | held_out | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| square_331hz_held | held_out | plateau_rms_after | 0.000174 | 0.0005 | absolute | PASS |
+| square_331hz_held | held_out | plateau_p2p_after | 0.0006528 | 0.002184 | relative | PASS |
+| square_331hz_held | held_out | overshoot_after | 0.03001 | 0.07761 | relative | PASS |
+| square_1730hz_held | held_out | plateau_rms_after | 0.6339 | 0.6928 | relative | PASS |
+| square_1730hz_held | held_out | plateau_p2p_after | 1.062 | 1.26 | relative | PASS |
+| square_1730hz_held | held_out | overshoot_after | 0.0341 | 0.08627 | relative | PASS |
 
 ## G2_hf_ringing: PASS (worst: square_4400hz_held)
 
 | probe | tier | metric | value | threshold | binding | pass |
 |---|---|---|---|---|---|---|
-| square_5000hz | canonical | plateau_rms_after | 0.5401 | 0.563 | relative | PASS |
-| square_5000hz | canonical | plateau_p2p_after | 1.053 | 1.247 | relative | PASS |
-| square_5000hz | canonical | overshoot_after | 0.1833 | 0.283 | relative | PASS |
-| square_4400hz_held | held_out | plateau_rms_after | 0.5408 | 0.5631 | relative | PASS |
-| square_4400hz_held | held_out | plateau_p2p_after | 1.051 | 1.247 | relative | PASS |
-| square_4400hz_held | held_out | overshoot_after | 0.1808 | 0.283 | relative | PASS |
+| square_5000hz | canonical | plateau_rms_after | 0.4734 | 0.513 | relative | PASS |
+| square_5000hz | canonical | plateau_p2p_after | 1.065 | 1.261 | relative | PASS |
+| square_5000hz | canonical | overshoot_after | 0.3464 | 0.415 | relative | PASS |
+| square_4400hz_held | held_out | plateau_rms_after | 0.4889 | 0.5272 | relative | PASS |
+| square_4400hz_held | held_out | plateau_p2p_after | 1.064 | 1.261 | relative | PASS |
+| square_4400hz_held | held_out | overshoot_after | 0.3015 | 0.3732 | relative | PASS |
 
 ## G2b_pre_echo: PASS (worst: impulse)
 

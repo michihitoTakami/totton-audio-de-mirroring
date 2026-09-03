@@ -1,40 +1,46 @@
 # CAPB release evidence — 2026-09-03
 
-3つの候補ペアを並置して保存しています。いずれもrouting v2 + sharp floor処方のcontrollerで、
-違いはprototype bankと打撃時のGentle比率です。**推奨は両系列ともrun15**（`v5b_sharp1023_midflat70`
-bank、`focused_gentle_fraction 0.6`）です（`release_manifest.json`の`recommended`）。
+4つの候補ペアを並置して保存しています。いずれもrouting v2 + sharp floor処方のcontrollerで、
+違いはprototype bankと打撃時のGentle比率です。**推奨は両系列ともrun16**（`v5b_sharp1023_midflat70`
+bank、`focused_gentle_fraction 0.3`、gate spec 6）です（`release_manifest.json`の`recommended`）。
 
 | run | bank | Gentle比率 | 位置付け |
 |---|---|---|---|
 | run13 | `release_v4`（Sharp 483/277 taps、Mid Kaiser 80 dB、Gentle Bessel6@20k） | 0.90 / 0.85 | routing v2 + sharp floorの最初の採用品 |
-| run14 | `long_sharp_1023_a140`（Sharp 1023 taps、Mid/Gentleはrelease_v4） | 0.90 / 0.85 | Sharp長尺化。48 kHz最悪イメージ`-107.8` → `-128.1 dB` |
-| **run15** | `v5b_sharp1023_midflat70`（Sharp 1023 taps、**Mid Kaiser 20–24 kHz 70 dB ~100 taps**、Gentle Bessel6@20k） | **0.6 / 0.6** | 推奨。打撃時の可聴域減衰を減らしつつG1〜G9通過 |
+| run14 | `long_sharp_1023_a140`（Sharp 1023 taps） | 0.90 / 0.85 | Sharp長尺化。48 kHz最悪イメージ`-107.8` → `-128.1 dB` |
+| run15 | `v5b_sharp1023_midflat70`（Mid Kaiser 20–24 kHz 70 dB ~100 taps） | 0.6 / 0.6 | flat Mid導入 |
+| **run16** | `v5b_sharp1023_midflat70` | **0.3 / 0.3** | 推奨。打撃時のGentle比率を最小限にし可聴域の減衰を抑える |
 
-### run15を推奨する理由
+### run16を推奨する理由
 
-ABX（ハイハット素材）でGentle単体は識別可、Sharp単体とCAPBは識別不能でしたが、Gentleは
-15 kHzで`-4.3 dB`、20 kHzで`-10 dB`落ちるため、打撃の瞬間にGentleへ寄るほど打撃の高域が削れます。
-run15は(1) Midを20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）に置き換え、
-(2) 打撃時のGentle比率を0.9 → 0.6に下げて、打撃の高域をSharpに近づけました。
+ABX（ハイハット素材）でGentle単体は識別可、Sharp単体とCAPBは識別不能でした。Gentleは15 kHzで
+`-4.3 dB`、20 kHzで`-10 dB`落ちるので、打撃の瞬間にGentleへ寄るほど打撃の高域が削れます。run15で
+Midを20 kHzまでフラットな短いKaiserに置き換えた上で、run16では打撃時のGentle比率を0.6 → 0.3に下げ、
+残りをflat Midで受けます。比率0.0はMidのGibbsリップルが5 kHz矩形でBessel参照の1.1倍を超えるため
+G2で不合格（物理的に正しい判定）で、0.3が両系列共通で通る下限です。
 
-| 指標（run14 → run15） | 44.1 kHz | 48 kHz |
+| 指標（run15 → run16） | 44.1 kHz | 48 kHz |
 |---|---|---|
-| G5 impulse列利得誤差 | `0.447` → `0.294 dB` | `0.457` → `0.311 dB` |
-| G2b pre-echo | `5.6e-11` → `1.7e-11` | `1.3e-11` → `1.2e-11` |
-| 孤立impulseリンギング | `-32.4` → `-23.4 dB` | `-29.7` → `-21.9 dB` |
-| ハイハット打撃ピーク（Sharp比） | `-1.47` → `-1.25 dB` | — |
-| ハイハット16–20 kHz（Sharp比） | `-4.6` → `-3.8 dB` | — |
-| G3最悪 | `-108.8` → `-133.1 dB` | `-128.1` → `-133.5 dB` |
-| 64位相 worst | `-36.1` → `-32.8 dB` | `-42.4` → `-42.6 dB` |
+| G5 impulse列利得誤差 | `0.294` → `0.164 dB` | `0.311` → `0.175 dB` |
+| G2b pre-echo | `1.7e-11` → `4.6e-11` | `1.2e-11` → `3.3e-11` |
+| 孤立impulseリンギング | `-23.4` → `-19.7 dB` | `-21.9` → `-18.5 dB` |
+| ハイハット打撃16–20 kHz（Sharp比） | `-3.8` → `-3.2 dB` | — |
+| 64位相 worst | `-32.8` → `-37.3 dB` | `-42.6` → `-38.4 dB` |
+| controller@impulse | Gentle 0.58 / Mid 0.42 → Gentle 0.29 / Mid 0.70 | Gentle 0.58 / Mid 0.41 → Gentle 0.30 / Mid 0.70 |
 
-代償は孤立impulseのリンギングが約9 dB戻ること（それでもSharp単体の`-15 dB`より7〜8 dB低い）と、
-44.1 kHzのadded AM sidebandが`-142.6` → `-132.6 dB`になることです（G9閾値`-110 dB`）。
-比率をさらに下げた0.0 / 0.3は44.1 kHzでは全通過しますが、48 kHzでG1（2 kHz矩形）とG2（5 kHz矩形）を
-落とすため、両系列共通の値として0.6を採用しました（`run15_.../selection/fraction_sweep_summary.json`）。
+代償は孤立impulseのリンギングが約4 dB戻ること（Sharp単体`-15 dB`より4〜5 dB低い水準は維持）。
+打撃時のGentle使用は比率に依存しない包絡onset経路（level_risk → Gentle）が残るため、ハイハットの
+16–20 kHzはSharp比`-3.2 dB`が床です。この床を下げるにはonset経路の保護先を変える別のknobが必要です。
 
-Gentle自体を20 kHzまでフラットにする案（Bessel4@24 kHz）も試しましたが、G7（Bessel6@20 kHz参照に
-対するイメージ帯の増加 ≤ 3 dB）を両系列で`+12〜14 dB`超過して不合格でした。Gentleがエッジで使われる
-限り、その阻止帯はBessel6@20 kHz以上に深くなければならず、フラット化はG7と両立しません。
+### gate spec 6（2026-09-03）
+
+矩形波 / DC stepのリンギング指標（G1/G2）は、出力とBessel参照を8倍sincオーバーサンプルしてから
+エッジ整列と0.1–0.8 msの窓切りを行います。閾値の定義（Bessel参照比1.1倍、overshoot +0.005）は
+不変です。spec 5では出力サンプル格子でエッジを検出していたため、48 kHzの2 kHz / 5 kHz矩形
+（エッジが96 kHzサンプルの中間に揃う）で窓が1サンプル飛び、5 kHz矩形のovershoot閾値が
+44.1 kHz `0.549`に対して48 kHz `0.283`と2倍違っていました。spec 6では`0.539` / `0.567`と一致します。
+run13〜run15のゲートレポートもspec 6で再生成し、いずれも全通過です。
+比率0.0は引き続きG2（5 kHz / 4.4 kHz矩形のplateau_rms）で不合格になります。
 
 ## run13 — `run13_routing_v2_sharpfloor_20260903/`
 
@@ -75,6 +81,21 @@ controllerはrun14からcontroller-only転写して`v5b_sharp1023_midflat70` ban
 null testの入力probeは`/tmp/capb_null_inputs_20260903/probe_{44100,48000}.wav`（2 s log sweep +
 低レベルノイズ + 3クリック、16 bit）で、SHA-256は各`null_test/*.json`に記録しています。
 
+## run16 — `run16_v5b_midflat_g03_20260903/`
+
+controllerはrun14からcontroller-only転写して`v5b_sharp1023_midflat70` bank上で3 seed fine-tune
+（比率0.3、seed 1234を採用）。
+
+| Family | checkpoint | G1〜G9 CPU / CUDA（spec 6） | G5 impulse列 | G2b | G3最悪 | 64位相 worst | ONNX parity / null |
+|---|---|---|---:|---:|---:|---:|---|
+| 44.1k | `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt` | PASS / PASS | `0.164 dB` | `4.6e-11` | `-133.1 dB` | `-37.3 dB` | `1.0e-6` / `-128.2 dB` |
+| 48k | `data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt` | PASS / PASS | `0.175 dB` | `3.3e-11` | `-133.5 dB` | `-38.4 dB` | `1.1e-6` / `-128.2 dB` |
+
+3 seed（1234 / 2026 / 4649）すべてが両系列でCPU・strict-FP32 CUDAのG1〜G9（spec 6）を通過し、
+G5は`0.16〜0.18 dB`、pink noiseのSharp<0.99フレームは全seedで0%、64位相worstは`-37〜-38 dB`。
+最悪行は2 kHz矩形のplateau_rms（余裕4.7% / 6.3%）
+（[selection/seed_summary.json](run16_v5b_midflat_g03_20260903/selection/seed_summary.json)）。
+
 ## タップ数の走査
 
 run13 controllerを学習なしで各bankへ載せ替え、483〜4095 tapsを走査しました
@@ -96,9 +117,9 @@ controller 64位相マージンが`-36` → `-14 dB`へ縮み、G9が悪化し�
 
 ## 共通事項
 
-- ゲート本体（G1〜G9、probe manifest、閾値）は変更していません。release_qualityのクロスレート
+- ゲート仕様はspec 6（矩形/DC stepのリンギング指標を8倍sincオーバーサンプル上で測定）。閾値の定義とprobe manifestは変更していません。run13〜run15のゲートレポートもspec 6で再生成しています。release_qualityのクロスレート
   検査はrun13採用時に明文化した定義（impulse列G5は凍結ゲートに対して判定、位置許容に
   `focused_gentle_fraction`差を加算）です。
-- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`はrun15ペアへ差し替えます
-  （run13ペアはPR #696、run14ペアはPR #697で導入済み）。
+- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`はrun16ペアへ差し替えます
+  （run13ペアはPR #696、run14ペアはPR #697、run15ペアはPR #698で導入済み）。
 - 数値の正史はstrict-FP32のworst-probe gateです。`routing/`の診断R1〜R4と図は補助です。

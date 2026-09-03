@@ -243,3 +243,45 @@ def test_modulation_sideband_gate_binds_on_worst_two_tone() -> None:
     )
     assert not gate.passed
     assert gate.worst_probe_id == "held"
+
+
+def test_oversampled_edge_metrics_are_insensitive_to_half_sample_edge_phase() -> None:
+    """Spec 6: shifting a square edge by half an output sample must not move the metric."""
+    from scipy import signal as sp_signal
+
+    from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
+        compare_edge_aligned_ringing,
+    )
+
+    rate = 96_000
+    duration = int(0.05 * rate)
+    time = np.arange(duration) / rate
+    # Band-limited step via a gentle Butterworth so the edge has a finite slope.
+    sos = sp_signal.butter(4, 20_000.0, fs=rate, output="sos")
+
+    def step(offset_samples: float) -> np.ndarray:
+        raw = np.where(time * rate >= duration / 2 + offset_samples, 1.0, -1.0)
+        return np.asarray(sp_signal.sosfiltfilt(sos, raw), dtype=np.float64)
+
+    reference = step(0.0)
+    native = [
+        compare_edge_aligned_ringing(reference, step(shift), rate, oversample=1)
+        for shift in (0.0, 0.5)
+    ]
+    oversampled = [
+        compare_edge_aligned_ringing(reference, step(shift), rate, oversample=8)
+        for shift in (0.0, 0.5)
+    ]
+    native_spread = abs(
+        native[0].after.plateau_ripple_rms - native[1].after.plateau_ripple_rms
+    )
+    oversampled_spread = abs(
+        oversampled[0].after.plateau_ripple_rms
+        - oversampled[1].after.plateau_ripple_rms
+    )
+    assert oversampled_spread <= native_spread
+    assert oversampled[0].after.edge_time_ms == pytest.approx(
+        native[0].after.edge_time_ms, abs=1.0 / rate * 1000.0
+    )
+    with pytest.raises(ValueError, match="oversample"):
+        compare_edge_aligned_ringing(reference, reference, rate, oversample=0)
