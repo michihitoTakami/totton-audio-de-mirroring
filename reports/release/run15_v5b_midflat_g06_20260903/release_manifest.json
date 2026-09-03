@@ -1,0 +1,53 @@
+{
+  "run": "run15_v5b_midflat_g06_20260903",
+  "release_date": "2026-09-03",
+  "prototype_profile": "v5b_sharp1023_midflat70",
+  "recipe": "routing_v2 + stationary_sharp_floor; controller transferred from run14 onto the v5b bank (sharp 1023 taps / Kaiser 140 dB, flat middle Kaiser 20-24 kHz 70 dB, gentle Bessel6@20k) with focused_gentle_fraction 0.6 for both families",
+  "selected_seed": 1234,
+  "seeds": [
+    1234,
+    2026,
+    4649
+  ],
+  "precision": {
+    "mode": "strict_fp32",
+    "allow_tf32": false,
+    "torch": "2.10.0+cu128",
+    "cuda": "12.8",
+    "cudnn": 91002,
+    "gpu": "NVIDIA GeForce RTX 5060 Ti"
+  },
+  "gate_spec_version": 5,
+  "families": {
+    "44k1": {
+      "checkpoint": "data/checkpoints/capb/run15_v5b_midflat_g06_20260903_44k1/capb_best.pt",
+      "checkpoint_sha256": "0fc8f9cc54a7b78f3146c6b4bbd0e9813ee0e4ae5f576447dad6c1be930b43d6",
+      "prototype_hash": "3ae37d4d562df740dc3945c2a2dfb5f2c4ba807f5ee10725a85e9529a077252a",
+      "manifest_hash": "085959477798407d",
+      "routing_prior": {
+        "focused_gentle_fraction": 0.6,
+        "level_change_threshold": 0.3
+      },
+      "all_passed_cpu": true,
+      "onnx_sha256": "d88eb7df6f1c4da60a3f9a4ca00b638066561e943b4bc0fc87d09b8c8746a3eb",
+      "onnx_max_abs_error": 1.0132789611816406e-06,
+      "wav_null_peak": 1.0132789611816406e-06,
+      "wav_null_depth_db": -128.15561727251446
+    },
+    "48k": {
+      "checkpoint": "data/checkpoints/capb_48k/run15_v5b_midflat_g06_20260903_48k/capb_best.pt",
+      "checkpoint_sha256": "d692fa9f225e449a84db70ca254f0f36b90cdeffd66c819df90a5426874e6c16",
+      "prototype_hash": "06e8efc5a724059613cc45afdedab7c101d2ca0753da4494a5bbcf10ee2ac363",
+      "manifest_hash": "6529deadaab177fe",
+      "routing_prior": {
+        "focused_gentle_fraction": 0.6,
+        "level_change_threshold": 0.3
+      },
+      "all_passed_cpu": true,
+      "onnx_sha256": "87e43a2c65d5e76c4a25ee4dad5d8856be861433a102c90694f04a754407d67c",
+      "onnx_max_abs_error": 1.1324882507324219e-06,
+      "wav_null_peak": 5.960464477539062e-07,
+      "wav_null_depth_db": -128.18999915055582
+    }
+  }
+}

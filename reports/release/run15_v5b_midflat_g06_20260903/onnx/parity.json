@@ -1,0 +1,22 @@
+{
+  "44k1": {
+    "verify_lengths": [
+      4096,
+      22050,
+      48000
+    ],
+    "max_abs_error": 1.0132789611816406e-06,
+    "tolerance": 0.0001,
+    "sha256": "d88eb7df6f1c4da60a3f9a4ca00b638066561e943b4bc0fc87d09b8c8746a3eb"
+  },
+  "48k": {
+    "verify_lengths": [
+      4096,
+      22050,
+      48000
+    ],
+    "max_abs_error": 1.1324882507324219e-06,
+    "tolerance": 0.0001,
+    "sha256": "87e43a2c65d5e76c4a25ee4dad5d8856be861433a102c90694f04a754407d67c"
+  }
+}

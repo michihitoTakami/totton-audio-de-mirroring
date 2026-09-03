@@ -7,14 +7,15 @@ grad_clip: 1.0
 val_fraction: 0.1
 num_workers: 4
 seed: 1234
-border_trim: 512
-prototype_profile: release_v4
+border_trim: 1024
+prototype_profile: v5b_sharp1023_midflat70
 controller_dilation: 2
 controller_feature_mode: physics_routing
-# Sparse impulses split gentle/middle; the 48 kHz gentle endpoint alone
-# fails G5 (0.514 dB), so the 48 kHz fraction keeps a middle share.
+# Sparse impulses split gentle/middle (0.6 gentle, 0.4 flat middle) on the
+# v5b bank: sharp 1023 taps, flat 70 dB middle, Bessel6@20k gentle. Lower
+# fractions fail 48 kHz G1/G2 on the 2 kHz and 5 kHz squares.
 routing_prior:
-  focused_gentle_fraction: 0.90
+  focused_gentle_fraction: 0.6
   level_change_threshold: 0.30
 checkpoint_dir: data/checkpoints/experiments/routing_v2_44k1_3p
 checkpoint_interval_epochs: 5

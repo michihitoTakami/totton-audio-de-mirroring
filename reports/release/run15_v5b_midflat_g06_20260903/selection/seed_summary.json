@@ -1,0 +1,80 @@
+{
+ "44k1/s1234": {
+  "all_passed": true,
+  "g5_train": 0.29428038243754506,
+  "g3_worst": -133.0942213632688,
+  "g3_pink_worst": -110.8086051485156,
+  "g2b_impulse": 1.673379492261569e-11,
+  "worst": "square_5000hz/overshoot_after 2.8%",
+  "cuda_all_passed": true,
+  "robust": "PASS -32.80 dB",
+  "ring_db": -23.356033581821798,
+  "pink_leak_pct": 0.0,
+  "pink_image_db": -109.30813040556855
+ },
+ "44k1/s2026": {
+  "all_passed": true,
+  "g5_train": 0.3136526404888842,
+  "g3_worst": -133.09419378521122,
+  "g3_pink_worst": -112.27824906288588,
+  "g2b_impulse": 1.4340941429066325e-11,
+  "worst": "square_5000hz/overshoot_after 2.8%",
+  "cuda_all_passed": true,
+  "robust": "PASS -42.08 dB",
+  "ring_db": -23.940019528070064,
+  "pink_leak_pct": 0.0,
+  "pink_image_db": -109.25018676410936
+ },
+ "44k1/s4649": {
+  "all_passed": true,
+  "g5_train": 0.3072564169978928,
+  "g3_worst": -133.0946200123153,
+  "g3_pink_worst": -112.70734110361332,
+  "g2b_impulse": 1.5391477500714608e-11,
+  "worst": "square_5000hz/overshoot_after 2.8%",
+  "cuda_all_passed": true,
+  "robust": "PASS -42.03 dB",
+  "ring_db": -23.715619249362266,
+  "pink_leak_pct": 0.0,
+  "pink_image_db": -110.35580486527317
+ },
+ "48k/s1234": {
+  "all_passed": true,
+  "g5_train": 0.3111673791148403,
+  "g3_worst": -133.54578517748453,
+  "g3_pink_worst": -130.46422905445613,
+  "g2b_impulse": 1.1721815784522652e-11,
+  "worst": "square_4400hz_held/plateau_rms_after 4.0%",
+  "cuda_all_passed": true,
+  "robust": "PASS -42.58 dB",
+  "ring_db": -21.926709719446336,
+  "pink_leak_pct": 0.0,
+  "pink_image_db": -128.8129162020067
+ },
+ "48k/s2026": {
+  "all_passed": true,
+  "g5_train": 0.3173782038984362,
+  "g3_worst": -133.53870757143125,
+  "g3_pink_worst": -130.1484691856127,
+  "g2b_impulse": 1.2528921801422288e-11,
+  "worst": "square_4400hz_held/plateau_rms_after 4.0%",
+  "cuda_all_passed": true,
+  "robust": "PASS -41.06 dB",
+  "ring_db": -22.224492017952997,
+  "pink_leak_pct": 0.0,
+  "pink_image_db": -128.24925475448117
+ },
+ "48k/s4649": {
+  "all_passed": true,
+  "g5_train": 0.33223500640114617,
+  "g3_worst": -133.54775570067787,
+  "g3_pink_worst": -127.30120459893969,
+  "g2b_impulse": 1.0349842046210939e-11,
+  "worst": "square_4400hz_held/plateau_rms_after 4.0%",
+  "cuda_all_passed": true,
+  "robust": "PASS -43.45 dB",
+  "ring_db": -22.604114283418898,
+  "pink_leak_pct": 0.0,
+  "pink_image_db": -124.69573561085093
+ }
+}

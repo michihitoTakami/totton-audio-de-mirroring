@@ -218,7 +218,7 @@ uv run python scripts/report_capb_real_audio_routing.py \
 
 ### 長尺sharp FIRの実験
 
-`long_sharp_1023_a120`、`long_sharp_1023_a140`、`long_sharp_1535_a120`、`long_sharp_2047_a120`、`long_sharp_2047_a140`、`long_sharp_2047_a160`、`long_sharp_3071_a120`、`long_sharp_3071_a140`、`long_sharp_4095_a120`、`long_sharp_4095_a140`を候補として利用できます。変更するのはsharpだけで、middle/gentleの係数はrelease版をそのまま対称ゼロ埋めします。全prototypeは同じ奇数長・中心sample・群遅延を持ち、採用前に位相差`1e-6 deg`以下、群遅延差`1e-9 sample`以下、対称誤差`1e-12`以下を満たす必要があります。
+`long_sharp_1023_a120`、`long_sharp_1023_a140`、`long_sharp_1535_a120`、`long_sharp_2047_a120`、`long_sharp_2047_a140`、`long_sharp_2047_a160`、`long_sharp_3071_a120`、`long_sharp_3071_a140`、`long_sharp_4095_a120`、`long_sharp_4095_a140`を候補として利用できます。Mid/Gentleも変える派生として`v5b_sharp1023_midflat70`（Mid Kaiser 20–24 kHz 70 dB）と、G7で不合格になった診断用の`v5_sharp1023_midflat70_gentleb4k24`があります。変更するのはsharpだけで、middle/gentleの係数はrelease版をそのまま対称ゼロ埋めします。全prototypeは同じ奇数長・中心sample・群遅延を持ち、採用前に位相差`1e-6 deg`以下、群遅延差`1e-9 sample`以下、対称誤差`1e-12`以下を満たす必要があります。
 
 まず両rate familyの構造、FP32係数量子化、image応答、0.5--4 msと4--12 msのechoを比較します。
 
@@ -258,20 +258,20 @@ uv run python scripts/train_capb.py \
 
 2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。当時はイメージ抑制が改善してもhard gateを満たさなかったため`release_v4`を維持しました。checkpointを含まない1535-tap研究比較は`reports/research/long_fir_1535/`にあります。
 
-2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を両系列で採用しました（48 kHzはG3最悪`-107.8` → `-128.1 dB`、44.1 kHzは測定上同等でbank統一のため）。詳細は`reports/release/README.md`を参照してください。
+2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を両系列で採用し（48 kHzはG3最悪`-107.8` → `-128.1 dB`）、その後Midをフラットな短いKaiserに置き換えた`v5b_sharp1023_midflat70`がrun15として現在の推奨です。詳細は`reports/release/README.md`を参照してください。
 
 ### 学習済み成果物
 
-2026-09-03のrelease候補は2ペアを並置しています。どちらもrouting v2 + sharp floor処方のcontrollerで、違いはSharp prototypeの長さです。推奨は両系列とも**run14**（`long_sharp_1023_a140`、Sharp 1023 taps）で、`reports/release/release_manifest.json`の`recommended`に記録しています。
+2026-09-03のrelease候補は3ペアを並置しています。いずれもrouting v2 + sharp floor処方のcontrollerで、違いはprototype bankと打撃時のGentle比率です。推奨は両系列とも**run15**（`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.6`）で、`reports/release/release_manifest.json`の`recommended`に記録しています。
 
 | 系列 | 推奨checkpoint | 主要値 |
 |---|---|---|
-| 44.1→88.2 kHz | `data/checkpoints/capb/run14_longsharp1023_a140_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-138.1 dB`、impulse列利得誤差 `0.447 dB`、G2b `5.6e-11`、sweepイメージ `-133.1 dB`、G3最悪（pink）`-108.8 dB`、64位相worst `-36.1 dB`、群遅延5.8 ms |
-| 48→96 kHz | `data/checkpoints/capb_48k/run14_longsharp1023_a140_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-138.2 dB`、impulse列利得誤差 `0.457 dB`、G2b `1.3e-11`、G3最悪 `-128.1 dB`、64位相worst `-42.4 dB`、群遅延5.3 ms |
+| 44.1→88.2 kHz | `data/checkpoints/capb/run15_v5b_midflat_g06_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.9 dB`、impulse列利得誤差 `0.294 dB`、G2b `1.7e-11`、G3最悪 `-133.1 dB`、64位相worst `-32.8 dB`、群遅延5.8 ms |
+| 48→96 kHz | `data/checkpoints/capb_48k/run15_v5b_midflat_g06_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.8 dB`、impulse列利得誤差 `0.311 dB`、G2b `1.2e-11`、G3最悪 `-133.5 dB`、64位相worst `-42.6 dB`、群遅延5.3 ms |
 
-48 kHzは最悪イメージ行が`-107.8` → `-128.1 dB`と明確に改善します。44.1 kHzは測定上run13（483 taps）と同等で、最悪行のpink noise（controller律速）はseed間ばらつきの内側、sweepイメージは`4.4 dB`改善、G9は`-142.9` → `-138.1 dB`、群遅延は2.7 → 5.8 msです。両系列のbank・群遅延・ONNXグラフを統一するために44.1 kHzも1023 tapsを採用しました。非推奨側のrun13ペア（`run13_routing_v2_sharpfloor_20260903_*`）も同じ処方の有効な候補として保存しています。
+run15の`v5b_sharp1023_midflat70` bankは、Sharpを1023 taps（Kaiser 140 dB）、Midを20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleをBessel6@20 kHzのままとしたものです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9から0.6に下げ、残りをフラットなMidで受けることで打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.29〜0.31 dB`に改善し、孤立impulseのリンギングは`-32` → `-23 dB`（Sharp単体は`-15 dB`）です。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。非推奨側のrun13・run14も有効な候補として保存しています。
 
-旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-32.4 dB`、48 kHzで`-25.7` → `-29.7 dB`に下がりました。代償はimpulse列の利得誤差が48 kHzで`0.400` → `0.457 dB`へ増えたこと（上限`0.5 dB`）と、群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧checkpointは履歴として残しています。
+旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-23.4 dB`、48 kHzで`-25.7` → `-21.9 dB`とほぼ同等で、G2b pre-echoは`1.05e-7` → `1.7e-11`、`1.33e-8` → `1.2e-11`です。代償は群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧checkpointは履歴として残しています。
 
 release評価はstrict FP32を必須とし、48 kHzの数値床には同じTorch経路のrate-local fixed FIRを使います。クロスレート検査（`evaluation/release_quality.py`）は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容にcheckpointへ保存された`focused_gentle_fraction`の差を加えます。G1〜G9本体は変更していません。選定・gate・robustness・可視化・ONNX parity・null test・タップ数走査の根拠は`reports/release/`にあります。
 
