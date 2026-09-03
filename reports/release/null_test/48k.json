@@ -1,7 +1,7 @@
 {
   "input_wav": "/tmp/capb-long-fir-20260901/null_inputs/probe_48000.wav",
-  "checkpoint_path": "data/checkpoints/capb_48k/run12_48k_strictfp32_balanced_20260830/capb_best.pt",
-  "onnx_path": "../totton-audio-nn/data/nmse/capb_stage1_48k_to_96k.onnx",
+  "checkpoint_path": "/tmp/capb_routing_v2_floor_48_s1234/capb_best.pt",
+  "onnx_path": "/tmp/capb_routing_v2_floor_eval_20260903/onnx/capb_stage1_48k_to_96k.onnx",
   "onnx_contract": "waveform",
   "sample_rates": {
     "input": 48000,
@@ -9,21 +9,21 @@
   },
   "stats": {
     "pt": {
-      "rms": 0.15811767612547692,
-      "peak": 0.3058282434940338,
-      "rms_dbfs": -16.020391543209026,
-      "peak_dbfs": -10.290448192260516
+      "rms": 0.15811767758979206,
+      "peak": 0.3058282732963562,
+      "rms_dbfs": -16.020391462769695,
+      "peak_dbfs": -10.290447345838789
     },
     "onnx": {
-      "rms": 0.15811767612179778,
-      "peak": 0.3058282732963562,
-      "rms_dbfs": -16.020391543411133,
-      "peak_dbfs": -10.290447345838789
+      "rms": 0.1581176776071814,
+      "peak": 0.3058283030986786,
+      "rms_dbfs": -16.020391461814448,
+      "peak_dbfs": -10.290446499417143
     }
   },
   "null_pt_minus_onnx": {
-    "diff_rms": 1.8867528506877505e-08,
+    "diff_rms": 1.8593262499534548e-08,
     "diff_peak": 2.384185791015625e-07,
-    "null_depth_db": -138.46530816003454
+    "null_depth_db": -138.5924965231483
   }
 }

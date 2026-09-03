@@ -1,0 +1,38 @@
+# Routing-v2 48 -> 96 kHz compensated three-prototype candidate.
+epochs: 50
+batch_size: 16
+learning_rate: 1.0e-4
+weight_decay: 1.0e-3
+grad_clip: 1.0
+val_fraction: 0.1
+num_workers: 4
+seed: 1234
+border_trim: 512
+prototype_profile: release_v4
+controller_dilation: 2
+controller_feature_mode: physics_routing
+# Sparse impulses split gentle/middle; the 48 kHz gentle endpoint alone
+# fails G5 (0.514 dB), so the 48 kHz fraction keeps a middle share.
+routing_prior:
+  focused_gentle_fraction: 0.85
+  level_change_threshold: 0.30
+checkpoint_dir: data/checkpoints/experiments/routing_v2_48k_3p
+checkpoint_interval_epochs: 5
+log_interval: 20
+
+loss_weights:
+  wave: 1.0
+  stft: 1.0
+  plateau: 300.0
+  quiet: 300.0
+  tv: 0.1
+  entropy_floor: 10.0
+  min_entropy: 0.005
+  edge_fidelity_relax: 0.9
+  edge_ring: 30.0
+  pre_echo_excess: 600.0
+  post_echo_excess: 600.0
+  stationary_modulation: 300.0
+  prototype_routing: 300.0
+  stationary_sharp_floor: 1000.0
+  sharp_floor: 0.995

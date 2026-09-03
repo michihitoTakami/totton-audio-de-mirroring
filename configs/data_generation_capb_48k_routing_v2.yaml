@@ -1,0 +1,60 @@
+# CAPB routing-v2 data for 48 -> 96 kHz. Real recordings are holdouts.
+num_samples: 12000
+source_duration_sec: 1.0
+chunk_duration_sec: 0.25
+random_chunk: true
+seed: 1234
+source_sample_rate: 48000
+target_sample_rate: 96000
+near_nyquist_high_range_hz: [20000.0, 23400.0]
+flat_mask_window_ms: 0.10
+
+brickwall:
+  passband_edge_hz: 23700.0
+  stopband_edge_hz: 24000.0
+  attenuation_db: 120.0
+
+signal_mix:
+  square_wave: 0.08
+  step_plateau: 0.02
+  isolated_click: 0.07
+  sawtooth_wave: 0.02
+  tone_burst: 0.07
+  music_like_mixture: 0.02
+  multitone: 0.08
+  imd_two_tone: 0.04
+  sweep_log: 0.03
+  sweep_linear: 0.02
+  am_tone: 0.03
+  fm_tone: 0.03
+  percussive: 0.02
+  pink_noise: 0.03
+  band_limited_noise: 0.03
+  near_nyquist_noise: 0.03
+  damped_string: 0.07
+  clustered_impacts: 0.07
+  flowing_noise: 0.08
+  string_riff: 0.08
+  impact_stream: 0.08
+
+augmentation:
+  gain_range: [0.25, 1.0]
+  polarity_flip_prob: 0.3
+  noise_std_range: [0.0, 0.001]
+  soft_clip_prob: 0.1
+  soft_clip_drive_range: [1.2, 2.0]
+
+transient_supervision:
+  enabled: true
+  focus_signal_types:
+    [isolated_click, tone_burst, damped_string, clustered_impacts]
+  clean_probability: 0.7
+  center_fraction_range: [0.2, 0.8]
+  context_ms: 5.0
+  pre_echo_guard_ms: 0.5
+  pre_echo_window_ms: 3.5
+  post_echo_guard_ms: 0.5
+  post_echo_window_ms: 3.5
+  edge_supervision_signal_types:
+    [square_wave, step_plateau, isolated_click, damped_string, clustered_impacts,
+     string_riff, impact_stream]

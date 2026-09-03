@@ -11,6 +11,8 @@ system is time-varying and can create modulation sidebands unless constrained.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -30,11 +32,84 @@ DEFAULT_TARGET_SAMPLE_RATE = 88_200
 
 DEFAULT_CONTROL_STRIDE = 64
 DEFAULT_INIT_WEIGHTS = (0.85, 0.10, 0.05)
+TWO_PROTOTYPE_INIT_WEIGHTS = (0.95, 0.05)
 _CONTROLLER_CHANNELS = (24, 32, 40, 48, 48)
 _CONTROLLER_STRIDES = (2, 2, 2, 2, 4)
 _CONTROLLER_KERNEL = 9
 FIRComputeDType = Literal["float32", "float64"]
 SUPPORTED_FIR_COMPUTE_DTYPES: tuple[FIRComputeDType, ...] = ("float32", "float64")
+SUPPORTED_CONTROLLER_FEATURE_MODES = (
+    "waveform",
+    "waveform_envelope",
+    "envelope_flux",
+    "physics_routing",
+)
+_LEVEL_RISK_SLOPE = 60.0
+_CREST_RISK_THRESHOLD = 5.5
+_CREST_RISK_SLOPE = 8.0
+_SUSTAINED_DENSITY_THRESHOLD = 0.35
+_SUSTAINED_DENSITY_SLOPE = 30.0
+_PRIOR_RESIDUAL = 5.0e-4
+_PRIOR_MIDDLE_FLOOR = 1.0e-12
+
+
+@dataclass(frozen=True)
+class RoutingPriorConfig:
+    """Constants of the physics routing prior that travel with a checkpoint.
+
+    Args:
+        focused_gentle_fraction: Share of the sparse-impulse risk mass routed
+            to the gentle prototype instead of the middle one. Zero reproduces
+            the legacy middle-only policy; one removes middle from impulses.
+        level_change_threshold: Smoothed relative RMS change above which a
+            frame is treated as an envelope onset or offset.
+
+    Physical Basis:
+        Gentle rings least but loses impulse gain at 48 kHz (gate G5), so
+        the impulse split trades near-lobe ringing against gain error per
+        rate family. Stationary noise carries slow RMS wander that must stay
+        below the level threshold, otherwise gentle leaks into steady frames
+        and image rejection degrades.
+    """
+
+    focused_gentle_fraction: float = 0.0
+    level_change_threshold: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.focused_gentle_fraction <= 1.0:
+            raise ValueError("focused_gentle_fraction must lie in [0, 1].")
+        if not 0.0 < self.level_change_threshold < 1.0:
+            raise ValueError("level_change_threshold must lie in (0, 1).")
+
+    def to_dict(self) -> dict[str, float]:
+        """Return a JSON/torch.save friendly mapping."""
+        return {
+            "focused_gentle_fraction": float(self.focused_gentle_fraction),
+            "level_change_threshold": float(self.level_change_threshold),
+        }
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> RoutingPriorConfig:
+        """Build a config from checkpoint or YAML data (legacy when absent)."""
+        if raw is None:
+            return cls()
+        if not isinstance(raw, Mapping):
+            raise ValueError("routing_prior must be a mapping.")
+        return cls(
+            focused_gentle_fraction=float(raw.get("focused_gentle_fraction", 0.0)),
+            level_change_threshold=float(raw.get("level_change_threshold", 0.15)),
+        )
+
+
+def _backward_difference(signal: torch.Tensor) -> torch.Tensor:
+    """Return x[n] - x[n-1] with a zero first sample (ONNX-exportable form).
+
+    Physical Basis:
+        Equivalent to ``torch.diff`` with the first sample prepended; written
+        with slicing so the traced graph avoids the unsupported Diff operator.
+    """
+    padded = torch.cat([signal[..., :1], signal], dim=-1)
+    return padded[..., 1:] - padded[..., :-1]
 
 
 class CAPBController(nn.Module):
@@ -43,6 +118,8 @@ class CAPBController(nn.Module):
     Args:
         num_prototypes: Number of blend weights per frame.
         init_weights: Initial blend distribution (softmax bias init).
+        dilation: Positive temporal dilation for every encoder convolution.
+        feature_mode: Versioned controller input feature representation.
 
     Physical Basis:
         The controller only needs enough temporal context (~20-40 ms) to
@@ -55,6 +132,8 @@ class CAPBController(nn.Module):
         self,
         num_prototypes: int,
         init_weights: tuple[float, ...] = DEFAULT_INIT_WEIGHTS,
+        dilation: int = 1,
+        feature_mode: str = "waveform",
     ) -> None:
         super().__init__()
         if num_prototypes != len(init_weights):
@@ -64,9 +143,20 @@ class CAPBController(nn.Module):
             )
         if any(weight <= 0.0 for weight in init_weights):
             raise ValueError("init_weights must be strictly positive.")
+        if dilation <= 0:
+            raise ValueError("dilation must be positive.")
+        if feature_mode not in SUPPORTED_CONTROLLER_FEATURE_MODES:
+            raise ValueError(f"Unsupported controller feature_mode: {feature_mode!r}.")
+        self.feature_mode = feature_mode
 
         layers: list[nn.Module] = []
-        in_channels = 1
+        feature_channels = {
+            "waveform": 1,
+            "waveform_envelope": 3,
+            "envelope_flux": 4,
+            "physics_routing": 4,
+        }
+        in_channels = feature_channels[feature_mode]
         for channels, stride in zip(
             _CONTROLLER_CHANNELS, _CONTROLLER_STRIDES, strict=True
         ):
@@ -76,7 +166,8 @@ class CAPBController(nn.Module):
                     channels,
                     kernel_size=_CONTROLLER_KERNEL,
                     stride=stride,
-                    padding=_CONTROLLER_KERNEL // 2,
+                    padding=dilation * (_CONTROLLER_KERNEL // 2),
+                    dilation=dilation,
                 )
             )
             layers.append(nn.LeakyReLU(0.1))
@@ -107,8 +198,38 @@ class CAPBController(nn.Module):
         Returns:
             Logits of shape (batch, num_prototypes, time // 64).
         """
-        features = self.encoder(source.unsqueeze(1))
+        features = self.encoder(self._input_features(source))
         return torch.as_tensor(self.head(features))
+
+    def _input_features(self, source: torch.Tensor) -> torch.Tensor:
+        """Build versioned waveform and envelope controller features.
+
+        Physical Basis:
+            Raw waveform preserves polarity-changing discontinuities. A
+            short absolute envelope and its lagged change expose onsets and
+            decays without asking the CNN to relearn phase invariance.
+        """
+        waveform = source.unsqueeze(1)
+        if self.feature_mode == "waveform":
+            return waveform
+        envelope = F.avg_pool1d(
+            torch.abs(waveform), kernel_size=65, stride=1, padding=32
+        )
+        lag = 32
+        lagged = F.pad(envelope[..., :-lag], (lag, 0), mode="replicate")
+        envelope_change = torch.abs(envelope - lagged)
+        if self.feature_mode in {"envelope_flux", "physics_routing"}:
+            slope = torch.abs(_backward_difference(waveform))
+            slope_envelope = F.avg_pool1d(slope, kernel_size=65, stride=1, padding=32)
+            lagged_slope = F.pad(slope_envelope[..., :-lag], (lag, 0), mode="replicate")
+            envelope_flux = envelope_change / (envelope + lagged + 1.0e-3)
+            slope_flux = torch.abs(slope_envelope - lagged_slope) / (
+                slope_envelope + lagged_slope + 1.0e-3
+            )
+            return torch.cat(
+                (envelope, envelope_flux, slope_envelope, slope_flux), dim=1
+            )
+        return torch.cat((waveform, envelope, envelope_change), dim=1)
 
 
 class CAPB(nn.Module):
@@ -118,6 +239,9 @@ class CAPB(nn.Module):
         bank: Prototype bank (defaults to the validated Phase 0 bank).
         init_weights: Initial blend distribution.
         fir_compute_dtype: Arithmetic dtype for the fixed FIR path.
+        controller_dilation: Positive temporal dilation shared by encoder
+            convolutions.
+        controller_feature_mode: Versioned controller input features.
 
     Physical Basis:
         With convex weights over gain-matched linear-phase kernels, the
@@ -130,8 +254,11 @@ class CAPB(nn.Module):
     def __init__(
         self,
         bank: PrototypeBank | None = None,
-        init_weights: tuple[float, ...] = DEFAULT_INIT_WEIGHTS,
+        init_weights: tuple[float, ...] | None = None,
         fir_compute_dtype: FIRComputeDType = "float32",
+        controller_dilation: int = 1,
+        controller_feature_mode: str = "waveform",
+        routing_prior: RoutingPriorConfig | None = None,
     ) -> None:
         super().__init__()
         if bank is None:
@@ -149,6 +276,18 @@ class CAPB(nn.Module):
         self.prototype_profile = bank.profile_name
         self.prototype_hash = bank.coefficient_hash
         self.fir_compute_dtype = fir_compute_dtype
+        if controller_dilation <= 0:
+            raise ValueError("controller_dilation must be positive.")
+        self.controller_dilation = controller_dilation
+        if controller_feature_mode not in SUPPORTED_CONTROLLER_FEATURE_MODES:
+            raise ValueError(
+                f"Unsupported controller_feature_mode: {controller_feature_mode!r}."
+            )
+        self.controller_feature_mode = controller_feature_mode
+        self.routing_prior = routing_prior or RoutingPriorConfig()
+
+        if init_weights is None:
+            init_weights = initial_weights_for_prototypes(bank.names)
 
         kernel_dtype = (
             torch.float32 if fir_compute_dtype == "float32" else torch.float64
@@ -156,7 +295,12 @@ class CAPB(nn.Module):
         kernels = torch.from_numpy(np.ascontiguousarray(bank.kernels)).to(kernel_dtype)
         self.register_buffer("kernels", kernels.unsqueeze(1))
 
-        self.controller = CAPBController(self.num_prototypes, init_weights)
+        self.controller = CAPBController(
+            self.num_prototypes,
+            init_weights,
+            dilation=controller_dilation,
+            feature_mode=controller_feature_mode,
+        )
 
     def forward_with_details(
         self, source: torch.Tensor
@@ -179,11 +323,7 @@ class CAPB(nn.Module):
             raise ValueError("source must be a non-empty (batch, time) tensor.")
 
         prototype_outputs = self._prototype_outputs(source)
-        controller_dtype = self.controller.head.weight.dtype
-        controller_source = source.to(dtype=controller_dtype)
-        peak = controller_source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
-        logits = self.controller(controller_source / peak)
-        weights = torch.softmax(logits, dim=1)
+        weights = self.controller_weights(source)
         weights_up = F.interpolate(
             weights,
             size=prototype_outputs.shape[-1],
@@ -194,6 +334,248 @@ class CAPB(nn.Module):
             dim=1
         )
         return output, weights, prototype_outputs
+
+    def controller_weights(self, source: torch.Tensor) -> torch.Tensor:
+        """Return normalized controller weights with all routing priors applied.
+
+        Args:
+            source: Input waveform (batch, time) at the source rate.
+
+        Returns:
+            Convex prototype weights with shape (batch, prototypes, frames).
+
+        Raises:
+            ValueError: If the input is not a non-empty batched waveform.
+
+        Physical Basis:
+            Monitoring and evaluation must use the same level-independent
+            routing path as waveform inference. Otherwise a physics-informed
+            transient prior can be silently omitted from reported behavior.
+        """
+        if source.dim() != 2 or source.shape[-1] == 0:
+            raise ValueError("source must be a non-empty (batch, time) tensor.")
+        controller_dtype = self.controller.head.weight.dtype
+        controller_source = source.to(dtype=controller_dtype)
+        peak = controller_source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
+        normalized_source = controller_source / peak
+        logits = self.controller(normalized_source)
+        if self.controller_feature_mode == "physics_routing":
+            logits = self._apply_physics_routing_prior(logits, normalized_source)
+        return torch.softmax(logits, dim=1)
+
+    def focused_gentle_fraction_frames(
+        self, source: torch.Tensor, frames: int
+    ) -> torch.Tensor:
+        """Return the per-frame gentle share of the protective routing target.
+
+        Args:
+            source: Input waveform (batch, time) at the source rate.
+            frames: Controller frame count the result must match.
+
+        Returns:
+            Tensor (batch, frames) in [0, 1]; one means "gentle only".
+
+        Raises:
+            ValueError: If the input is not a non-empty batched waveform.
+
+        Physical Basis:
+            The routing loss must ask for exactly the split the prior can
+            deliver: only sparse high-crest impulses are eligible for the
+            middle prototype, so envelope onsets and sustained edges keep a
+            gentle-only target regardless of the impulse fraction.
+        """
+        if source.dim() != 2 or source.shape[-1] == 0:
+            raise ValueError("source must be a non-empty (batch, time) tensor.")
+        if frames <= 0:
+            raise ValueError("frames must be positive.")
+        ones = source.new_ones((source.shape[0], frames), dtype=torch.float32)
+        if self.controller_feature_mode != "physics_routing":
+            return ones
+        if "mid" not in self.prototype_names:
+            return ones
+        with torch.no_grad():
+            controller_dtype = self.controller.head.weight.dtype
+            controller_source = source.to(dtype=controller_dtype)
+            peak = controller_source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
+            _, crest_risk, sustained = self._routing_prior_terms(
+                controller_source / peak, frames
+            )
+        if sustained is None:
+            return ones
+        impulsive = crest_risk * (1.0 - sustained)
+        gentle_share = self.routing_prior.focused_gentle_fraction
+        return (1.0 - (1.0 - gentle_share) * impulsive).squeeze(1)
+
+    def _routing_prior_terms(
+        self, normalized_source: torch.Tensor, frames: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """Return (level_risk, crest_risk, sustained) at the controller rate."""
+        waveform = normalized_source.unsqueeze(1)
+        derivative = _backward_difference(waveform)
+        waveform_risk = self._local_level_change(waveform)
+        derivative_risk = self._local_level_change(derivative)
+        level_change = torch.maximum(waveform_risk, derivative_risk)
+        contextual = F.max_pool1d(level_change, kernel_size=9, stride=1, padding=4)
+        crest = self._local_derivative_crest(derivative)
+        crest_context = F.max_pool1d(crest, kernel_size=9, stride=1, padding=4)
+        if contextual.shape[-1] != frames:
+            contextual = F.adaptive_max_pool1d(contextual, frames)
+            crest_context = F.adaptive_max_pool1d(crest_context, frames)
+        level_risk = torch.sigmoid(
+            (contextual - self.routing_prior.level_change_threshold) * _LEVEL_RISK_SLOPE
+        )
+        crest_risk = torch.sigmoid(
+            (crest_context - _CREST_RISK_THRESHOLD) * _CREST_RISK_SLOPE
+        )
+        sustained: torch.Tensor | None = None
+        if "mid" in self.prototype_names:
+            density = self._local_activity_density(waveform)
+            if density.shape[-1] != frames:
+                density = F.adaptive_avg_pool1d(density, frames)
+            sustained = torch.sigmoid(
+                (density - _SUSTAINED_DENSITY_THRESHOLD) * _SUSTAINED_DENSITY_SLOPE
+            )
+        return level_risk, crest_risk, sustained
+
+    def _apply_physics_routing_prior(
+        self, logits: torch.Tensor, normalized_source: torch.Tensor
+    ) -> torch.Tensor:
+        """Add a noncausal transient-risk endpoint prior to learned logits.
+
+        Physical Basis:
+            Smoothed short-time RMS changes are measured for both waveform
+            and derivative. This detects onset/offset energy and sparse
+            discontinuities without treating a finite-duration sustain,
+            every carrier cycle, or stationary noise as a transient. Centered
+            smoothing and symmetric pooling supply pre-ringing look-ahead.
+            Sparse impulses split their protective mass between middle and
+            gentle by ``focused_gentle_fraction``; the split leaves the sharp
+            share untouched so the prior remains a valid simplex.
+        """
+        level_risk, crest_risk, sustained = self._routing_prior_terms(
+            normalized_source, logits.shape[-1]
+        )
+        residual = _PRIOR_RESIDUAL
+        sharp_index = self.prototype_names.index("sharp")
+        gentle_index = self.prototype_names.index("gentle")
+        channels: dict[int, torch.Tensor] = {}
+        if sustained is not None:
+            middle_index = self.prototype_names.index("mid")
+            middle_floor = _PRIOR_MIDDLE_FLOOR
+            routable_mass = 1.0 - 2.0 * residual - middle_floor
+            impulsive = crest_risk * (1.0 - sustained)
+            gentle_share = self.routing_prior.focused_gentle_fraction
+            middle_risk = (1.0 - gentle_share) * impulsive
+            gentle_risk = gentle_share * impulsive + crest_risk * sustained
+            gentle_risk = gentle_risk + (1.0 - crest_risk) * level_risk
+            middle = middle_floor + routable_mass * middle_risk
+            gentle = residual + routable_mass * gentle_risk
+            sharp = 1.0 - middle - gentle
+            channels[middle_index] = middle
+        else:
+            risk = torch.maximum(level_risk, crest_risk)
+            gentle = residual + (1.0 - 2.0 * residual) * risk
+            sharp = 1.0 - gentle
+        channels[sharp_index] = sharp
+        channels[gentle_index] = gentle
+        # Concatenate per-prototype channels instead of in-place index writes so
+        # the ONNX trace stays a plain Concat graph.
+        probabilities = torch.cat(
+            [
+                channels.get(index, torch.full_like(sharp, residual))
+                for index in range(self.num_prototypes)
+            ],
+            dim=1,
+        )
+        bias = self.controller.head.bias
+        if bias is None:
+            raise RuntimeError("Controller head must retain its fixed bias.")
+        return logits - bias.view(1, -1, 1) + torch.log(probabilities)
+
+    @staticmethod
+    def _local_level_change(source: torch.Tensor) -> torch.Tensor:
+        """Measure coherent changes in a smoothed short-time RMS envelope.
+
+        Physical Basis:
+            Ringing is exposed around coherent changes in local energy. RMS
+            aggregation and roughly 25 ms smoothing reject stochastic carrier
+            variation. A symmetric past/future difference aligns the risk
+            peak to the event for equal pre- and post-ringing protection.
+        """
+        level = torch.sqrt(
+            F.avg_pool1d(
+                source.square(),
+                kernel_size=257,
+                stride=DEFAULT_CONTROL_STRIDE,
+                padding=128,
+                count_include_pad=False,
+            ).clamp_min(1.0e-12)
+        )
+        smoothed = F.avg_pool1d(
+            level,
+            kernel_size=17,
+            stride=1,
+            padding=8,
+            count_include_pad=False,
+        )
+        lag = 4
+        previous = F.pad(smoothed[..., :-lag], (lag, 0), mode="replicate")
+        following = F.pad(smoothed[..., lag:], (0, lag), mode="replicate")
+        return torch.abs(following - previous) / (following + previous + 1.0e-2)
+
+    @staticmethod
+    def _local_derivative_crest(derivative: torch.Tensor) -> torch.Tensor:
+        """Return frame-rate derivative crest factor.
+
+        Physical Basis:
+            Isolated steps and impulse trains have a derivative peak far
+            above their local derivative RMS. Smooth tones and statistically
+            stationary noise retain a low crest factor, so this closes the
+            periodic-edge blind spot without a frequency or 20 kHz split.
+        """
+        peak = F.max_pool1d(
+            torch.abs(derivative),
+            kernel_size=257,
+            stride=DEFAULT_CONTROL_STRIDE,
+            padding=128,
+        )
+        rms = torch.sqrt(
+            F.avg_pool1d(
+                derivative.square(),
+                kernel_size=257,
+                stride=DEFAULT_CONTROL_STRIDE,
+                padding=128,
+                count_include_pad=False,
+            ).clamp_min(1.0e-12)
+        )
+        return peak / (rms + 1.0e-2)
+
+    @staticmethod
+    def _local_activity_density(source: torch.Tensor) -> torch.Tensor:
+        """Measure local waveform RMS relative to its peak.
+
+        Physical Basis:
+            A sustained plateau edge occupies most samples in a short window,
+            whereas an impulse or sparse click train occupies very few. This
+            separates square-like ringing risk from gain-sensitive impulses
+            even when both share the same edge repetition interval.
+        """
+        peak = F.max_pool1d(
+            torch.abs(source),
+            kernel_size=257,
+            stride=DEFAULT_CONTROL_STRIDE,
+            padding=128,
+        )
+        rms = torch.sqrt(
+            F.avg_pool1d(
+                source.square(),
+                kernel_size=257,
+                stride=DEFAULT_CONTROL_STRIDE,
+                padding=128,
+                count_include_pad=False,
+            ).clamp_min(1.0e-12)
+        )
+        return rms / (peak + 1.0e-2)
 
     def forward(
         self, source: torch.Tensor, return_weights: bool = False
@@ -251,8 +633,32 @@ class CAPB(nn.Module):
             immediately in the mean weight statistics during training.
         """
         with torch.no_grad():
-            weights = torch.softmax(self.controller(source), dim=1)
+            weights = self.controller_weights(source)
         return weights.mean(dim=(0, 2))
+
+
+def initial_weights_for_prototypes(names: tuple[str, ...]) -> tuple[float, ...]:
+    """Return the fixed controller prior for a supported prototype topology.
+
+    Args:
+        names: Ordered prototype names from the fixed FIR bank.
+
+    Returns:
+        Positive convex initial weights in the same order.
+
+    Raises:
+        ValueError: If the topology is unsupported.
+
+    Physical Basis:
+        Sharp is the stationary-signal default. Removing an unused middle
+        prototype transfers its prior mass to sharp while retaining the same
+        gentle safety prior at discontinuities.
+    """
+    if names == ("sharp", "mid", "gentle"):
+        return DEFAULT_INIT_WEIGHTS
+    if names == ("sharp", "gentle"):
+        return TWO_PROTOTYPE_INIT_WEIGHTS
+    raise ValueError(f"Unsupported CAPB prototype topology: {names!r}.")
 
 
 def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
@@ -294,7 +700,15 @@ def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
             "Checkpoint prototype_hash does not match the reconstructed "
             f"'{profile_name}' bank."
         )
-    model = CAPB(bank=bank, fir_compute_dtype=fir_compute_dtype)
+    controller_dilation = int(checkpoint.get("controller_dilation", 1))
+    controller_feature_mode = str(checkpoint.get("controller_feature_mode", "waveform"))
+    model = CAPB(
+        bank=bank,
+        fir_compute_dtype=fir_compute_dtype,
+        controller_dilation=controller_dilation,
+        controller_feature_mode=controller_feature_mode,
+        routing_prior=RoutingPriorConfig.from_mapping(checkpoint.get("routing_prior")),
+    )
     model_state = checkpoint.get("model_state")
     if not isinstance(model_state, dict):
         raise RuntimeError("Invalid checkpoint: model_state is missing.")
@@ -311,6 +725,9 @@ def capb_candidate_from_checkpoint(
     *,
     prototype_profile: str,
     fir_compute_dtype: FIRComputeDType = "float32",
+    controller_dilation: int | None = None,
+    controller_feature_mode: str | None = None,
+    routing_prior: RoutingPriorConfig | None = None,
 ) -> CAPB:
     """Pair an existing controller with an experimental prototype profile.
 
@@ -318,6 +735,12 @@ def capb_candidate_from_checkpoint(
         checkpoint: Source checkpoint containing validated controller weights.
         prototype_profile: Explicit experimental prototype profile.
         fir_compute_dtype: Arithmetic dtype for fixed FIR convolution.
+        controller_dilation: Optional controller dilation override. When
+            omitted, preserve checkpoint metadata (legacy checkpoints use 1).
+        controller_feature_mode: Optional feature-mode override. When omitted,
+            preserve checkpoint metadata (legacy checkpoints use waveform).
+        routing_prior: Optional routing-prior override. When omitted, preserve
+            checkpoint metadata (legacy checkpoints use the middle-only policy).
 
     Returns:
         Evaluation-only CAPB candidate in eval mode.
@@ -338,7 +761,27 @@ def capb_candidate_from_checkpoint(
             f"Checkpoint expected_input_rate {expected_input_rate} Hz is "
             f"inconsistent with target_sample_rate {target_rate} Hz."
         )
-    model = CAPB(bank=bank, fir_compute_dtype=fir_compute_dtype)
+    dilation = (
+        int(checkpoint.get("controller_dilation", 1))
+        if controller_dilation is None
+        else controller_dilation
+    )
+    feature_mode = (
+        str(checkpoint.get("controller_feature_mode", "waveform"))
+        if controller_feature_mode is None
+        else controller_feature_mode
+    )
+    model = CAPB(
+        bank=bank,
+        fir_compute_dtype=fir_compute_dtype,
+        controller_dilation=dilation,
+        controller_feature_mode=feature_mode,
+        routing_prior=(
+            RoutingPriorConfig.from_mapping(checkpoint.get("routing_prior"))
+            if routing_prior is None
+            else routing_prior
+        ),
+    )
     model_state = checkpoint.get("model_state")
     if not isinstance(model_state, dict):
         raise RuntimeError("Invalid checkpoint: model_state is missing.")

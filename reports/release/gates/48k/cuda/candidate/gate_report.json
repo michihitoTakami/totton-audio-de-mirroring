@@ -1,6 +1,6 @@
 {
   "all_passed": true,
-  "spec_version": 4,
+  "spec_version": 5,
   "manifest_hash": "6529deadaab177fe",
   "config": {
     "plateau_ripple_ratio_max": 1.1,
@@ -10,6 +10,8 @@
     "overshoot_floor_rel": 0.02,
     "pre_echo_energy_ratio_max": 1.44,
     "pre_echo_floor_rel": 0.001,
+    "post_echo_energy_ratio_max": 1.44,
+    "post_echo_floor_rel": 0.001,
     "image_rel_max_db": -65.0,
     "image_peak_rel_max_db": -65.0,
     "added_hf_max_db": 3.0,
@@ -114,7 +116,7 @@
           "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.6593305897746521,
+          "value": 0.6593305897746703,
           "threshold": 0.7236717679700103,
           "passed": true,
           "binding": "relative"
@@ -141,7 +143,7 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.554595988210141,
+          "value": 0.5545960171888582,
           "threshold": 0.6203969981910715,
           "passed": true,
           "binding": "relative"
@@ -150,7 +152,7 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 1.0498727560043335,
+          "value": 1.049872875213623,
           "threshold": 1.2469314469993513,
           "passed": true,
           "binding": "relative"
@@ -159,7 +161,7 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.18118295073509216,
+          "value": 0.18118298053741455,
           "threshold": 0.20817925167482548,
           "passed": true,
           "binding": "relative"
@@ -168,7 +170,7 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 2.702361119917232e-06,
+          "value": 1.5031111079696276e-06,
           "threshold": 5e-05,
           "passed": true,
           "binding": "absolute"
@@ -177,7 +179,7 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "plateau_p2p_after",
-          "value": 2.7671456336975098e-05,
+          "value": 1.1868774890899658e-05,
           "threshold": 0.00015800000000000002,
           "passed": true,
           "binding": "absolute"
@@ -186,7 +188,7 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.0024031400680541992,
+          "value": 0.0024031363427639008,
           "threshold": 0.01167870227442119,
           "passed": true,
           "binding": "relative"
@@ -303,7 +305,7 @@
           "probe_id": "square_1730hz_held",
           "tier": "held_out",
           "metric": "plateau_rms_after",
-          "value": 0.6367410881718423,
+          "value": 0.6367410905161486,
           "threshold": 0.6939546705754495,
           "passed": true,
           "binding": "relative"
@@ -337,7 +339,7 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.5400792654020252,
+          "value": 0.5400792850950652,
           "threshold": 0.562973416799242,
           "passed": true,
           "binding": "relative"
@@ -355,7 +357,7 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "overshoot_after",
-          "value": 0.18326744437217712,
+          "value": 0.18326741456985474,
           "threshold": 0.28298553231815193,
           "passed": true,
           "binding": "relative"
@@ -364,7 +366,7 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "plateau_rms_after",
-          "value": 0.5407901553460117,
+          "value": 0.5407901748464319,
           "threshold": 0.5631104671868424,
           "passed": true,
           "binding": "relative"
@@ -382,7 +384,7 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "overshoot_after",
-          "value": 0.180784672498703,
+          "value": 0.18078464269638062,
           "threshold": 0.28297122943429487,
           "passed": true,
           "binding": "relative"
@@ -398,7 +400,7 @@
           "probe_id": "impulse",
           "tier": "canonical",
           "metric": "pre_echo_energy_after",
-          "value": 1.3257311628711564e-08,
+          "value": 1.5683430010632874e-11,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -407,7 +409,7 @@
           "probe_id": "impulse_train_10ms",
           "tier": "canonical",
           "metric": "pre_echo_energy_after",
-          "value": 1.3257311628711564e-08,
+          "value": 1.5683430010632874e-11,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -416,7 +418,7 @@
           "probe_id": "tone_burst_1000hz",
           "tier": "canonical",
           "metric": "pre_echo_energy_after",
-          "value": 3.7862091729897464e-18,
+          "value": 5.689346061526142e-32,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -425,7 +427,7 @@
           "probe_id": "tone_burst_10000hz",
           "tier": "canonical",
           "metric": "pre_echo_energy_after",
-          "value": 1.856245665613045e-17,
+          "value": 1.816737692234711e-30,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -434,7 +436,7 @@
           "probe_id": "tone_burst_19000hz",
           "tier": "canonical",
           "metric": "pre_echo_energy_after",
-          "value": 2.4580148074914564e-15,
+          "value": 1.2423492417706667e-24,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -443,7 +445,7 @@
           "probe_id": "tone_burst_3700hz_held",
           "tier": "held_out",
           "metric": "pre_echo_energy_after",
-          "value": 8.81045531917574e-18,
+          "value": 7.089552813580674e-34,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -452,7 +454,77 @@
           "probe_id": "tone_burst_14300hz_held",
           "tier": "held_out",
           "metric": "pre_echo_energy_after",
-          "value": 8.000065301725277e-18,
+          "value": 2.2015740028890677e-28,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ]
+    },
+    {
+      "gate_id": "G2c_post_echo",
+      "passed": true,
+      "worst_probe_id": "impulse",
+      "rows": [
+        {
+          "probe_id": "impulse",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 1.6375923661882976e-11,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "impulse_train_10ms",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 1.6375923661882976e-11,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_1000hz",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 2.1618762672646155e-20,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_10000hz",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 3.2143582565416337e-18,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_19000hz",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 2.3373556089216617e-16,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_3700hz_held",
+          "tier": "held_out",
+          "metric": "post_echo_energy_after",
+          "value": 9.278586591536003e-19,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_14300hz_held",
+          "tier": "held_out",
+          "metric": "post_echo_energy_after",
+          "value": 3.4368745855435707e-18,
           "threshold": 2.5e-07,
           "passed": true,
           "binding": "absolute"
@@ -462,13 +534,13 @@
     {
       "gate_id": "G3_mirror",
       "passed": true,
-      "worst_probe_id": "pink_noise_s1234",
+      "worst_probe_id": "sweep_log_20_20k",
       "rows": [
         {
           "probe_id": "sweep_log_20_20k",
           "tier": "canonical",
           "metric": "image_rel_db",
-          "value": -116.08927530005666,
+          "value": -116.02855183768695,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -477,7 +549,7 @@
           "probe_id": "sweep_log_20_20k",
           "tier": "canonical",
           "metric": "image_peak_rel_db",
-          "value": -112.42341457961905,
+          "value": -107.82966320063525,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -486,7 +558,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "image_rel_db",
-          "value": -111.44379833687105,
+          "value": -111.39709313679226,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -495,7 +567,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "image_rel_db",
-          "value": -114.69517842741595,
+          "value": -114.67616467786962,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -504,7 +576,7 @@
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "image_rel_db",
-          "value": -115.95430841501513,
+          "value": -115.93925729686791,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -513,7 +585,7 @@
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "image_peak_rel_db",
-          "value": -112.40039918008569,
+          "value": -109.43354711060657,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -522,7 +594,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "image_rel_db",
-          "value": -112.15886513563734,
+          "value": -112.12808343795679,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -532,13 +604,13 @@
     {
       "gate_id": "G4_flatness",
       "passed": true,
-      "worst_probe_id": "multitone_60_s20260704",
+      "worst_probe_id": "pink_noise_s1234",
       "rows": [
         {
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "flatness_dip_db",
-          "value": 2.520109734405196e-05,
+          "value": 7.52436372408738e-05,
           "threshold": 1.0,
           "passed": true,
           "binding": "absolute"
@@ -547,7 +619,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "flatness_boost_db",
-          "value": 1.122477634396546e-06,
+          "value": 1.247765780476584e-06,
           "threshold": 1.0,
           "passed": true,
           "binding": "absolute"
@@ -556,7 +628,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "flatness_hf_dip_db",
-          "value": 1.6144352244396032e-05,
+          "value": 8.225665561667483e-05,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -565,7 +637,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "flatness_dip_db",
-          "value": 5.064227531192955e-05,
+          "value": 6.219545154806383e-05,
           "threshold": 1.0,
           "passed": true,
           "binding": "absolute"
@@ -574,7 +646,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "flatness_boost_db",
-          "value": 2.731620257634404e-05,
+          "value": 1.3693805684056315e-05,
           "threshold": 1.0,
           "passed": true,
           "binding": "absolute"
@@ -583,7 +655,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "flatness_hf_dip_db",
-          "value": 0.00010413015817789528,
+          "value": 0.0001200533125995662,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -592,7 +664,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "flatness_dip_db",
-          "value": 2.5178401308778575e-05,
+          "value": 6.000839069031372e-05,
           "threshold": 1.0,
           "passed": true,
           "binding": "absolute"
@@ -601,7 +673,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "flatness_boost_db",
-          "value": 1.0540588277763163e-06,
+          "value": 1.0066503861594356e-06,
           "threshold": 1.0,
           "passed": true,
           "binding": "absolute"
@@ -610,7 +682,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "flatness_hf_dip_db",
-          "value": 1.738298806230887e-05,
+          "value": 6.629645714895105e-05,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -626,7 +698,7 @@
           "probe_id": "square_50hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.011201114862338681,
+          "value": 0.011157589304707047,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -635,7 +707,7 @@
           "probe_id": "square_100hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.007266773014167385,
+          "value": 0.00726647602406118,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -644,7 +716,7 @@
           "probe_id": "square_500hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.018816005718139718,
+          "value": 0.0188160069439433,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -653,7 +725,7 @@
           "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.053324319791054106,
+          "value": 0.053324319107782216,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -662,7 +734,7 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.11633688820020013,
+          "value": 0.11633660153715389,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -671,7 +743,7 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.3890230674462241,
+          "value": 0.38902301152500324,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -680,7 +752,7 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.018817617319608224,
+          "value": 0.018817618360287728,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -689,7 +761,7 @@
           "probe_id": "dc_step_up",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.015609682916054404,
+          "value": 0.0006979083091133305,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -698,7 +770,7 @@
           "probe_id": "dc_step_down",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.015609695965872106,
+          "value": 0.0006979083091133305,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -707,7 +779,7 @@
           "probe_id": "impulse",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.3957516487319667,
+          "value": 0.43708105850809753,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -716,7 +788,7 @@
           "probe_id": "impulse_train_10ms",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.3997657842140961,
+          "value": 0.4513746349095015,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -725,7 +797,7 @@
           "probe_id": "tone_burst_1000hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.001174664614786295,
+          "value": 0.0011773102615842109,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -734,7 +806,7 @@
           "probe_id": "sweep_log_20_20k",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 7.340223790200132e-05,
+          "value": 0.002440608206492302,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -743,7 +815,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.0014245450801699726,
+          "value": 0.001425904745360186,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -752,7 +824,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.0014283711083982107,
+          "value": 0.0014291324398840316,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -761,7 +833,7 @@
           "probe_id": "imd_60hz_7000hz",
           "tier": "canonical",
           "metric": "abs_gain_error_db",
-          "value": 0.0016611935541837992,
+          "value": 0.0016612675826040996,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -770,7 +842,7 @@
           "probe_id": "square_73hz_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.009322764740573978,
+          "value": 0.009322385580951595,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -779,7 +851,7 @@
           "probe_id": "square_331hz_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.0070926481355194585,
+          "value": 0.007092648941056746,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -788,7 +860,7 @@
           "probe_id": "square_1730hz_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.1102946540240195,
+          "value": 0.1102945909179852,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -797,7 +869,7 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.3095149655250994,
+          "value": 0.3095149207665709,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -806,7 +878,7 @@
           "probe_id": "tone_burst_3700hz_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.0010671714516207512,
+          "value": 0.054726998516661234,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -815,7 +887,7 @@
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.0009010890078811637,
+          "value": 0.0025772060744666966,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -824,7 +896,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.0018311782889061257,
+          "value": 0.0018320967469278035,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -833,7 +905,7 @@
           "probe_id": "imd_83hz_6311hz_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.001952210775458458,
+          "value": 0.0019522506720577853,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -849,7 +921,7 @@
           "probe_id": "square_50hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.1826892918984555,
+          "value": 0.182689645504567,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -858,7 +930,7 @@
           "probe_id": "square_100hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.18208157284466608,
+          "value": 0.18207757957345905,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -867,7 +939,7 @@
           "probe_id": "square_500hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.1790148836872163,
+          "value": 0.17901488368646312,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -876,7 +948,7 @@
           "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.18049758414396422,
+          "value": 0.1804975841452432,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -885,7 +957,7 @@
           "probe_id": "square_2000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.184292415094788,
+          "value": 0.18428531521901448,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -894,7 +966,7 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.16245311063362067,
+          "value": 0.16245968608976114,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -903,7 +975,7 @@
           "probe_id": "square_500hz_a005",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.179030639660823,
+          "value": 0.17903063965998456,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -912,7 +984,7 @@
           "probe_id": "dc_step_up",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.18270448364893355,
+          "value": 0.18336831668028708,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -921,7 +993,7 @@
           "probe_id": "dc_step_down",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.18272040198084483,
+          "value": 0.18336831668028708,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -930,7 +1002,7 @@
           "probe_id": "impulse",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -2.1407736263990387,
+          "value": -1.259021714647389,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -939,7 +1011,7 @@
           "probe_id": "impulse_train_10ms",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -2.2281439743275513,
+          "value": -1.2295970132380631,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -948,7 +1020,7 @@
           "probe_id": "tone_burst_1000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 56.24832491240613,
+          "value": 53.69658413741814,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -957,7 +1029,7 @@
           "probe_id": "tone_burst_10000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -41.74096046395937,
+          "value": -7.190206080213841,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -966,16 +1038,16 @@
           "probe_id": "tone_burst_19000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -56.25762434699426,
+          "value": -7.968018704002716,
           "threshold": 3.0,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "sweep_log_20_20k",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -24.47991635717895,
+          "value": -24.419310994854186,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -984,7 +1056,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -71.46202642221493,
+          "value": -71.41532757218454,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -993,7 +1065,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -67.95547774548663,
+          "value": -67.93646582011431,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1002,7 +1074,7 @@
           "probe_id": "imd_60hz_7000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -11.426391807827969,
+          "value": -11.427732059312888,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1011,7 +1083,7 @@
           "probe_id": "square_73hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": 0.18296251315997836,
+          "value": 0.18296058538315663,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -1020,7 +1092,7 @@
           "probe_id": "square_331hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": 0.18504900645766043,
+          "value": 0.1850490064568504,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -1029,7 +1101,7 @@
           "probe_id": "square_1730hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": 0.18322240286856584,
+          "value": 0.1832354984910438,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -1038,7 +1110,7 @@
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": 0.18669042281204895,
+          "value": 0.1866989039021405,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -1047,7 +1119,7 @@
           "probe_id": "tone_burst_3700hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": 7.325896675284156,
+          "value": 6.11535825491319,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1056,16 +1128,16 @@
           "probe_id": "tone_burst_14300hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": -35.90930031760141,
+          "value": -7.603280783305479,
           "threshold": 3.0,
           "passed": true,
-          "binding": "absolute"
+          "binding": "relative"
         },
         {
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": -22.835407065992086,
+          "value": -22.820386098693547,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1074,7 +1146,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": -71.7833561877299,
+          "value": -71.75257889271806,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1083,7 +1155,7 @@
           "probe_id": "imd_83hz_6311hz_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": -7.883765727342507,
+          "value": -7.885606133667125,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1099,7 +1171,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "lb_phase_error_deg",
-          "value": 0.015240152292745583,
+          "value": 0.015269921805159068,
           "threshold": 15.0,
           "passed": true,
           "binding": "absolute"
@@ -1108,7 +1180,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "lb_group_delay_error_samples",
-          "value": 6.323829361114934,
+          "value": 6.334251567942036,
           "threshold": 600.0,
           "passed": true,
           "binding": "absolute"
@@ -1117,7 +1189,7 @@
           "probe_id": "pink_noise_s1234",
           "tier": "canonical",
           "metric": "lb_waveform_error_db",
-          "value": -66.29851021597376,
+          "value": -66.28625709177628,
           "threshold": -20.0,
           "passed": true,
           "binding": "absolute"
@@ -1126,7 +1198,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "lb_phase_error_deg",
-          "value": 0.009707881861263307,
+          "value": 0.009726139567449324,
           "threshold": 15.0,
           "passed": true,
           "binding": "absolute"
@@ -1135,7 +1207,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "lb_group_delay_error_samples",
-          "value": 0.18342052593175007,
+          "value": 0.2149904910799278,
           "threshold": 600.0,
           "passed": true,
           "binding": "absolute"
@@ -1144,7 +1216,7 @@
           "probe_id": "multitone_60_s20260704",
           "tier": "canonical",
           "metric": "lb_waveform_error_db",
-          "value": -65.21191628181258,
+          "value": -65.20928046417059,
           "threshold": -20.0,
           "passed": true,
           "binding": "absolute"
@@ -1153,7 +1225,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "lb_phase_error_deg",
-          "value": 0.0022275133997773935,
+          "value": 0.002227004713676336,
           "threshold": 15.0,
           "passed": true,
           "binding": "absolute"
@@ -1162,7 +1234,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "lb_group_delay_error_samples",
-          "value": 0.9318428213203954,
+          "value": 0.9320531838247602,
           "threshold": 600.0,
           "passed": true,
           "binding": "absolute"
@@ -1171,7 +1243,7 @@
           "probe_id": "pink_noise_s5678_held",
           "tier": "held_out",
           "metric": "lb_waveform_error_db",
-          "value": -67.00216954115649,
+          "value": -66.99332746548775,
           "threshold": -20.0,
           "passed": true,
           "binding": "absolute"
@@ -1187,7 +1259,7 @@
           "probe_id": "imd_60hz_7000hz",
           "tier": "canonical",
           "metric": "modulation_sideband_db",
-          "value": -144.67076462763012,
+          "value": -144.22494981203903,
           "threshold": -110.0,
           "passed": true,
           "binding": "absolute"
@@ -1196,7 +1268,7 @@
           "probe_id": "imd_83hz_6311hz_held",
           "tier": "held_out",
           "metric": "modulation_sideband_db",
-          "value": -147.2650460989237,
+          "value": -150.4048466425297,
           "threshold": -110.0,
           "passed": true,
           "binding": "absolute"

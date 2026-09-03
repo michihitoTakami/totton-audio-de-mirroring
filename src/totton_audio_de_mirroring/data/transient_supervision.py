@@ -19,6 +19,8 @@ class TransientSupervisionConfig:
         context_ms: Context retained on both sides of the event.
         pre_echo_guard_ms: Gap before the measured pre-echo window.
         pre_echo_window_ms: Duration of the measured pre-echo window.
+        post_echo_guard_ms: Gap after the event before post-echo measurement.
+        post_echo_window_ms: Duration of the measured post-echo window.
         far_pre_echo_guard_ms: Gap before the supplemental far-tail window.
         far_pre_echo_window_ms: Duration of the supplemental far-tail window.
             Zero disables the supplemental mask.
@@ -38,6 +40,8 @@ class TransientSupervisionConfig:
     context_ms: float = 5.0
     pre_echo_guard_ms: float = 0.5
     pre_echo_window_ms: float = 3.5
+    post_echo_guard_ms: float = 0.5
+    post_echo_window_ms: float = 3.5
     far_pre_echo_guard_ms: float = 4.0
     far_pre_echo_window_ms: float = 0.0
     edge_supervision_signal_types: tuple[str, ...] = (
@@ -53,12 +57,15 @@ class TransientSupervisionConfig:
             raise ValueError("clean_probability must be in [0, 1].")
         if not np.isfinite((low, high)).all() or not 0.0 <= low <= high <= 1.0:
             raise ValueError("center_fraction_range must stay within [0, 1].")
-        near_extent = self.pre_echo_guard_ms + self.pre_echo_window_ms
+        pre_extent = self.pre_echo_guard_ms + self.pre_echo_window_ms
+        post_extent = self.post_echo_guard_ms + self.post_echo_window_ms
         far_extent = self.far_pre_echo_guard_ms + self.far_pre_echo_window_ms
-        if self.context_ms < max(near_extent, far_extent):
-            raise ValueError("context_ms must cover the complete pre-echo window.")
+        if self.context_ms < max(pre_extent, post_extent, far_extent):
+            raise ValueError("context_ms must cover the complete echo windows.")
         if self.pre_echo_guard_ms < 0.0 or self.pre_echo_window_ms <= 0.0:
             raise ValueError("Pre-echo guard/window values must be valid.")
+        if self.post_echo_guard_ms < 0.0 or self.post_echo_window_ms <= 0.0:
+            raise ValueError("Post-echo guard/window values must be valid.")
         if self.far_pre_echo_guard_ms < 0.0 or self.far_pre_echo_window_ms < 0.0:
             raise ValueError("Far pre-echo guard/window values must be non-negative.")
         if not self.focus_signal_types:
@@ -137,6 +144,45 @@ def compute_pre_echo_mask(
     window = int(round(window_ms * sample_rate / 1_000.0))
     stop = max(0, event_start - guard)
     start = max(0, stop - window)
+    mask = np.zeros(num_samples, dtype=np.float64)
+    mask[start:stop] = 1.0
+    return mask
+
+
+def compute_post_echo_mask(
+    num_samples: int,
+    event_stop: int,
+    sample_rate: int,
+    guard_ms: float = 0.5,
+    window_ms: float = 3.5,
+) -> np.ndarray:
+    """Mark silence immediately after a transient or tone-burst end.
+
+    Args:
+        num_samples: Length of the target-rate chunk.
+        event_stop: Exclusive end index of the physical event.
+        sample_rate: Target sample rate in Hz.
+        guard_ms: Gap after the event excluded from measurement.
+        window_ms: Duration of the measured post-event window.
+
+    Returns:
+        Float mask with one inside the post-event echo window.
+
+    Physical Basis:
+        A symmetric interpolation FIR can ring after as well as before an
+        event. Referencing a tone burst by its exclusive end avoids treating
+        intended burst energy as post-echo.
+    """
+    if num_samples <= 0 or sample_rate <= 0:
+        raise ValueError("num_samples and sample_rate must be positive.")
+    if not 0 < event_stop <= num_samples:
+        raise ValueError("event_stop must lie in (0, num_samples].")
+    if guard_ms < 0.0 or window_ms <= 0.0:
+        raise ValueError("guard_ms/window_ms must define a positive window.")
+    guard = int(round(guard_ms * sample_rate / 1_000.0))
+    window = int(round(window_ms * sample_rate / 1_000.0))
+    start = min(num_samples, event_stop + guard)
+    stop = min(num_samples, start + window)
     mask = np.zeros(num_samples, dtype=np.float64)
     mask[start:stop] = 1.0
     return mask

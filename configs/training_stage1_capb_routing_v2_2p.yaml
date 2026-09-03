@@ -1,0 +1,31 @@
+# Routing-v2 44.1 -> 88.2 kHz candidate. Never overwrite release checkpoints.
+epochs: 50
+batch_size: 16
+learning_rate: 1.0e-4
+weight_decay: 1.0e-3
+grad_clip: 1.0
+val_fraction: 0.1
+num_workers: 4
+seed: 1234
+border_trim: 512
+prototype_profile: release_v4_2p
+controller_dilation: 2
+controller_feature_mode: physics_routing
+checkpoint_dir: data/checkpoints/experiments/routing_v2_44k1_2p
+checkpoint_interval_epochs: 5
+log_interval: 20
+
+loss_weights:
+  wave: 1.0
+  stft: 1.0
+  plateau: 300.0
+  quiet: 300.0
+  tv: 0.1
+  entropy_floor: 10.0
+  min_entropy: 0.005
+  edge_fidelity_relax: 0.9
+  edge_ring: 0.3
+  pre_echo_excess: 300.0
+  post_echo_excess: 300.0
+  stationary_modulation: 300.0
+  prototype_routing: 100.0

@@ -10,10 +10,13 @@ from totton_audio_de_mirroring.data.capb_dataset import CAPBDataConfig
 from totton_audio_de_mirroring.models.capb import (
     CAPB,
     DEFAULT_INIT_WEIGHTS,
+    TWO_PROTOTYPE_INIT_WEIGHTS,
+    RoutingPriorConfig,
     capb_candidate_from_checkpoint,
     capb_from_checkpoint,
 )
 from totton_audio_de_mirroring.models.proto_bank import (
+    TWO_PROTOTYPE_PROFILE,
     build_prototype_bank,
     build_prototype_bank_for_profile,
     prototype_specs_for_target_rate,
@@ -28,6 +31,7 @@ from totton_audio_de_mirroring.training.capb_losses import (
     prototype_routing_loss,
     quiet_energy_loss,
     stationary_modulation_loss,
+    stationary_sharp_floor_loss,
     weight_tv_loss,
 )
 from totton_audio_de_mirroring.training.capb_trainer import (
@@ -59,6 +63,281 @@ def test_initial_weights_match_bias_init(model: CAPB) -> None:
     source = torch.randn(2, 8_192)
     mean_weights = model.mean_weights(source)
     np.testing.assert_allclose(mean_weights.numpy(), DEFAULT_INIT_WEIGHTS, atol=1e-5)
+
+
+def test_two_prototype_profile_uses_endpoint_prior() -> None:
+    bank = build_prototype_bank_for_profile(88_200, TWO_PROTOTYPE_PROFILE)
+    model = CAPB(bank=bank)
+
+    assert bank.names == ("sharp", "gentle")
+    np.testing.assert_allclose(
+        model.mean_weights(torch.randn(2, 4_096)).numpy(),
+        TWO_PROTOTYPE_INIT_WEIGHTS,
+        atol=1.0e-5,
+    )
+
+
+def test_controller_dilation_roundtrips_through_checkpoint() -> None:
+    model = CAPB(controller_dilation=2, controller_feature_mode="envelope_flux")
+    checkpoint = {
+        "model_state": model.state_dict(),
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "controller_dilation": 2,
+        "controller_feature_mode": "envelope_flux",
+        "target_sample_rate": 88_200,
+    }
+
+    loaded = capb_from_checkpoint(checkpoint)
+
+    assert loaded.controller_dilation == 2
+    assert loaded.controller_feature_mode == "envelope_flux"
+    assert loaded.controller.encoder[0].dilation == (2,)
+    assert loaded.controller.encoder[0].in_channels == 4
+
+
+def test_controller_dilation_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="dilation"):
+        CAPB(controller_dilation=0)
+
+
+def test_physics_routing_prior_is_sharp_on_stationary_tone() -> None:
+    bank = build_prototype_bank_for_profile(88_200, TWO_PROTOTYPE_PROFILE)
+    model = CAPB(
+        bank=bank,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+    )
+    time = torch.arange(44_100, dtype=torch.float32) / 44_100.0
+    source = torch.sin(2.0 * torch.pi * 1_000.0 * time).unsqueeze(0)
+
+    _, weights = model(source, return_weights=True)
+
+    core = weights[0, 0, 20:-20]
+    assert float(torch.quantile(core, 0.05).detach()) > 0.99
+
+
+def test_physics_routing_prior_is_sharp_on_stationary_noise() -> None:
+    bank = build_prototype_bank_for_profile(88_200, TWO_PROTOTYPE_PROFILE)
+    model = CAPB(
+        bank=bank,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+    )
+    generator = torch.Generator().manual_seed(19)
+    source = torch.randn(1, 44_100, generator=generator)
+
+    _, weights = model(source, return_weights=True)
+
+    core = weights[0, 0, 40:-40]
+    assert float(torch.quantile(core, 0.05).detach()) > 0.99
+
+
+def test_physics_routing_prior_selects_gentle_around_impulse() -> None:
+    bank = build_prototype_bank_for_profile(88_200, TWO_PROTOTYPE_PROFILE)
+    model = CAPB(
+        bank=bank,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+    )
+    source = torch.zeros(1, 44_100)
+    source[:, source.shape[1] // 2] = 1.0
+
+    _, weights = model(source, return_weights=True)
+
+    center = weights.shape[-1] // 2
+    assert float(torch.mean(weights[0, 1, center - 3 : center + 4]).detach()) > 0.99
+
+
+def test_physics_routing_prior_selects_gentle_on_sparse_square_edges() -> None:
+    bank = build_prototype_bank_for_profile(88_200, TWO_PROTOTYPE_PROFILE)
+    model = CAPB(
+        bank=bank,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+    )
+    time = torch.arange(44_100, dtype=torch.float32) / 44_100.0
+    source = torch.sign(torch.sin(2.0 * torch.pi * 50.0 * time)).unsqueeze(0)
+
+    _, weights = model(source, return_weights=True)
+
+    core = weights[0, 1, 20:-20]
+    assert float(torch.quantile(core, 0.05).detach()) > 0.99
+
+
+def test_three_prototype_prior_routes_sparse_impulse_to_middle() -> None:
+    bank = build_prototype_bank_for_profile(88_200, "release_v4")
+    model = CAPB(
+        bank=bank,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+    )
+    source = torch.zeros(1, 44_100)
+    source[:, source.shape[1] // 2] = 1.0
+
+    _, weights = model(source, return_weights=True)
+
+    center = weights.shape[-1] // 2
+    assert float(weights[0, 1, center].detach()) > 0.99
+
+
+def _three_prototype_physics_model(prior: RoutingPriorConfig) -> CAPB:
+    bank = build_prototype_bank_for_profile(88_200, "release_v4")
+    return CAPB(
+        bank=bank,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+        routing_prior=prior,
+    )
+
+
+def test_three_prototype_prior_routes_sparse_impulse_to_gentle_when_fraction_one() -> (
+    None
+):
+    model = _three_prototype_physics_model(
+        RoutingPriorConfig(focused_gentle_fraction=1.0)
+    )
+    source = torch.zeros(1, 44_100)
+    source[:, source.shape[1] // 2] = 1.0
+
+    _, weights = model(source, return_weights=True)
+
+    center = weights.shape[-1] // 2
+    assert float(weights[0, 2, center].detach()) > 0.99
+    assert float(weights[0, 1, center].detach()) < 1.0e-6
+
+
+def test_three_prototype_prior_splits_sparse_impulse_by_fraction() -> None:
+    model = _three_prototype_physics_model(
+        RoutingPriorConfig(focused_gentle_fraction=0.5)
+    )
+    source = torch.zeros(1, 44_100)
+    source[:, source.shape[1] // 2] = 1.0
+
+    _, weights = model(source, return_weights=True)
+
+    center = weights.shape[-1] // 2
+    middle = float(weights[0, 1, center].detach())
+    gentle = float(weights[0, 2, center].detach())
+    assert middle == pytest.approx(gentle, abs=2.0e-3)
+    assert middle + gentle > 0.99
+    torch.testing.assert_close(
+        weights.sum(dim=1), torch.ones_like(weights[:, 0, :]), atol=1e-5, rtol=0
+    )
+
+
+def test_focused_gentle_fraction_frames_follow_prior_split() -> None:
+    model = _three_prototype_physics_model(
+        RoutingPriorConfig(focused_gentle_fraction=0.85)
+    )
+    source = torch.zeros(1, 44_100)
+    source[:, source.shape[1] // 2] = 1.0
+    _, weights = model(source, return_weights=True)
+
+    fraction = model.focused_gentle_fraction_frames(source, weights.shape[-1])
+
+    center = weights.shape[-1] // 2
+    assert fraction.shape == (1, weights.shape[-1])
+    assert float(fraction[0, center]) == pytest.approx(0.85, abs=1.0e-3)
+    assert float(fraction[0, 10]) == pytest.approx(1.0, abs=1.0e-3)
+
+
+def test_focused_gentle_fraction_frames_is_one_without_middle() -> None:
+    bank = build_prototype_bank_for_profile(88_200, TWO_PROTOTYPE_PROFILE)
+    model = CAPB(
+        bank=bank, controller_dilation=2, controller_feature_mode="physics_routing"
+    )
+    fraction = model.focused_gentle_fraction_frames(torch.randn(2, 4_096), 64)
+    assert torch.all(fraction == 1.0)
+
+
+def _pink_noise(samples: int, seed: int) -> torch.Tensor:
+    generator = torch.Generator().manual_seed(seed)
+    white = torch.randn(samples, generator=generator, dtype=torch.float64)
+    spectrum = torch.fft.rfft(white)
+    frequency = torch.fft.rfftfreq(samples, d=1.0)
+    frequency[0] = frequency[1]
+    pink = torch.fft.irfft(spectrum / torch.sqrt(frequency), n=samples)
+    return (pink / pink.abs().max()).to(torch.float32).unsqueeze(0)
+
+
+def test_physics_routing_prior_is_sharp_on_pink_noise_three_prototypes() -> None:
+    model = _three_prototype_physics_model(
+        RoutingPriorConfig(level_change_threshold=0.30)
+    )
+    source = _pink_noise(88_200, seed=1234)
+
+    _, weights = model(source, return_weights=True)
+
+    sharp = weights[0, 0, 40:-40]
+    assert float(torch.quantile(sharp, 0.01).detach()) > 0.99
+    assert float(torch.mean(1.0 - sharp).detach()) < 1.0e-3
+
+
+def test_legacy_level_threshold_leaks_gentle_on_pink_noise() -> None:
+    """Documents the leak that motivated the configurable threshold."""
+    model = _three_prototype_physics_model(RoutingPriorConfig())
+    source = _pink_noise(88_200, seed=1234)
+
+    _, weights = model(source, return_weights=True)
+
+    assert float(torch.min(weights[0, 0, 40:-40]).detach()) < 0.99
+
+
+def test_routing_prior_validates_ranges() -> None:
+    with pytest.raises(ValueError, match="focused_gentle_fraction"):
+        RoutingPriorConfig(focused_gentle_fraction=1.5)
+    with pytest.raises(ValueError, match="level_change_threshold"):
+        RoutingPriorConfig(level_change_threshold=0.0)
+    with pytest.raises(ValueError, match="mapping"):
+        RoutingPriorConfig.from_mapping(0.5)  # type: ignore[arg-type]
+
+
+def test_routing_prior_roundtrips_through_checkpoint() -> None:
+    prior = RoutingPriorConfig(focused_gentle_fraction=0.9, level_change_threshold=0.26)
+    model = CAPB(
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+        routing_prior=prior,
+    )
+    checkpoint = {
+        "model_state": model.state_dict(),
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "controller_dilation": 2,
+        "controller_feature_mode": "physics_routing",
+        "routing_prior": prior.to_dict(),
+        "target_sample_rate": 88_200,
+    }
+
+    assert capb_from_checkpoint(checkpoint).routing_prior == prior
+    candidate = capb_candidate_from_checkpoint(
+        checkpoint, prototype_profile="long_sharp_1023_a120"
+    )
+    assert candidate.routing_prior == prior
+    override = RoutingPriorConfig(focused_gentle_fraction=0.0)
+    assert (
+        capb_candidate_from_checkpoint(
+            checkpoint,
+            prototype_profile="long_sharp_1023_a120",
+            routing_prior=override,
+        ).routing_prior
+        == override
+    )
+
+
+def test_legacy_checkpoint_gets_legacy_routing_prior() -> None:
+    model = CAPB(controller_dilation=2, controller_feature_mode="physics_routing")
+    checkpoint = {
+        "model_state": model.state_dict(),
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "controller_dilation": 2,
+        "controller_feature_mode": "physics_routing",
+        "target_sample_rate": 88_200,
+    }
+
+    assert capb_from_checkpoint(checkpoint).routing_prior == RoutingPriorConfig()
 
 
 def test_weights_are_convex(model: CAPB) -> None:
@@ -175,6 +454,55 @@ def test_prototype_routing_prefers_gentle_edges_and_sharp_stationary() -> None:
     assert float(correct_loss) < float(reversed_loss)
 
 
+def test_prototype_routing_balances_sparse_edge_against_long_safe_region() -> None:
+    frames = 100
+    edge_mask = torch.zeros(1, frames * 2)
+    edge_mask[:, -2:] = 1.0
+    safe_mask = 1.0 - edge_mask
+    balanced = torch.full((1, 2, frames), 0.5)
+    static_sharp = torch.empty(1, 2, frames)
+    static_sharp[:, 0, :] = 0.99
+    static_sharp[:, 1, :] = 0.01
+
+    balanced_loss = prototype_routing_loss(
+        balanced,
+        edge_mask,
+        torch.tensor([True]),
+        safe_active_mask=safe_mask,
+        sharp_index=0,
+        gentle_index=1,
+    )
+    static_loss = prototype_routing_loss(
+        static_sharp,
+        edge_mask,
+        torch.tensor([True]),
+        safe_active_mask=safe_mask,
+        sharp_index=0,
+        gentle_index=1,
+    )
+
+    assert float(balanced_loss) < float(static_loss)
+
+
+def test_prototype_routing_mines_worst_batch_quartile() -> None:
+    weights = torch.full((4, 2, 2), 0.001)
+    weights[:, 0, :] = 0.999
+    weights[-1, 0, :] = 0.001
+    weights[-1, 1, :] = 0.999
+    safe = torch.ones(4, 4)
+
+    loss = prototype_routing_loss(
+        weights,
+        torch.zeros_like(safe),
+        torch.ones(4, dtype=torch.bool),
+        safe_active_mask=safe,
+        sharp_index=0,
+        gentle_index=1,
+    )
+
+    assert float(loss) > 6.0
+
+
 def test_prototype_routing_recovers_weight_below_generic_epsilon() -> None:
     """Routing labels must retain a gradient after a softmax nearly saturates."""
     logits = torch.tensor(
@@ -206,6 +534,138 @@ def test_prototype_routing_defers_focused_transients_to_pre_echo_loss() -> None:
         gentle_index=2,
     )
     assert float(loss) == pytest.approx(0.0)
+
+
+def test_prototype_routing_labels_only_focused_risk_window() -> None:
+    weights = torch.tensor([[[0.05, 0.05], [0.90, 0.90], [0.05, 0.05]]])
+    edge_mask = torch.ones(1, 4)
+    risk_mask = torch.tensor([[0.0, 0.0, 1.0, 1.0]])
+
+    loss = prototype_routing_loss(
+        weights,
+        edge_mask,
+        torch.tensor([False]),
+        focused_transient=torch.tensor([True]),
+        focused_risk_mask=risk_mask,
+        sharp_index=0,
+        gentle_index=2,
+    )
+
+    reversed_weights = torch.tensor([[[0.90, 0.90], [0.05, 0.05], [0.05, 0.05]]])
+    reversed_loss = prototype_routing_loss(
+        reversed_weights,
+        edge_mask,
+        torch.tensor([False]),
+        focused_transient=torch.tensor([True]),
+        focused_risk_mask=risk_mask,
+        sharp_index=0,
+        gentle_index=2,
+    )
+    assert float(loss) < float(reversed_loss)
+
+
+def test_prototype_routing_focused_fraction_prefers_gentle() -> None:
+    gentle_heavy = torch.tensor([[[0.05, 0.05], [0.05, 0.05], [0.90, 0.90]]])
+    middle_heavy = torch.tensor([[[0.05, 0.05], [0.90, 0.90], [0.05, 0.05]]])
+    edge_mask = torch.ones(1, 4)
+    risk_mask = torch.tensor([[0.0, 0.0, 1.0, 1.0]])
+
+    def routing(weights: torch.Tensor, fraction: float | torch.Tensor) -> float:
+        return float(
+            prototype_routing_loss(
+                weights,
+                edge_mask,
+                torch.tensor([False]),
+                focused_transient=torch.tensor([True]),
+                focused_risk_mask=risk_mask,
+                sharp_index=0,
+                gentle_index=2,
+                focused_gentle_fraction=fraction,
+            )
+        )
+
+    assert routing(gentle_heavy, 1.0) < routing(middle_heavy, 1.0)
+    assert routing(middle_heavy, 0.0) < routing(gentle_heavy, 0.0)
+    per_frame = torch.tensor([[1.0, 1.0]])
+    assert routing(gentle_heavy, per_frame) == pytest.approx(routing(gentle_heavy, 1.0))
+    with pytest.raises(ValueError, match="focused_gentle_fraction"):
+        routing(gentle_heavy, torch.ones(1, 3))
+    with pytest.raises(ValueError, match="focused_gentle_fraction"):
+        routing(gentle_heavy, 1.5)
+
+
+def test_prototype_routing_prefers_sharp_on_safe_active_focused_body() -> None:
+    correct = torch.tensor([[[0.90, 0.05], [0.05, 0.90], [0.05, 0.05]]])
+    safe = torch.tensor([[1.0, 1.0, 0.0, 0.0]])
+    risk = 1.0 - safe
+
+    correct_loss = prototype_routing_loss(
+        correct,
+        risk,
+        torch.tensor([False]),
+        focused_transient=torch.tensor([True]),
+        focused_risk_mask=risk,
+        safe_active_mask=safe,
+        sharp_index=0,
+        gentle_index=2,
+    )
+    reversed_loss = prototype_routing_loss(
+        torch.flip(correct, dims=(1,)),
+        risk,
+        torch.tensor([False]),
+        focused_transient=torch.tensor([True]),
+        focused_risk_mask=risk,
+        safe_active_mask=safe,
+        sharp_index=0,
+        gentle_index=2,
+    )
+
+    assert float(correct_loss) < float(reversed_loss)
+
+
+def test_stationary_sharp_floor_is_zero_when_sharp_holds() -> None:
+    weights = torch.tensor(
+        [[[0.999, 0.999, 0.999], [0.0005, 0.0005, 0.0005], [0.0005, 0.0005, 0.0005]]]
+    )
+    loss = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, sharp_floor=0.995
+    )
+    assert float(loss) == pytest.approx(0.0)
+
+
+def test_stationary_sharp_floor_penalizes_gentle_leak_on_stationary_only() -> None:
+    weights = torch.tensor(
+        [[[0.999, 0.80, 0.999], [0.0005, 0.0, 0.0005], [0.0005, 0.20, 0.0005]]]
+    )
+    leak = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, sharp_floor=0.995
+    )
+    ignored = stationary_sharp_floor_loss(
+        weights, torch.tensor([False]), sharp_index=0, sharp_floor=0.995
+    )
+    expected = 0.5 * ((0.195 / 3.0) + 0.195)
+    assert float(leak) == pytest.approx(expected, rel=1e-4)
+    assert float(ignored) == pytest.approx(0.0)
+
+
+def test_stationary_sharp_floor_excludes_edge_and_inactive_frames() -> None:
+    weights = torch.tensor(
+        [[[0.999, 0.80, 0.999], [0.0005, 0.0, 0.0005], [0.0005, 0.20, 0.0005]]]
+    )
+    edge = torch.tensor([[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]])
+    safe = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0]])
+    by_edge = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, edge_mask=edge
+    )
+    by_safe = stationary_sharp_floor_loss(
+        weights, torch.tensor([True]), sharp_index=0, safe_active_mask=safe
+    )
+    assert float(by_edge) == pytest.approx(0.0)
+    assert float(by_safe) == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="sharp_floor"):
+        stationary_sharp_floor_loss(
+            weights, torch.tensor([True]), sharp_index=0, sharp_floor=0.0
+        )
 
 
 def test_tv_loss_zero_for_constant_weights() -> None:
@@ -278,13 +738,41 @@ def test_compute_capb_losses_total(model: CAPB) -> None:
         "stationary_modulation",
         "edge_ring",
         "pre_echo_excess",
+        "post_echo_excess",
         "prototype_routing",
+        "stationary_sharp_floor",
         "total",
     }
     assert torch.isfinite(losses["total"])
     losses["total"].backward()
     grads = [p.grad for p in model.controller.parameters() if p.grad is not None]
     assert grads, "controller must receive gradients"
+
+
+def test_compute_losses_routes_focused_onset_edge_to_gentle(model: CAPB) -> None:
+    source = torch.randn(1, 2_048)
+    output, weights, prototypes = model.forward_with_details(source)
+    edge = torch.zeros_like(output)
+    edge[:, output.shape[1] // 2 - 32 : output.shape[1] // 2 + 32] = 1.0
+    losses = compute_capb_losses(
+        output=output,
+        target=output.detach(),
+        weights_frames=weights,
+        flat_mask=torch.zeros_like(output),
+        quiet_mask=torch.zeros_like(output),
+        stft_configs=STFT_CONFIGS,
+        loss_weights=CAPBLossWeights(prototype_routing=1.0),
+        trim=256,
+        edge_mask=edge,
+        gentle_output=prototypes[:, -1].detach(),
+        stationary=torch.tensor([False]),
+        focused_transient=torch.tensor([True]),
+        sharp_index=0,
+        gentle_index=2,
+        focused_gentle_fraction=1.0,
+    )
+
+    assert float(losses["prototype_routing"].detach()) > 0.0
 
 
 def test_losses_shape_validation() -> None:
@@ -429,6 +917,72 @@ def test_training_config_loads_long_fir_candidate_options(tmp_path: Path) -> Non
     assert config.prototype_profile == "long_sharp_2047_a120"
     assert config.fir_compute_dtype == "float64"
     assert config.initial_controller_only
+
+
+def test_training_config_loads_routing_prior(tmp_path: Path) -> None:
+    config_path = tmp_path / "training.yaml"
+    config_path.write_text(
+        "routing_prior:\n  focused_gentle_fraction: 0.9\n  level_change_threshold: 0.26\n"
+    )
+
+    config = load_capb_training_config(config_path)
+
+    assert config.routing_prior == RoutingPriorConfig(
+        focused_gentle_fraction=0.9, level_change_threshold=0.26
+    )
+    config_path.write_text("epochs: 1\n")
+    assert load_capb_training_config(config_path).routing_prior is None
+
+
+def _physics_checkpoint(prior: RoutingPriorConfig | None) -> dict:
+    model = CAPB(controller_dilation=2, controller_feature_mode="physics_routing")
+    checkpoint: dict = {
+        "model_state": model.state_dict(),
+        "prototype_profile": model.prototype_profile,
+        "prototype_hash": model.prototype_hash,
+        "controller_dilation": 2,
+        "controller_feature_mode": "physics_routing",
+        "target_sample_rate": 88_200,
+        "expected_input_rate": 44_100,
+    }
+    if prior is not None:
+        checkpoint["routing_prior"] = prior.to_dict()
+    return checkpoint
+
+
+def test_initial_checkpoint_loader_inherits_routing_prior(tmp_path: Path) -> None:
+    prior = RoutingPriorConfig(
+        focused_gentle_fraction=0.85, level_change_threshold=0.26
+    )
+    checkpoint_path = tmp_path / "initial.pt"
+    torch.save(_physics_checkpoint(prior), checkpoint_path)
+    training_config = CAPBTrainingConfig(
+        initial_checkpoint=checkpoint_path,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+    )
+
+    loaded = _load_initial_checkpoint(training_config, CAPBDataConfig())
+
+    assert loaded.routing_prior == prior
+
+
+def test_initial_checkpoint_loader_overrides_routing_prior(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "initial.pt"
+    torch.save(_physics_checkpoint(None), checkpoint_path)
+    configured = RoutingPriorConfig(
+        focused_gentle_fraction=0.9, level_change_threshold=0.26
+    )
+    training_config = CAPBTrainingConfig(
+        initial_checkpoint=checkpoint_path,
+        controller_dilation=2,
+        controller_feature_mode="physics_routing",
+        routing_prior=configured,
+    )
+
+    loaded = _load_initial_checkpoint(training_config, CAPBDataConfig())
+
+    assert loaded.routing_prior == configured
 
 
 def test_training_config_loads_checkpoint_interval(tmp_path: Path) -> None:
