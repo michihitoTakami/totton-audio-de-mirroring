@@ -90,6 +90,7 @@ def compute_capb_losses(
     focused_transient: torch.Tensor | None = None,
     sharp_index: int = 0,
     gentle_index: int = -1,
+    focused_gentle_fraction: float | torch.Tensor = 0.0,
 ) -> dict[str, torch.Tensor]:
     """Compute all CAPB loss terms.
 
@@ -117,6 +118,9 @@ def compute_capb_losses(
             tone-burst examples governed by the continuous pre-echo loss.
         sharp_index: Prototype index used for stationary non-edge frames.
         gentle_index: Prototype index used for non-focused edge frames.
+        focused_gentle_fraction: Gentle share of the focused-risk routing
+            target, scalar or per-frame (batch, frames); the remainder goes
+            to the middle prototype when one exists.
 
     Returns:
         Mapping with per-term losses and the weighted "total".
@@ -220,6 +224,7 @@ def compute_capb_losses(
             safe_active_mask=safe_active_mask,
             sharp_index=sharp_index,
             gentle_index=gentle_index,
+            focused_gentle_fraction=focused_gentle_fraction,
         )
     else:
         losses["prototype_routing"] = output.new_zeros(())
@@ -389,6 +394,7 @@ def prototype_routing_loss(
     safe_active_mask: torch.Tensor | None = None,
     sharp_index: int,
     gentle_index: int,
+    focused_gentle_fraction: float | torch.Tensor = 0.0,
 ) -> torch.Tensor:
     """Teach physically labelled sharp-versus-gentle routing.
 
@@ -402,16 +408,24 @@ def prototype_routing_loss(
         safe_active_mask: Active non-risk samples eligible for sharp routing.
         sharp_index: Prototype index for stationary non-edge frames.
         gentle_index: Prototype index for edge frames.
+        focused_gentle_fraction: Gentle share of the focused-risk target as a
+            scalar or a (batch, frames) tensor; the remainder is assigned to
+            the middle prototype when three prototypes are present.
 
     Returns:
         Worst-quartile mean negative log weight over labelled frames.
 
+    Raises:
+        ValueError: If shapes or the gentle fraction are invalid.
+
     Physical Basis:
         Procedural data provides reliable labels unavailable in arbitrary
         audio: stationary content uses sharp, sustained edges use gentle,
-        and focused sparse transients use the middle compensation prototype
-        when present. The latter preserves 48 kHz impulse gain while meeting
-        echo limits. Worst-quartile mining mirrors worst-probe selection.
+        and focused sparse transients split between gentle (least ringing)
+        and the middle compensation prototype (preserves 48 kHz impulse gain
+        within G5). The split follows the model's routing prior so the loss
+        never demands a blend the prior forbids. Worst-quartile mining
+        mirrors worst-probe selection.
     """
     if weights_frames.dim() != 3:
         raise ValueError("weights_frames must be (batch, K, frames).")
@@ -488,7 +502,11 @@ def prototype_routing_loss(
         )
         middle_targets = torch.full_like(weights_frames, other_probability)
         middle_targets[:, middle_index, :] = target_probability
-        middle_loss = -torch.sum(middle_targets * log_weights, dim=1)
+        gentle_share = _focused_gentle_share(focused_gentle_fraction, weights_frames)
+        focused_targets = (
+            gentle_share * gentle_targets + (1.0 - gentle_share) * middle_targets
+        )
+        middle_loss = -torch.sum(focused_targets * log_weights, dim=1)
         middle_counts = torch.sum(focused_risk, dim=1)
         middle_mean = torch.sum(
             middle_loss * focused_risk, dim=1
@@ -501,6 +519,21 @@ def prototype_routing_loss(
     applicable_losses = per_sample[applicable]
     top_count = max(1, math.ceil(_ROUTING_TOP_FRACTION * applicable_losses.numel()))
     return torch.mean(torch.topk(applicable_losses, top_count).values)
+
+
+def _focused_gentle_share(
+    value: float | torch.Tensor, weights_frames: torch.Tensor
+) -> torch.Tensor:
+    """Broadcast the focused gentle fraction to (batch, 1, frames)."""
+    if isinstance(value, torch.Tensor):
+        expected = (weights_frames.shape[0], weights_frames.shape[-1])
+        if tuple(value.shape) != expected:
+            raise ValueError("focused_gentle_fraction tensor must be (batch, frames).")
+        share = value.to(dtype=weights_frames.dtype, device=weights_frames.device)
+        return torch.clamp(share, 0.0, 1.0).unsqueeze(1)
+    if not 0.0 <= float(value) <= 1.0:
+        raise ValueError("focused_gentle_fraction must lie in [0, 1].")
+    return weights_frames.new_full((1, 1, 1), float(value))
 
 
 def entropy_floor_loss(

@@ -193,7 +193,7 @@ uv run python scripts/audit_capb_training_data.py \
 
 ### Routing v2（Sharp既定・過渡時のみ保護側）
 
-実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/flowing noiseではSharp、包絡onset/offsetと持続plateau edgeではGentle、疎なclick/impulse列ではMidを選びます。Midは曖昧な常用クラスではなく、48 kHz Gentleのimpulse利得誤差を補償しつつG2b/G2cを守る限定的な役割です。20 kHzの帯域分割は導入していません。
+実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配し（44.1 kHz `0.90`、48 kHz `0.85`）、Midは曖昧な常用クラスではなく、48 kHz Gentleのimpulse利得誤差を補償しつつG2b/G2cを守る限定的な役割です。初期の候補はimpulseでMid=1.0を選びリンギングがSharpに近づいたため、Gentle主体へ改めました。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。20 kHzの帯域分割は導入していません。
 
 2-prototype（Sharp/Gentle）も比較できますが、48 kHzのGentle固定端点自体がimpulseで`0.514 dB`、10 ms impulse列で`0.527 dB`のG5誤差となり、上限`0.5 dB`を超えます。このため両rate family共通の候補は3-prototypeを維持します。
 

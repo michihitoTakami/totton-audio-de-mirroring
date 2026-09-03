@@ -22,6 +22,7 @@ from totton_audio_de_mirroring.data.capb_dataset import (
 from totton_audio_de_mirroring.models.capb import (
     SUPPORTED_CONTROLLER_FEATURE_MODES,
     SUPPORTED_FIR_COMPUTE_DTYPES,
+    RoutingPriorConfig,
 )
 from totton_audio_de_mirroring.models.proto_bank import supported_prototype_profiles
 from totton_audio_de_mirroring.training.capb_trainer import (
@@ -68,6 +69,8 @@ def main() -> None:
     parser.add_argument("--edge-ring", type=float, default=None)
     parser.add_argument("--prototype-routing", type=float, default=None)
     parser.add_argument("--stationary-modulation", type=float, default=None)
+    parser.add_argument("--focused-gentle-fraction", type=float, default=None)
+    parser.add_argument("--level-change-threshold", type=float, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
     parser.add_argument("--summary-json", type=Path, default=None)
     args = parser.parse_args()
@@ -148,6 +151,14 @@ def main() -> None:
         overrides["loss_weights"] = replace(
             training_config.loss_weights, **loss_overrides
         )
+    prior_overrides: dict[str, float] = {}
+    if args.focused_gentle_fraction is not None:
+        prior_overrides["focused_gentle_fraction"] = args.focused_gentle_fraction
+    if args.level_change_threshold is not None:
+        prior_overrides["level_change_threshold"] = args.level_change_threshold
+    if prior_overrides:
+        base_prior = training_config.routing_prior or RoutingPriorConfig()
+        overrides["routing_prior"] = replace(base_prior, **prior_overrides)
     if overrides:
         training_config = replace(training_config, **overrides)
 

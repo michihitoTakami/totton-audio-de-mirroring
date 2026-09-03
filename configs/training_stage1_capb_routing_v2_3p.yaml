@@ -11,6 +11,11 @@ border_trim: 512
 prototype_profile: release_v4
 controller_dilation: 2
 controller_feature_mode: physics_routing
+# Sparse impulses split gentle/middle; the 48 kHz gentle endpoint alone
+# fails G5 (0.514 dB), so the 48 kHz fraction keeps a middle share.
+routing_prior:
+  focused_gentle_fraction: 0.90
+  level_change_threshold: 0.30
 checkpoint_dir: data/checkpoints/experiments/routing_v2_44k1_3p
 checkpoint_interval_epochs: 5
 log_interval: 20
@@ -24,8 +29,8 @@ loss_weights:
   entropy_floor: 10.0
   min_entropy: 0.005
   edge_fidelity_relax: 0.9
-  edge_ring: 0.3
+  edge_ring: 100.0
   pre_echo_excess: 300.0
   post_echo_excess: 300.0
   stationary_modulation: 300.0
-  prototype_routing: 100.0
+  prototype_routing: 300.0

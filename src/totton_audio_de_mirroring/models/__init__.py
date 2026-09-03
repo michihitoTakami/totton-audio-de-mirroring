@@ -3,6 +3,7 @@
 from totton_audio_de_mirroring.models.capb import (
     CAPB,
     CAPBController,
+    RoutingPriorConfig,
     capb_candidate_from_checkpoint,
 )
 from totton_audio_de_mirroring.models.proto_bank import (
@@ -20,6 +21,7 @@ __all__ = [
     "CAPB",
     "CAPBController",
     "RELEASE_PROTOTYPE_PROFILE",
+    "RoutingPriorConfig",
     "TWO_PROTOTYPE_PROFILE",
     "PrototypeBank",
     "build_prototype_bank",

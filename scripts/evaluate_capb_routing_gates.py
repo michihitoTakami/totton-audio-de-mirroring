@@ -19,7 +19,14 @@ from totton_audio_de_mirroring.data.capb_dataset import (
 )
 from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
 
-_STATIONARY_SAFE_TYPES = ("flowing_noise", "multitone")
+_STATIONARY_SAFE_TYPES = (
+    "flowing_noise",
+    "multitone",
+    "pink_noise",
+    "band_limited_noise",
+    "near_nyquist_noise",
+)
+_GENTLE_ONLY_FRACTION = 0.99
 _SAFE_TYPES = (*_STATIONARY_SAFE_TYPES, "damped_string")
 _FOCUSED_TYPES = (
     "isolated_click",
@@ -78,6 +85,7 @@ def main() -> None:
     rows = _gate_rows(blocks, args.stationary_sharp_min, args.transient_gentle_min)
     payload = {
         "all_passed": all(bool(row["passed"]) for row in rows),
+        "routing_prior": model.routing_prior.to_dict(),
         "stationary_sharp_min": args.stationary_sharp_min,
         "transient_gentle_min": args.transient_gentle_min,
         "samples_per_type": args.samples_per_type,
@@ -148,15 +156,22 @@ def _target_prototypes(
     """Return physically protective prototypes for a routing label.
 
     Physical Basis:
-        Three-prototype CAPB uses middle only for sparse focused impulses,
-        where it preserves transient gain while meeting echo limits. Sustained
-        plateau edges use gentle; active non-risk content uses sharp.
+        Three-prototype CAPB may use middle only for sparse focused impulses,
+        where it preserves transient gain while meeting echo limits. When the
+        checkpoint's routing prior sends the impulse mass to gentle, middle
+        no longer counts as protective. Sustained plateau edges use gentle;
+        active non-risk content uses sharp.
     """
     if output_name == "safe_active":
         return ("sharp",)
     has_middle = "mid" in model.prototype_names
+    gentle_only = model.routing_prior.focused_gentle_fraction >= _GENTLE_ONLY_FRACTION
     focused = signal_type in _FOCUSED_TYPES
-    if has_middle and (output_name in {"pre_echo", "post_echo"} or focused):
+    if (
+        has_middle
+        and not gentle_only
+        and (output_name in {"pre_echo", "post_echo"} or focused)
+    ):
         return ("mid", "gentle")
     return ("gentle",)
 

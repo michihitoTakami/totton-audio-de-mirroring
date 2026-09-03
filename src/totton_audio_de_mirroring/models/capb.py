@@ -11,6 +11,8 @@ system is time-varying and can create modulation sidebands unless constrained.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -42,6 +44,61 @@ SUPPORTED_CONTROLLER_FEATURE_MODES = (
     "envelope_flux",
     "physics_routing",
 )
+_LEVEL_RISK_SLOPE = 60.0
+_CREST_RISK_THRESHOLD = 5.5
+_CREST_RISK_SLOPE = 8.0
+_SUSTAINED_DENSITY_THRESHOLD = 0.35
+_SUSTAINED_DENSITY_SLOPE = 30.0
+_PRIOR_RESIDUAL = 5.0e-4
+_PRIOR_MIDDLE_FLOOR = 1.0e-12
+
+
+@dataclass(frozen=True)
+class RoutingPriorConfig:
+    """Constants of the physics routing prior that travel with a checkpoint.
+
+    Args:
+        focused_gentle_fraction: Share of the sparse-impulse risk mass routed
+            to the gentle prototype instead of the middle one. Zero reproduces
+            the legacy middle-only policy; one removes middle from impulses.
+        level_change_threshold: Smoothed relative RMS change above which a
+            frame is treated as an envelope onset or offset.
+
+    Physical Basis:
+        Gentle rings least but loses impulse gain at 48 kHz (gate G5), so
+        the impulse split trades near-lobe ringing against gain error per
+        rate family. Stationary noise carries slow RMS wander that must stay
+        below the level threshold, otherwise gentle leaks into steady frames
+        and image rejection degrades.
+    """
+
+    focused_gentle_fraction: float = 0.0
+    level_change_threshold: float = 0.15
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.focused_gentle_fraction <= 1.0:
+            raise ValueError("focused_gentle_fraction must lie in [0, 1].")
+        if not 0.0 < self.level_change_threshold < 1.0:
+            raise ValueError("level_change_threshold must lie in (0, 1).")
+
+    def to_dict(self) -> dict[str, float]:
+        """Return a JSON/torch.save friendly mapping."""
+        return {
+            "focused_gentle_fraction": float(self.focused_gentle_fraction),
+            "level_change_threshold": float(self.level_change_threshold),
+        }
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> RoutingPriorConfig:
+        """Build a config from checkpoint or YAML data (legacy when absent)."""
+        if raw is None:
+            return cls()
+        if not isinstance(raw, Mapping):
+            raise ValueError("routing_prior must be a mapping.")
+        return cls(
+            focused_gentle_fraction=float(raw.get("focused_gentle_fraction", 0.0)),
+            level_change_threshold=float(raw.get("level_change_threshold", 0.15)),
+        )
 
 
 class CAPBController(nn.Module):
@@ -190,6 +247,7 @@ class CAPB(nn.Module):
         fir_compute_dtype: FIRComputeDType = "float32",
         controller_dilation: int = 1,
         controller_feature_mode: str = "waveform",
+        routing_prior: RoutingPriorConfig | None = None,
     ) -> None:
         super().__init__()
         if bank is None:
@@ -215,6 +273,7 @@ class CAPB(nn.Module):
                 f"Unsupported controller_feature_mode: {controller_feature_mode!r}."
             )
         self.controller_feature_mode = controller_feature_mode
+        self.routing_prior = routing_prior or RoutingPriorConfig()
 
         if init_weights is None:
             init_weights = initial_weights_for_prototypes(bank.names)
@@ -293,6 +352,80 @@ class CAPB(nn.Module):
             logits = self._apply_physics_routing_prior(logits, normalized_source)
         return torch.softmax(logits, dim=1)
 
+    def focused_gentle_fraction_frames(
+        self, source: torch.Tensor, frames: int
+    ) -> torch.Tensor:
+        """Return the per-frame gentle share of the protective routing target.
+
+        Args:
+            source: Input waveform (batch, time) at the source rate.
+            frames: Controller frame count the result must match.
+
+        Returns:
+            Tensor (batch, frames) in [0, 1]; one means "gentle only".
+
+        Raises:
+            ValueError: If the input is not a non-empty batched waveform.
+
+        Physical Basis:
+            The routing loss must ask for exactly the split the prior can
+            deliver: only sparse high-crest impulses are eligible for the
+            middle prototype, so envelope onsets and sustained edges keep a
+            gentle-only target regardless of the impulse fraction.
+        """
+        if source.dim() != 2 or source.shape[-1] == 0:
+            raise ValueError("source must be a non-empty (batch, time) tensor.")
+        if frames <= 0:
+            raise ValueError("frames must be positive.")
+        ones = source.new_ones((source.shape[0], frames), dtype=torch.float32)
+        if self.controller_feature_mode != "physics_routing":
+            return ones
+        if "mid" not in self.prototype_names:
+            return ones
+        with torch.no_grad():
+            controller_dtype = self.controller.head.weight.dtype
+            controller_source = source.to(dtype=controller_dtype)
+            peak = controller_source.abs().amax(dim=-1, keepdim=True).clamp_min(1e-6)
+            _, crest_risk, sustained = self._routing_prior_terms(
+                controller_source / peak, frames
+            )
+        if sustained is None:
+            return ones
+        impulsive = crest_risk * (1.0 - sustained)
+        gentle_share = self.routing_prior.focused_gentle_fraction
+        return (1.0 - (1.0 - gentle_share) * impulsive).squeeze(1)
+
+    def _routing_prior_terms(
+        self, normalized_source: torch.Tensor, frames: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """Return (level_risk, crest_risk, sustained) at the controller rate."""
+        waveform = normalized_source.unsqueeze(1)
+        derivative = torch.diff(waveform, dim=-1, prepend=waveform[..., :1])
+        waveform_risk = self._local_level_change(waveform)
+        derivative_risk = self._local_level_change(derivative)
+        level_change = torch.maximum(waveform_risk, derivative_risk)
+        contextual = F.max_pool1d(level_change, kernel_size=9, stride=1, padding=4)
+        crest = self._local_derivative_crest(derivative)
+        crest_context = F.max_pool1d(crest, kernel_size=9, stride=1, padding=4)
+        if contextual.shape[-1] != frames:
+            contextual = F.adaptive_max_pool1d(contextual, frames)
+            crest_context = F.adaptive_max_pool1d(crest_context, frames)
+        level_risk = torch.sigmoid(
+            (contextual - self.routing_prior.level_change_threshold) * _LEVEL_RISK_SLOPE
+        )
+        crest_risk = torch.sigmoid(
+            (crest_context - _CREST_RISK_THRESHOLD) * _CREST_RISK_SLOPE
+        )
+        sustained: torch.Tensor | None = None
+        if "mid" in self.prototype_names:
+            density = self._local_activity_density(waveform)
+            if density.shape[-1] != frames:
+                density = F.adaptive_avg_pool1d(density, frames)
+            sustained = torch.sigmoid(
+                (density - _SUSTAINED_DENSITY_THRESHOLD) * _SUSTAINED_DENSITY_SLOPE
+            )
+        return level_risk, crest_risk, sustained
+
     def _apply_physics_routing_prior(
         self, logits: torch.Tensor, normalized_source: torch.Tensor
     ) -> torch.Tensor:
@@ -304,34 +437,25 @@ class CAPB(nn.Module):
             discontinuities without treating a finite-duration sustain,
             every carrier cycle, or stationary noise as a transient. Centered
             smoothing and symmetric pooling supply pre-ringing look-ahead.
+            Sparse impulses split their protective mass between middle and
+            gentle by ``focused_gentle_fraction``; the split leaves the sharp
+            share untouched so the prior remains a valid simplex.
         """
-        waveform = normalized_source.unsqueeze(1)
-        derivative = torch.diff(waveform, dim=-1, prepend=waveform[..., :1])
-        waveform_risk = self._local_level_change(waveform)
-        derivative_risk = self._local_level_change(derivative)
-        level_change = torch.maximum(waveform_risk, derivative_risk)
-        contextual = F.max_pool1d(level_change, kernel_size=9, stride=1, padding=4)
-        crest = self._local_derivative_crest(derivative)
-        crest_context = F.max_pool1d(crest, kernel_size=9, stride=1, padding=4)
-        if contextual.shape[-1] != logits.shape[-1]:
-            contextual = F.adaptive_max_pool1d(contextual, logits.shape[-1])
-            crest_context = F.adaptive_max_pool1d(crest_context, logits.shape[-1])
-        level_risk = torch.sigmoid((contextual - 0.15) * 60.0)
-        crest_risk = torch.sigmoid((crest_context - 5.5) * 8.0)
-        residual = 5.0e-4
+        level_risk, crest_risk, sustained = self._routing_prior_terms(
+            normalized_source, logits.shape[-1]
+        )
+        residual = _PRIOR_RESIDUAL
         probabilities = torch.full_like(logits, residual)
         sharp_index = self.prototype_names.index("sharp")
         gentle_index = self.prototype_names.index("gentle")
-        if "mid" in self.prototype_names:
+        if sustained is not None:
             middle_index = self.prototype_names.index("mid")
-            middle_floor = 1.0e-12
+            middle_floor = _PRIOR_MIDDLE_FLOOR
             routable_mass = 1.0 - 2.0 * residual - middle_floor
-            density = self._local_activity_density(waveform)
-            if density.shape[-1] != logits.shape[-1]:
-                density = F.adaptive_avg_pool1d(density, logits.shape[-1])
-            sustained = torch.sigmoid((density - 0.35) * 30.0)
-            middle_risk = crest_risk * (1.0 - sustained)
-            gentle_risk = crest_risk * sustained
+            impulsive = crest_risk * (1.0 - sustained)
+            gentle_share = self.routing_prior.focused_gentle_fraction
+            middle_risk = (1.0 - gentle_share) * impulsive
+            gentle_risk = gentle_share * impulsive + crest_risk * sustained
             gentle_risk = gentle_risk + (1.0 - crest_risk) * level_risk
             middle = middle_floor + routable_mass * middle_risk
             gentle = residual + routable_mass * gentle_risk
@@ -563,6 +687,7 @@ def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
         fir_compute_dtype=fir_compute_dtype,
         controller_dilation=controller_dilation,
         controller_feature_mode=controller_feature_mode,
+        routing_prior=RoutingPriorConfig.from_mapping(checkpoint.get("routing_prior")),
     )
     model_state = checkpoint.get("model_state")
     if not isinstance(model_state, dict):
@@ -582,6 +707,7 @@ def capb_candidate_from_checkpoint(
     fir_compute_dtype: FIRComputeDType = "float32",
     controller_dilation: int | None = None,
     controller_feature_mode: str | None = None,
+    routing_prior: RoutingPriorConfig | None = None,
 ) -> CAPB:
     """Pair an existing controller with an experimental prototype profile.
 
@@ -593,6 +719,8 @@ def capb_candidate_from_checkpoint(
             omitted, preserve checkpoint metadata (legacy checkpoints use 1).
         controller_feature_mode: Optional feature-mode override. When omitted,
             preserve checkpoint metadata (legacy checkpoints use waveform).
+        routing_prior: Optional routing-prior override. When omitted, preserve
+            checkpoint metadata (legacy checkpoints use the middle-only policy).
 
     Returns:
         Evaluation-only CAPB candidate in eval mode.
@@ -628,6 +756,11 @@ def capb_candidate_from_checkpoint(
         fir_compute_dtype=fir_compute_dtype,
         controller_dilation=dilation,
         controller_feature_mode=feature_mode,
+        routing_prior=(
+            RoutingPriorConfig.from_mapping(checkpoint.get("routing_prior"))
+            if routing_prior is None
+            else routing_prior
+        ),
     )
     model_state = checkpoint.get("model_state")
     if not isinstance(model_state, dict):

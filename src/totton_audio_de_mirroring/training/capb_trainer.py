@@ -25,6 +25,7 @@ from totton_audio_de_mirroring.models.capb import (
     SUPPORTED_CONTROLLER_FEATURE_MODES,
     SUPPORTED_FIR_COMPUTE_DTYPES,
     FIRComputeDType,
+    RoutingPriorConfig,
     capb_candidate_from_checkpoint,
     capb_from_checkpoint,
 )
@@ -68,6 +69,9 @@ class CAPBTrainingConfig:
         controller_dilation: Controller convolution dilation; two supplies
             sufficient two-sided context for the complete echo masks.
         controller_feature_mode: Versioned controller input features.
+        routing_prior: Physics routing prior constants. None inherits the
+            initial checkpoint's prior (or the legacy default for a fresh
+            model); an explicit value overrides the checkpoint and is saved.
         fir_compute_dtype: Arithmetic dtype for the fixed FIR path.
         initial_head_scale: Multiplicative scale applied once to loaded
             controller-head weights before fine-tuning.
@@ -100,6 +104,7 @@ class CAPBTrainingConfig:
     prototype_profile: str = RELEASE_PROTOTYPE_PROFILE
     controller_dilation: int = 1
     controller_feature_mode: str = "waveform"
+    routing_prior: RoutingPriorConfig | None = None
     fir_compute_dtype: FIRComputeDType = "float32"
     initial_head_scale: float = 1.0
     initial_controller_only: bool = False
@@ -162,6 +167,12 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         raise ValueError(
             f"Unknown controller_feature_mode: {controller_feature_mode!r}."
         )
+    routing_prior_raw = raw.get("routing_prior")
+    routing_prior = (
+        RoutingPriorConfig.from_mapping(routing_prior_raw)
+        if routing_prior_raw is not None
+        else None
+    )
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
         batch_size=int(raw.get("batch_size", 16)),
@@ -177,6 +188,7 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         prototype_profile=prototype_profile,
         controller_dilation=controller_dilation,
         controller_feature_mode=controller_feature_mode,
+        routing_prior=routing_prior,
         fir_compute_dtype=cast(FIRComputeDType, fir_compute_dtype),
         initial_head_scale=initial_head_scale,
         initial_controller_only=bool(raw.get("initial_controller_only", False)),
@@ -260,6 +272,7 @@ def train_capb(
             fir_compute_dtype=training_config.fir_compute_dtype,
             controller_dilation=training_config.controller_dilation,
             controller_feature_mode=training_config.controller_feature_mode,
+            routing_prior=training_config.routing_prior,
         )
     _scale_controller_head(model, training_config.initial_head_scale)
     model = model.to(device)
@@ -435,6 +448,16 @@ def _load_initial_checkpoint(
             f"{expected_input_rate} Hz does not match dataset source rate "
             f"{data_config.source_sample_rate} Hz."
         )
+    configured_prior = training_config.routing_prior
+    if configured_prior is not None and configured_prior != model.routing_prior:
+        # The prior holds routing constants only (no tensors), so a
+        # continuation may change policy without invalidating the controller.
+        logger.info(
+            "Overriding checkpoint routing prior %s with %s",
+            model.routing_prior.to_dict(),
+            configured_prior.to_dict(),
+        )
+        model.routing_prior = configured_prior
     return model
 
 
@@ -490,6 +513,9 @@ def _run_epoch(
                 focused_transient=focused_transient,
                 sharp_index=model.prototype_names.index("sharp"),
                 gentle_index=model.prototype_names.index("gentle"),
+                focused_gentle_fraction=model.focused_gentle_fraction_frames(
+                    source, weights.shape[-1]
+                ),
             )
 
         if train:
@@ -533,6 +559,7 @@ def _save_checkpoint(
             "fir_compute_dtype": model.fir_compute_dtype,
             "controller_dilation": model.controller_dilation,
             "controller_feature_mode": model.controller_feature_mode,
+            "routing_prior": model.routing_prior.to_dict(),
             "expected_input_rate": data_config.source_sample_rate,
             "target_sample_rate": data_config.target_sample_rate,
             "training_config": {
@@ -551,6 +578,7 @@ def _save_checkpoint(
                 "fir_compute_dtype": config.fir_compute_dtype,
                 "controller_dilation": config.controller_dilation,
                 "controller_feature_mode": config.controller_feature_mode,
+                "routing_prior": model.routing_prior.to_dict(),
                 "initial_head_scale": config.initial_head_scale,
                 "initial_controller_only": config.initial_controller_only,
             },
