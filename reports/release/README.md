@@ -68,6 +68,10 @@ Midのリップルが実際にBessel参照を超えることは、有効なplate
 代償は孤立impulseのリンギングが約4 dB戻ること（Sharp単体`-15 dB`より4〜5 dB低い水準は維持）。
 打撃時のGentle使用は比率に依存しない包絡onset経路（level_risk → Gentle）が残るため、ハイハットの
 16–20 kHzはSharp比`-3.2 dB`が床です。この床を下げるにはonset経路の保護先を変える別のknobが必要です。
+そのknob（広帯域HF onsetだけGentleをフラットMidへ振り替えるrouting class）は2026-09-04に
+試作し不採用としました。上限は素材次第で1.25〜3.48 dBありますが、gateを通すために必要な制約が
+そのまま効果を削るため、実際に取れたのは0.06〜0.47 dBでした。経緯と測定値は
+[`docs/hf_onset_routing_experiment.md`](../../docs/hf_onset_routing_experiment.md)にあります。
 
 比率の走査値は[selection/fraction_sweep_summary.json](run16_v5b_midflat_g03_20260903/selection/fraction_sweep_summary.json)、
 打撃時の帯域別measurementは[selection/hit_metrics.json](run16_v5b_midflat_g03_20260903/selection/hit_metrics.json)にあります。
