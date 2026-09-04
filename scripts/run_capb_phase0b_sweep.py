@@ -20,6 +20,9 @@ import numpy as np
 from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.data.reference import upsample_bessel_reference
+from totton_audio_de_mirroring.evaluation.gates import (
+    plateau_window_for_frequency,
+)
 from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     compare_edge_aligned_ringing,
 )
@@ -83,9 +86,24 @@ def main() -> None:
         for probe_id, source in probes.items():
             after = _upsample(source, kernel)
             before = befores[probe_id]
-            if probe_id.startswith("square_"):
+            plateau = (
+                plateau_window_for_frequency(
+                    float(probe_id.removeprefix("square_").removesuffix("hz"))
+                )
+                if probe_id.startswith("square_")
+                else None
+            )
+            if probe_id.startswith("square_") and plateau is None:
+                # No settled plateau exists above ~1.67 kHz, so the gate emits
+                # no ripple row and neither does this sweep.
+                row[f"{probe_id}_rms_after"] = float("nan")
+            elif plateau is not None:
                 cmp_ = compare_edge_aligned_ringing(
-                    before_signal=before, after_signal=after, sample_rate=TARGET_SR
+                    before_signal=before,
+                    after_signal=after,
+                    sample_rate=TARGET_SR,
+                    plateau_start_ms=plateau[0],
+                    plateau_end_ms=plateau[1],
                 )
                 row[f"{probe_id}_rms_after"] = cmp_.after.plateau_ripple_rms
                 row[f"{probe_id}_rms_ratio"] = cmp_.plateau_ripple_rms_ratio

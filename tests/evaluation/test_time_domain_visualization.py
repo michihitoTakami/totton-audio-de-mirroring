@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy import signal as sp_signal
 
 from totton_audio_de_mirroring.evaluation.time_domain_visualization import (
     EdgeAlignedRingingMetrics,
@@ -360,3 +361,23 @@ def test_waveform_comparison_constant_signals_is_finite():
     )
 
     assert metrics.correlation == 1.0
+
+
+def test_plateau_end_ms_echoes_the_requested_window() -> None:
+    """The metrics record the window they were measured over.
+
+    The gate layer derives a probe-specific window and relies on this echo as
+    the provenance of every plateau row it emits.
+    """
+    rate = 88_200
+    duration = int(0.02 * rate)
+    time = np.arange(duration) / rate
+    sos = sp_signal.butter(4, 20_000.0, fs=rate, output="sos")
+    raw = np.where(time * rate >= duration / 2, 1.0, -1.0)
+    step = np.asarray(sp_signal.sosfiltfilt(sos, raw), dtype=np.float64)
+
+    metrics = compute_edge_aligned_ringing_metrics(
+        step, rate, plateau_start_ms=0.1, plateau_end_ms=0.4
+    )
+    assert metrics.plateau_start_ms == pytest.approx(0.1)
+    assert metrics.plateau_end_ms == pytest.approx(0.4)

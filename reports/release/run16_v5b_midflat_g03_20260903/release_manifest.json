@@ -17,7 +17,7 @@
     "cudnn": 91002,
     "gpu": "NVIDIA GeForce RTX 5060 Ti"
   },
-  "gate_spec_version": 6,
+  "gate_spec_version": 7,
   "families": {
     "44k1": {
       "checkpoint": "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt",

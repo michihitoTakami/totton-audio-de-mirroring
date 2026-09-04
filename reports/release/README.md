@@ -1,7 +1,7 @@
 # CAPB release evidence — 2026-09-03（run16）
 
 現在の推奨は両rate familyとも**run16**（`v5b_sharp1023_midflat70` bank、
-`focused_gentle_fraction 0.3`、gate spec 6）です。`release_manifest.json`の`recommended`が正史です。
+`focused_gentle_fraction 0.3`、gate spec 7）です。`release_manifest.json`の`recommended`が正史です。
 
 このディレクトリには推奨ペアの受入証跡だけを置きます。2026-09-04に、非推奨となった
 run13〜run15の証跡バンドルと1535-tap研究比較（`reports/research/long_fir_1535/`）を削除しました。
@@ -12,15 +12,25 @@ run13〜run15の証跡バンドルと1535-tap研究比較（`reports/research/lo
 controllerはrouting v2 + sharp floor処方で学習し、`v5b_sharp1023_midflat70` bank上で
 3 seed（1234 / 2026 / 4649）のcontroller-only fine-tuneを行い、seed 1234を採用しました。
 
-| Family | checkpoint | G1〜G9 CPU / CUDA（spec 6） | G5 impulse列 | G2b | G3最悪 | 64位相 worst | ONNX parity / null |
+| Family | checkpoint | G1〜G9 CPU / CUDA（spec 7） | G5 impulse列 | G2b | G3最悪 | 64位相 worst | ONNX parity / null |
 |---|---|---|---:|---:|---:|---:|---|
 | 44.1k | `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt` | PASS / PASS | `0.164 dB` | `4.6e-11` | `-133.1 dB` | `-37.3 dB` | `1.0e-6` / `-128.2 dB` |
 | 48k | `data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt` | PASS / PASS | `0.175 dB` | `3.3e-11` | `-133.5 dB` | `-38.4 dB` | `1.1e-6` / `-128.2 dB` |
 
-3 seedすべてが両系列でCPU・strict-FP32 CUDAのG1〜G9（spec 6）を通過し、G5は`0.16〜0.18 dB`、
-pink noiseのSharp<0.99フレームは全seedで0%、64位相worstは`-37〜-38 dB`です。最悪行は2 kHz矩形の
-plateau_rms（余裕4.7% / 6.3%）
-（[selection/seed_summary.json](run16_v5b_midflat_g03_20260903/selection/seed_summary.json)）。
+採用seed 1234は両系列でCPU・strict-FP32 CUDAのG1〜G9（spec 7）を通過します。
+G5は`0.16〜0.18 dB`、pink noiseのSharp<0.99フレームは0%、64位相worstは`-37〜-38 dB`です。
+
+リンギングgateの最悪行は次のとおりで、**余裕は約59〜61%**あります。
+
+| Family | G1最悪行 | 余裕 | G2最悪行 | 余裕 |
+|---|---|---:|---|---:|
+| 44.1k | `square_73hz_held` overshoot `0.0375` / `0.0962` | **61.0%** | `square_1000hz` plateau_rms `2.04e-4` / `5.0e-4` | **59.1%** |
+| 48k | `square_500hz` overshoot `0.0300` / `0.0776` | **61.3%** | `square_1000hz` overshoot `0.0300` / `0.0776` | **61.3%** |
+
+spec 6 まで最悪行として記録していた「2 kHz矩形のplateau_rms、余裕4.7% / 6.3%」は、
+窓が半周期を2.8個跨いだ退化した行の残差でした（下記「gate spec 7」）。3 seedの選定記録は
+[selection/seed_summary.json](run16_v5b_midflat_g03_20260903/selection/seed_summary.json)
+にありますが、これは spec 6 の窓で測った当時の値です（非採用seedのcheckpointは残っていないため再測不能）。
 
 null testの入力probeは2 s log sweep + 低レベルノイズ + 3クリック（16 bit）で、SHA-256は
 各`null_test/*.json`に記録しています。
@@ -35,9 +45,16 @@ ABX（ハイハット素材）でGentle単体は識別可、Sharp単体とCAPB�
 Midをフラットな短いKaiserに置き換えたうえで、打撃時のGentle比率を`0.9` → `0.6` → `0.3`と下げ、
 残りをflat Midで受ける構成に到達しました。
 
-比率0.0はMidのGibbsリップルが5 kHz矩形でBessel参照の1.1倍を超えるためG2で不合格（物理的に正しい
-判定）で、`0.3`が両系列共通で通る下限です。Gentle自体を20 kHzまでフラットにする案はG7
+比率`0.3`が両系列共通で通る下限です。Gentle自体を20 kHzまでフラットにする案はG7
 （Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。
+
+なお spec 6 まで「比率0.0はMidのリップルが5 kHz矩形でG2を落とす」と記載していましたが、
+**この主張は撤回します**。固定checkpointに対して `focused_gentle_fraction` を 0.3 から 0.0 へ
+変えても、13個の矩形 / DC step probe の plateau・overshoot metric は**bit一致**します
+（比率は疎な孤立impulseのrisk経路にしか触らないため、矩形probeは比率を見ていません）。
+当該の`g0.0`数値は別途fine-tuneした別のcontrollerのもので、そのcheckpointは残っていません。
+Midのリップルが実際にBessel参照を超えることは、有効なplateauを持つ全probeで測れます
+（100 Hzで`25.99`倍、1000 Hzで`38.25`倍）。
 
 | 指標（比率0.6 → 0.3） | 44.1 kHz | 48 kHz |
 |---|---|---|
@@ -55,13 +72,48 @@ Midをフラットな短いKaiserに置き換えたうえで、打撃時のGentl
 比率の走査値は[selection/fraction_sweep_summary.json](run16_v5b_midflat_g03_20260903/selection/fraction_sweep_summary.json)、
 打撃時の帯域別measurementは[selection/hit_metrics.json](run16_v5b_midflat_g03_20260903/selection/hit_metrics.json)にあります。
 
-### gate spec 6（2026-09-03）
+### gate spec 7（2026-09-04）
 
 矩形波 / DC stepのリンギング指標（G1/G2）は、出力とBessel参照を8倍sincオーバーサンプルしてから
-エッジ整列と0.1–0.8 msの窓切りを行います。閾値の定義（Bessel参照比1.1倍、overshoot +0.005）は
-不変です。spec 5では出力サンプル格子でエッジを検出していたため、48 kHzの2 kHz / 5 kHz矩形
-（エッジが96 kHzサンプルの中間に揃う）で窓が1サンプル飛び、5 kHz矩形のovershoot閾値が
-44.1 kHz `0.549`に対して48 kHz `0.283`と2倍違っていました。spec 6では`0.539` / `0.567`と一致します。
+エッジ整列と窓切りを行います。閾値の定義（Bessel参照比1.1倍、overshoot +0.005）とprobe manifest
+（hash `085959477798407d` / `6529deadaab177fe`）は不変で、変わるのは**どのprobeでどの行を、
+どの窓で出すか**だけです。
+
+spec 6 まで窓はprobe周波数に依らずエッジ後 0.1–0.8 ms 固定でした。矩形の半周期がこの0.70 msより
+短い**625 Hz以上の全probeで窓が次の遷移を跨ぎ**、「plateauリップル」が矩形波自体になっていました。
+2 kHzでは窓が半周期を2.8個、5 kHzでは7.0個跨ぎます。結果、リンギングが48倍違う3本のprototypeが
+2 kHzで`1.017`〜`1.048`（許容1.10）に収まって判別不能になり、5 kHzでは順序が反転して
+**フラットなFIRほど悪い**と出ていました（gentle `1.004` 対 mid `1.094` / sharp `1.095`）。
+
+spec 7 の規則（probeを見ずに先に確定）:
+
+```
+guard = 0.1 ms（plateau_start_ms と対称。両エッジから同じだけ離す）
+end   = min(0.8 ms, 半周期 − guard)
+plateau が解像できる ⇔ (end − 0.1 ms) ≥ 0.1 ms
+```
+
+| probe | 半周期 | 窓 | 扱い |
+|---|---|---|---|
+| 50 / 73 / 100 / 331 / 500 Hz, 500hz_a005, DC step | ≥1.0 ms | `[0.1, 0.8]` | **spec 6と同一** |
+| 1000 Hz | 0.500 ms | `[0.1, 0.4]` | 窓を狭める（初めて本物のplateauになる） |
+| 1730 / 2000 / 4400 / 5000 Hz | ≤0.289 ms | — | **plateau/overshoot行を出さない** |
+
+規則は窓を狭めるか行を落とすだけで、広げることはありません。既存の有効な窓の値は
+bit一致で保たれます（`visualization/distortion/summary.json` の100 / 500 Hz plateau値32個で確認）。
+半周期がsharpの整定より短い矩形には**リンギングのないplateauが物理的に存在しない**ため、
+行を落とすのは閾値の緩和ではなく未定義量の測定停止です。行を落としたprobeは
+`gate_report.json` の `skipped` と `.md` の「NOT a pass」表に理由付きで記録されます。
+
+G1/G2 の境界も規則から導出します（`500 / (0.8 + 0.1) = 555.56 Hz`）。G1 = plateauが完全に
+整定する矩形とDC step、G2 = 次のエッジでplateauが切れる矩形（現行probeでは1000 Hzのみ）。
+`plateau_rms` の判別力は 2 kHz の3%幅から 1000 Hz の47倍 / 38倍へ回復します。
+
+**未充当の被覆**: 1666.7 Hz を超える矩形（1730 / 2000 / 4400 / 5000 Hz）は、
+どのgateでもplateauリンギングを測られません。これらのprobe自体は G5_gain（低域RMS利得誤差
+≤0.5 dB）と G7_no_added_hf（イメージ帯のBessel比 +3 dB以下）で引き続き判定され、
+15 kHzの倍音は G4_flatness が縛ります。埋めるにはprobe manifestの改訂
+（新しいhashと次のspec bump）が必要で、本specの範囲外です。
 
 ## タップ数の走査
 
@@ -84,7 +136,7 @@ controller 64位相マージンが`-36` → `-14 dB`へ縮み、G9が悪化し�
 
 ## 共通事項
 
-- ゲート仕様はspec 6。閾値の定義とprobe manifestは変更していません。release_qualityのクロスレート
+- ゲート仕様はspec 7。閾値の定義とprobe manifestは変更していません。release_qualityのクロスレート
   検査は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容に
   checkpointへ保存された`focused_gentle_fraction`の差を加える定義です。
 - ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`はrun16ペアを使います。

@@ -21,6 +21,7 @@ from totton_audio_de_mirroring.evaluation.distortion import (
     smpte_imd_db,
     thd_db,
 )
+from totton_audio_de_mirroring.evaluation.gates import plateau_window_for_frequency
 from totton_audio_de_mirroring.models.capb import (
     CAPB,
     SUPPORTED_FIR_COMPUTE_DTYPES,
@@ -259,7 +260,9 @@ def _plot_square_response(
         for name, values in processed.outputs.items()
     }
     metrics = {
-        name: _plateau_ripple(values, edges[name], case.target_rate)
+        name: _plateau_ripple(
+            values, edges[name], case.target_rate, float(frequency_hz)
+        )
         for name, values in processed.outputs.items()
     }
     _render_square_plot(
@@ -277,10 +280,30 @@ def _nearest_rising_edge(signal: np.ndarray, sample_rate: int) -> int:
     return int(start + np.argmax(np.diff(signal[start : stop + 1])) + 1)
 
 
-def _plateau_ripple(signal: np.ndarray, edge: int, sample_rate: int) -> float:
-    """Measure median-referenced RMS ripple from 0.1 to 0.8 ms."""
-    start = edge + round(0.0001 * sample_rate)
-    stop = edge + round(0.0008 * sample_rate)
+def _plateau_ripple(
+    signal: np.ndarray, edge: int, sample_rate: int, frequency_hz: float
+) -> float:
+    """Measure median-referenced RMS ripple over the gate's plateau window.
+
+    Args:
+        signal: Edge-aligned output waveform.
+        edge: Index of the detected rising edge.
+        sample_rate: Output sample rate in Hz.
+        frequency_hz: Square-wave frequency of the probe.
+
+    Returns:
+        RMS ripple in the plateau window, or NaN when the probe has no
+        settled plateau.
+
+    Physical Basis:
+        The window comes from the gate itself so the plot annotation and the
+        reported number can never describe different intervals.
+    """
+    window = plateau_window_for_frequency(frequency_hz)
+    if window is None:
+        return float("nan")
+    start = edge + round(window[0] * 1.0e-3 * sample_rate)
+    stop = edge + round(window[1] * 1.0e-3 * sample_rate)
     plateau = np.asarray(signal[start:stop], dtype=np.float64)
     error = plateau - np.median(plateau)
     return float(np.sqrt(np.mean(np.square(error))))
@@ -309,7 +332,15 @@ def _render_square_plot(
             label=name,
             zorder=_comparison_zorder(name),
         )
-    axis.axvspan(0.1, 0.8, color="#4caf50", alpha=0.10, label="gate plateau 0.1–0.8 ms")
+    plateau = plateau_window_for_frequency(float(frequency_hz))
+    if plateau is not None:
+        axis.axvspan(
+            plateau[0],
+            plateau[1],
+            color="#4caf50",
+            alpha=0.10,
+            label=f"gate plateau {plateau[0]:.3g}–{plateau[1]:.3g} ms",
+        )
     axis.set(
         xlabel="time from edge (ms)",
         ylabel="amplitude",

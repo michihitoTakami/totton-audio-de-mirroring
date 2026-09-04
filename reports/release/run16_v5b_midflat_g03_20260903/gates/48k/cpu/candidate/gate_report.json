@@ -1,6 +1,6 @@
 {
   "all_passed": true,
-  "spec_version": 6,
+  "spec_version": 7,
   "manifest_hash": "6529deadaab177fe",
   "config": {
     "plateau_ripple_ratio_max": 1.1,
@@ -29,7 +29,7 @@
     {
       "gate_id": "G1_lf_ringing",
       "passed": true,
-      "worst_probe_id": "square_2000hz",
+      "worst_probe_id": "square_500hz",
       "rows": [
         {
           "probe_id": "square_50hz",
@@ -109,60 +109,6 @@
           "metric": "overshoot_after",
           "value": 0.030006018205003038,
           "threshold": 0.07761009621053777,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_1000hz",
-          "tier": "canonical",
-          "metric": "plateau_rms_after",
-          "value": 0.6511156165048521,
-          "threshold": 0.71751774642668,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_1000hz",
-          "tier": "canonical",
-          "metric": "plateau_p2p_after",
-          "value": 1.0617308962427712,
-          "threshold": 1.180684012895177,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_1000hz",
-          "tier": "canonical",
-          "metric": "overshoot_after",
-          "value": 0.030148014036562976,
-          "threshold": 0.07776373442649825,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_2000hz",
-          "tier": "canonical",
-          "metric": "plateau_rms_after",
-          "value": 0.6210846241883781,
-          "threshold": 0.6644783838871772,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_2000hz",
-          "tier": "canonical",
-          "metric": "plateau_p2p_after",
-          "value": 1.0617316319706989,
-          "threshold": 1.2596430100688023,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_2000hz",
-          "tier": "canonical",
-          "metric": "overshoot_after",
-          "value": 0.05795660024853494,
-          "threshold": 0.1367460779222182,
           "passed": true,
           "binding": "relative"
         },
@@ -300,94 +246,71 @@
           "threshold": 0.07761009621053777,
           "passed": true,
           "binding": "relative"
-        },
-        {
-          "probe_id": "square_1730hz_held",
-          "tier": "held_out",
-          "metric": "plateau_rms_after",
-          "value": 0.633911807207736,
-          "threshold": 0.6927752393027495,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_1730hz_held",
-          "tier": "held_out",
-          "metric": "plateau_p2p_after",
-          "value": 1.061731329815379,
-          "threshold": 1.25964308445788,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_1730hz_held",
-          "tier": "held_out",
-          "metric": "overshoot_after",
-          "value": 0.034102255413633376,
-          "threshold": 0.08626958145641694,
-          "passed": true,
-          "binding": "relative"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G2_hf_ringing",
       "passed": true,
-      "worst_probe_id": "square_4400hz_held",
+      "worst_probe_id": "square_1000hz",
       "rows": [
         {
-          "probe_id": "square_5000hz",
+          "probe_id": "square_1000hz",
           "tier": "canonical",
           "metric": "plateau_rms_after",
-          "value": 0.4734107872705785,
-          "threshold": 0.5129512524983283,
+          "value": 0.00017723315473704027,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528794258870985,
+          "threshold": 0.0019522671311619502,
           "passed": true,
           "binding": "relative"
+        },
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.030001248167107697,
+          "threshold": 0.07760978540348296,
+          "passed": true,
+          "binding": "relative"
+        }
+      ],
+      "skipped": [
+        {
+          "probe_id": "square_2000hz",
+          "tier": "canonical",
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.25 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.25
         },
         {
           "probe_id": "square_5000hz",
           "tier": "canonical",
-          "metric": "plateau_p2p_after",
-          "value": 1.0654292378286483,
-          "threshold": 1.2609128216131438,
-          "passed": true,
-          "binding": "relative"
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.1 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.1
         },
         {
-          "probe_id": "square_5000hz",
-          "tier": "canonical",
-          "metric": "overshoot_after",
-          "value": 0.34636601882878537,
-          "threshold": 0.4149723382603677,
-          "passed": true,
-          "binding": "relative"
+          "probe_id": "square_1730hz_held",
+          "tier": "held_out",
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.289 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.28901734104046245
         },
         {
           "probe_id": "square_4400hz_held",
           "tier": "held_out",
-          "metric": "plateau_rms_after",
-          "value": 0.4888815452398556,
-          "threshold": 0.5272034157385747,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_4400hz_held",
-          "tier": "held_out",
-          "metric": "plateau_p2p_after",
-          "value": 1.0636617453154835,
-          "threshold": 1.2605535165231245,
-          "passed": true,
-          "binding": "relative"
-        },
-        {
-          "probe_id": "square_4400hz_held",
-          "tier": "held_out",
-          "metric": "overshoot_after",
-          "value": 0.30151543504094064,
-          "threshold": 0.3732436823072677,
-          "passed": true,
-          "binding": "relative"
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.1136 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.11363636363636363
         }
       ]
     },
@@ -459,12 +382,13 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G2c_post_echo",
       "passed": true,
-      "worst_probe_id": "impulse",
+      "worst_probe_id": "impulse_train_10ms",
       "rows": [
         {
           "probe_id": "impulse",
@@ -529,7 +453,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G3_mirror",
@@ -576,7 +501,7 @@
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "image_rel_db",
-          "value": -133.48377664403182,
+          "value": -133.48377788364442,
           "threshold": -65.0,
           "passed": true,
           "binding": "absolute"
@@ -599,7 +524,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G4_flatness",
@@ -687,7 +613,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G5_gain",
@@ -887,7 +814,7 @@
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "abs_gain_error_db",
-          "value": 0.0019747465621760686,
+          "value": 0.0019747464941292257,
           "threshold": 0.5,
           "passed": true,
           "binding": "absolute"
@@ -910,7 +837,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G7_no_added_hf",
@@ -966,7 +894,7 @@
           "probe_id": "square_5000hz",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": 0.16236868214269862,
+          "value": 0.16236868214271283,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -1011,7 +939,7 @@
           "probe_id": "impulse_train_10ms",
           "tier": "canonical",
           "metric": "added_hf_db",
-          "value": -10.195013704942383,
+          "value": -10.195013704942653,
           "threshold": 3.0,
           "passed": true,
           "binding": "relative"
@@ -1137,7 +1065,7 @@
           "probe_id": "sweep_log_30_19k_held",
           "tier": "held_out",
           "metric": "added_hf_db",
-          "value": -40.364879786074624,
+          "value": -40.36488102568407,
           "threshold": 3.0,
           "passed": true,
           "binding": "absolute"
@@ -1160,7 +1088,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G8_lb_preservation",
@@ -1248,7 +1177,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     },
     {
       "gate_id": "G9_no_modulation_sidebands",
@@ -1273,7 +1203,8 @@
           "passed": true,
           "binding": "absolute"
         }
-      ]
+      ],
+      "skipped": []
     }
   ],
   "execution": {
