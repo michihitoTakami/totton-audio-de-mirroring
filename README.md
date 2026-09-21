@@ -10,6 +10,12 @@ CAPB（Constrained Adaptive Prototype-Blend）を用いた、波形の立ち上�
 2. 急な立ち上がりやクリックでは、前後の振動が少ないフィルタを多く使えるようにする
 3. その中間では、3つのフィルタを連続的な割合で混ぜる
 
+![CAPBの概要](docs/images/capb_overview.png)
+
+左は3本の固定FIRの振幅特性、右はドラムループに対してcontrollerが選んだ混合比です（推奨checkpoint run16、44.1 kHz系列）。定常部はほぼ`sharp`のみで、打撃の瞬間だけ`gentle`と`mid`が入ります。
+
+音源ごとの選択結果は[docs/routing_examples.md](docs/routing_examples.md)、sweepやサイドバンドなどの測定図は[reports/release/](reports/release/)にあります。
+
 ### はじめに知っておく用語
 
 - FIRフィルタ: 有限個の係数で入力波形を畳み込むデジタルフィルタ。このリポジトリでは係数を左右対称にし、周波数によって遅延が変わらない直線位相にしています。
@@ -414,6 +420,7 @@ scripts/
   report_capb_distortion.py
   report_capb_impulse.py
   report_capb_precision.py
+  plot_readme_routing_figures.py
   run_capb_phase0.py
 ```
 
