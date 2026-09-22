@@ -1,0 +1,78 @@
+{
+  "run": "run17_transient_dwell_20260922",
+  "release_date": "2026-09-22",
+  "prototype_profile": "v5b_sharp1023_midflat70",
+  "recipe": "run16 controller fine-tuned 20 epochs (lr 1e-4, routing_v2 + stationary_sharp_floor losses, v5b bank unchanged) with the transient dwell projection after the controller softmax: gentle only within +-1 frame of a detected edge / plateau waveform / level change, middle prototype out to sharp's +-4-frame support, sharp beyond (gate spec 7)",
+  "selected_seed": 1234,
+  "seeds": [
+    1234,
+    2026,
+    4649
+  ],
+  "precision": {
+    "mode": "strict_fp32",
+    "allow_tf32": false
+  },
+  "gate_spec_version": 7,
+  "families": {
+    "44k1": {
+      "checkpoint": "data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt",
+      "checkpoint_sha256": "dce08d0705c679338397cf00632622ea256b3d2bbd2628d0ca2f4e60f482be69",
+      "prototype_hash": "3ae37d4d562df740dc3945c2a2dfb5f2c4ba807f5ee10725a85e9529a077252a",
+      "manifest_hash": "085959477798407d",
+      "routing_prior": {
+        "focused_gentle_fraction": 0.3,
+        "level_change_threshold": 0.3
+      },
+      "transient_dwell": {
+        "enabled": true,
+        "crest_threshold": 4.0,
+        "level_change_db": 6.0,
+        "gentle_zone_frames": 1,
+        "sharp_zone_frames": 4,
+        "ramp_frames": 0,
+        "release_to_sharp": true,
+        "floor_db": 80.0,
+        "density_threshold": 0.97,
+        "edge_swing_fraction": 0.5
+      },
+      "all_passed_cpu": true,
+      "all_passed_cuda": true,
+      "onnx_sha256": "dd61fdffbb6dab0a2539f80c81aa23d2e5026f12d8be2a1faaffcada23e89e21",
+      "onnx_max_abs_error": 1.0132789611816406e-06,
+      "controller_onnx_max_abs_error": 0.0,
+      "wav_null_peak": 9.5367431640625e-07,
+      "wav_null_depth_db": -129.37187198419397
+    },
+    "48k": {
+      "checkpoint": "data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt",
+      "checkpoint_sha256": "4566643f1935c237ba8f377036a2024c9ce5abf37d4915d4d3d3e95e1d381691",
+      "prototype_hash": "06e8efc5a724059613cc45afdedab7c101d2ca0753da4494a5bbcf10ee2ac363",
+      "manifest_hash": "6529deadaab177fe",
+      "routing_prior": {
+        "focused_gentle_fraction": 0.3,
+        "level_change_threshold": 0.3
+      },
+      "transient_dwell": {
+        "enabled": true,
+        "crest_threshold": 4.0,
+        "level_change_db": 6.0,
+        "gentle_zone_frames": 1,
+        "sharp_zone_frames": 4,
+        "ramp_frames": 0,
+        "release_to_sharp": true,
+        "floor_db": 80.0,
+        "density_threshold": 0.97,
+        "edge_swing_fraction": 0.5
+      },
+      "all_passed_cpu": true,
+      "all_passed_cuda": true,
+      "onnx_sha256": "9e4832b3ac384b930f15378cbc25f23f9036fc3377938b07b4651c13d46bbcc7",
+      "onnx_max_abs_error": 1.1324882507324219e-06,
+      "controller_onnx_max_abs_error": 0.0,
+      "wav_null_peak": 9.5367431640625e-07,
+      "wav_null_depth_db": -129.43826776922208
+    }
+  },
+  "parent_run": "run16_v5b_midflat_g03_20260903"
+}

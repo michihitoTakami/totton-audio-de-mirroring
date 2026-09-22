@@ -1,14 +1,14 @@
 {
-  "release_date": "2026-09-03",
+  "release_date": "2026-09-22",
   "recommended": {
-    "44k1": "run16_v5b_midflat_g03_20260903",
-    "48k": "run16_v5b_midflat_g03_20260903"
+    "44k1": "run17_transient_dwell_20260922",
+    "48k": "run17_transient_dwell_20260922"
   },
   "recommended_checkpoints": {
-    "44k1": "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt",
-    "48k": "data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt"
+    "44k1": "data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt",
+    "48k": "data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt"
   },
-  "recommended_pair_release_quality": "run16_v5b_midflat_g03_20260903/release_quality/release_quality.json",
+  "recommended_pair_release_quality": "run17_transient_dwell_20260922/release_quality/release_quality.json",
   "candidates": {
     "run16_v5b_midflat_g03_20260903": {
       "manifest": "run16_v5b_midflat_g03_20260903/release_manifest.json",
@@ -17,9 +17,17 @@
         "44k1": "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt",
         "48k": "data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt"
       }
+    },
+    "run17_transient_dwell_20260922": {
+      "manifest": "run17_transient_dwell_20260922/release_manifest.json",
+      "prototype_profile": "v5b_sharp1023_midflat70",
+      "families": {
+        "44k1": "data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt",
+        "48k": "data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt"
+      }
     }
   },
-  "recommendation_note": "run16 uses the v5b_sharp1023_midflat70 bank with impulse gentle fraction 0.3 for both rate families. Evidence is regenerated under gate spec 7, which bounds the square plateau window by the probe's own half period: the spec 6 fixed 0.1-0.8 ms window straddled the next transition from 625 Hz upward, so the row previously advertised as run16's worst binding probe (square_2000hz plateau_rms, 4.7% / 6.3% margin) was measuring the square wave rather than its ripple. Under spec 7 both families still pass G1-G9 on CPU and strict-FP32 CUDA, and the true ringing margin is 59-61%. Squares above 1666.7 Hz now carry no plateau row; closing that coverage gap needs a probe manifest revision. Superseded candidates run13-run15 were retired on 2026-09-04; their evidence bundles are recoverable from git history at commit 1541917.",
+  "recommendation_note": "run17 keeps the run16 v5b_sharp1023_midflat70 bank, routing prior and loss recipe, and adds the deterministic transient dwell projection after the controller softmax (gentle within +-1.5 ms of detected events, flat middle out to sharp's 5.8 ms support, sharp beyond). All three seeds pass G1-G9 on CPU and strict-FP32 CUDA for both families under gate spec 7 with the same worst rows and margins as run16; seed 1234 is selected. It recovers 0.3-0.8 dB of 16-20 kHz on percussive recordings and 5-6 dB of image rejection at 48 kHz relative to run16, below the ABX-detectable range, so the change is claimed as structural rather than audible. run16 remains a listed candidate. run16 uses the v5b_sharp1023_midflat70 bank with impulse gentle fraction 0.3 for both rate families. Evidence is regenerated under gate spec 7, which bounds the square plateau window by the probe's own half period: the spec 6 fixed 0.1-0.8 ms window straddled the next transition from 625 Hz upward, so the row previously advertised as run16's worst binding probe (square_2000hz plateau_rms, 4.7% / 6.3% margin) was measuring the square wave rather than its ripple. Under spec 7 both families still pass G1-G9 on CPU and strict-FP32 CUDA, and the true ringing margin is 59-61%. Squares above 1666.7 Hz now carry no plateau row; closing that coverage gap needs a probe manifest revision. Superseded candidates run13-run15 were retired on 2026-09-04; their evidence bundles are recoverable from git history at commit 1541917.",
   "retired_candidates": {
     "retired_on": "2026-09-04",
     "recover_from_commit": "1541917",

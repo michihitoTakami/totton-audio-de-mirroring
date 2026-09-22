@@ -160,9 +160,12 @@ fine-tune 後の NN は学習なし射影より 0.1〜0.2 dB だけ gentle 側�
 
 run16 の 64 位相 worst は -37.3 / -38.4 dB で同等。
 
-checkpoint は `data/checkpoints/experiments/transient_dwell2_{44k1,48k}_seed{1234,2026,4649}/`
-（未追跡）。**推奨 checkpoint は run16 のまま**である。差し替えには release_quality、null test、
-可視化を含む証跡バンドルの再生成と ABX が必要で、それは別 PR で行う。
+seed 1234 のペアは `data/checkpoints/capb/run17_transient_dwell_20260922_44k1/` と
+`data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/` に **run17** として保存し、
+受入証跡（gates CPU/CUDA、robustness、release_quality、null test、ONNX parity、可視化）は
+`reports/release/run17_transient_dwell_20260922/` にある。`reports/release/release_manifest.json` の
+`recommended` を run17 に更新した。他 seed の checkpoint は未追跡
+（`data/checkpoints/experiments/transient_dwell2_*`）。
 
 ## 判断
 
@@ -171,6 +174,10 @@ checkpoint は `data/checkpoints/experiments/transient_dwell2_{44k1,48k}_seed{12
 - 一方で構造としては正しい方向で、gate 余裕を一切失わず、イメージ帯を改善し、run16 が減衰部に
   作っていた物理的根拠のない gentle 区間を除いた。前回の HF-onset 実験が学習込みで 0.06〜0.47 dB
   だった同じ目標を、決定的な射影で 3 seed × 両系列を通して達成している。
+  この構造的改善を理由に run17 を推奨に採用した（可聴改善の主張ではない）。
+- routing 診断 R2〜R4（pre/post echo 窓とエッジ窓での gentle 比率 ≥ 0.9）は run16 でも不合格
+  だった補助指標で、run17 では射影が ±1.5 ms の外側を mid へ移すため定義上 0 になる。物理量を
+  測る G2b/G2c/G1 が両系列で通過していることが正である。
 - 残る高域差の主因は打撃の瞬間（±1.5 ms）の到達点であり、遷移経路ではない。
 
 ## 再現に必要な情報

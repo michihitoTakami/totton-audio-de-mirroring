@@ -1,0 +1,107 @@
+{
+  "gate_spec_version": 7,
+  "campaign": "transient_dwell2 (plateau-density detector); campaign 1 (crest + level only) is recorded in docs/transient_dwell_projection.md",
+  "real_audio_reference": "16-20 kHz band energy relative to the all-sharp render, first 8 s mono",
+  "44k1/s1234": {
+    "all_passed_cpu": true,
+    "all_passed_cuda": true,
+    "g1_worst": "square_73hz_held/plateau_rms_after 1.810e-04 / 5.000e-04",
+    "g2_worst": "square_1000hz/plateau_rms_after 2.043e-04 / 5.000e-04",
+    "g5_worst_db": 0.37543868379941814,
+    "g3_worst_db": -133.09483892000645,
+    "g2b_worst": 4.5791391218641704e-11,
+    "hf16_20_db": {
+      "684120__sound_bar_kk__dry-str-pop-": -0.437,
+      "863823__d_yonqui__stereo-hi-hat-sh": -2.8,
+      "863856__d_yonqui__among-us-hihat-l": -1.338,
+      "863857__d_yonqui__distorted-glitch": -1.092,
+      "864855__d_yonqui__foley-drum-loop-": -1.233,
+      "864857__d_yonqui__kitchen-foley-dr": -1.781
+    }
+  },
+  "44k1/s2026": {
+    "all_passed_cpu": true,
+    "all_passed_cuda": true,
+    "g1_worst": "square_73hz_held/plateau_rms_after 1.810e-04 / 5.000e-04",
+    "g2_worst": "square_1000hz/plateau_rms_after 2.043e-04 / 5.000e-04",
+    "g5_worst_db": 0.3754386378264214,
+    "g3_worst_db": -133.09434209046495,
+    "g2b_worst": 4.5056961492633476e-11,
+    "hf16_20_db": {
+      "684120__sound_bar_kk__dry-str-pop-": -0.495,
+      "863823__d_yonqui__stereo-hi-hat-sh": -2.71,
+      "863856__d_yonqui__among-us-hihat-l": -1.397,
+      "863857__d_yonqui__distorted-glitch": -1.055,
+      "864855__d_yonqui__foley-drum-loop-": -1.176,
+      "864857__d_yonqui__kitchen-foley-dr": -1.667
+    }
+  },
+  "44k1/s4649": {
+    "all_passed_cpu": true,
+    "all_passed_cuda": true,
+    "g1_worst": "square_73hz_held/plateau_rms_after 1.810e-04 / 5.000e-04",
+    "g2_worst": "square_1000hz/plateau_rms_after 2.043e-04 / 5.000e-04",
+    "g5_worst_db": 0.375438434345915,
+    "g3_worst_db": -133.095206511303,
+    "g2b_worst": 4.056343333079311e-11,
+    "hf16_20_db": {
+      "684120__sound_bar_kk__dry-str-pop-": -0.419,
+      "863823__d_yonqui__stereo-hi-hat-sh": -2.764,
+      "863856__d_yonqui__among-us-hihat-l": -1.349,
+      "863857__d_yonqui__distorted-glitch": -1.121,
+      "864855__d_yonqui__foley-drum-loop-": -1.276,
+      "864857__d_yonqui__kitchen-foley-dr": -1.793
+    }
+  },
+  "44k1/run16": {
+    "hf16_20k_vs_sharp_db": {
+      "684120__sound_bar_kk__dry-str-pop-": -0.557,
+      "863823__d_yonqui__stereo-hi-hat-sh": -3.203,
+      "863856__d_yonqui__among-us-hihat-l": -2.122,
+      "863857__d_yonqui__distorted-glitch": -1.084,
+      "864855__d_yonqui__foley-drum-loop-": -1.47,
+      "864857__d_yonqui__kitchen-foley-dr": -2.423
+    }
+  },
+  "48k/s1234": {
+    "all_passed_cpu": true,
+    "all_passed_cuda": true,
+    "g1_worst": "square_500hz/plateau_rms_after 1.740e-04 / 5.000e-04",
+    "g2_worst": "square_1000hz/plateau_rms_after 1.777e-04 / 5.000e-04",
+    "g5_worst_db": 0.37844961338822614,
+    "g3_worst_db": -133.5316366675046,
+    "g2b_worst": 3.992931914856749e-11,
+    "hf16_20_db": {
+      "865041__namegirl__microtonic-138.f": -0.311
+    }
+  },
+  "48k/s2026": {
+    "all_passed_cpu": true,
+    "all_passed_cuda": true,
+    "g1_worst": "square_500hz/plateau_rms_after 1.740e-04 / 5.000e-04",
+    "g2_worst": "square_1000hz/plateau_rms_after 1.778e-04 / 5.000e-04",
+    "g5_worst_db": 0.3346468969615696,
+    "g3_worst_db": -133.53141730784807,
+    "g2b_worst": 3.7980922983462835e-11,
+    "hf16_20_db": {
+      "865041__namegirl__microtonic-138.f": -0.301
+    }
+  },
+  "48k/s4649": {
+    "all_passed_cpu": true,
+    "all_passed_cuda": true,
+    "g1_worst": "square_500hz/plateau_rms_after 1.740e-04 / 5.000e-04",
+    "g2_worst": "square_1000hz/plateau_rms_after 1.778e-04 / 5.000e-04",
+    "g5_worst_db": 0.3813105033101349,
+    "g3_worst_db": -133.53161171267453,
+    "g2b_worst": 4.155709851568931e-11,
+    "hf16_20_db": {
+      "865041__namegirl__microtonic-138.f": -0.283
+    }
+  },
+  "48k/run16": {
+    "hf16_20k_vs_sharp_db": {
+      "865041__namegirl__microtonic-138.f": -0.739
+    }
+  }
+}
