@@ -27,6 +27,10 @@ from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank,
     build_prototype_bank_for_profile,
 )
+from totton_audio_de_mirroring.models.transient_dwell import (
+    TransientDwellConfig,
+    apply_transient_dwell,
+)
 
 DEFAULT_TARGET_SAMPLE_RATE = 88_200
 
@@ -242,6 +246,9 @@ class CAPB(nn.Module):
         controller_dilation: Positive temporal dilation shared by encoder
             convolutions.
         controller_feature_mode: Versioned controller input features.
+        routing_prior: Physics routing prior constants.
+        transient_dwell: Post-softmax transient dwell projection constants;
+            disabled when omitted (legacy behaviour).
 
     Physical Basis:
         With convex weights over gain-matched linear-phase kernels, the
@@ -259,6 +266,7 @@ class CAPB(nn.Module):
         controller_dilation: int = 1,
         controller_feature_mode: str = "waveform",
         routing_prior: RoutingPriorConfig | None = None,
+        transient_dwell: TransientDwellConfig | None = None,
     ) -> None:
         super().__init__()
         if bank is None:
@@ -285,6 +293,7 @@ class CAPB(nn.Module):
             )
         self.controller_feature_mode = controller_feature_mode
         self.routing_prior = routing_prior or RoutingPriorConfig()
+        self.transient_dwell = transient_dwell or TransientDwellConfig()
 
         if init_weights is None:
             init_weights = initial_weights_for_prototypes(bank.names)
@@ -350,7 +359,8 @@ class CAPB(nn.Module):
         Physical Basis:
             Monitoring and evaluation must use the same level-independent
             routing path as waveform inference. Otherwise a physics-informed
-            transient prior can be silently omitted from reported behavior.
+            transient prior or the transient dwell projection can be
+            silently omitted from reported behavior.
         """
         if source.dim() != 2 or source.shape[-1] == 0:
             raise ValueError("source must be a non-empty (batch, time) tensor.")
@@ -361,7 +371,14 @@ class CAPB(nn.Module):
         logits = self.controller(normalized_source)
         if self.controller_feature_mode == "physics_routing":
             logits = self._apply_physics_routing_prior(logits, normalized_source)
-        return torch.softmax(logits, dim=1)
+        weights = torch.softmax(logits, dim=1)
+        return apply_transient_dwell(
+            weights,
+            normalized_source,
+            self.prototype_names,
+            self.control_stride,
+            self.transient_dwell,
+        )
 
     def focused_gentle_fraction_frames(
         self, source: torch.Tensor, frames: int
@@ -708,6 +725,9 @@ def capb_from_checkpoint(checkpoint: dict[str, Any]) -> CAPB:
         controller_dilation=controller_dilation,
         controller_feature_mode=controller_feature_mode,
         routing_prior=RoutingPriorConfig.from_mapping(checkpoint.get("routing_prior")),
+        transient_dwell=TransientDwellConfig.from_mapping(
+            checkpoint.get("transient_dwell")
+        ),
     )
     model_state = checkpoint.get("model_state")
     if not isinstance(model_state, dict):
@@ -728,6 +748,7 @@ def capb_candidate_from_checkpoint(
     controller_dilation: int | None = None,
     controller_feature_mode: str | None = None,
     routing_prior: RoutingPriorConfig | None = None,
+    transient_dwell: TransientDwellConfig | None = None,
 ) -> CAPB:
     """Pair an existing controller with an experimental prototype profile.
 
@@ -741,6 +762,8 @@ def capb_candidate_from_checkpoint(
             preserve checkpoint metadata (legacy checkpoints use waveform).
         routing_prior: Optional routing-prior override. When omitted, preserve
             checkpoint metadata (legacy checkpoints use the middle-only policy).
+        transient_dwell: Optional transient dwell override. When omitted,
+            preserve checkpoint metadata (legacy checkpoints are disabled).
 
     Returns:
         Evaluation-only CAPB candidate in eval mode.
@@ -780,6 +803,11 @@ def capb_candidate_from_checkpoint(
             RoutingPriorConfig.from_mapping(checkpoint.get("routing_prior"))
             if routing_prior is None
             else routing_prior
+        ),
+        transient_dwell=(
+            TransientDwellConfig.from_mapping(checkpoint.get("transient_dwell"))
+            if transient_dwell is None
+            else transient_dwell
         ),
     )
     model_state = checkpoint.get("model_state")
