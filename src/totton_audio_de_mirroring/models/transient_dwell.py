@@ -23,6 +23,8 @@ DEFAULT_GENTLE_ZONE_FRAMES = 1
 DEFAULT_SHARP_ZONE_FRAMES = 4
 DEFAULT_RAMP_FRAMES = 0
 DEFAULT_FLOOR_DB = 80.0
+DEFAULT_DENSITY_THRESHOLD = 0.97
+DEFAULT_EDGE_SWING_FRACTION = 0.5
 _PEAK_ACTIVITY_FLOOR = 1.0e-4
 _ENERGY_EPS = 1.0e-20
 _RMS_EPS = 1.0e-12
@@ -53,6 +55,14 @@ class TransientDwellConfig:
         release_to_sharp: Outside the sharp zone move all mass to sharp.
         floor_db: Level changes whose louder neighbour lies more than this
             far below the loudest frame are ignored as noise-floor wander.
+        density_threshold: Frame waveform RMS-to-peak ratio above which a
+            frame with a real edge is treated as a sustained plateau
+            waveform (squares measure 1.00, sines 0.71, music below 0.9).
+        edge_swing_fraction: Minimum derivative peak, as a fraction of the
+            frame waveform peak, for the density rule to count as an edge.
+            It keeps noisy DC plateaus and the Gibbs ripple of a band-limited
+            plateau (derivative below 0.3 of the peak) out of the rule while
+            a band-limited square edge (about 1.9 times the peak) passes.
 
     Physical Basis:
         The sharp prototype rings for about 5.8 ms on either side of a
@@ -72,6 +82,8 @@ class TransientDwellConfig:
     ramp_frames: int = DEFAULT_RAMP_FRAMES
     release_to_sharp: bool = True
     floor_db: float = DEFAULT_FLOOR_DB
+    density_threshold: float = DEFAULT_DENSITY_THRESHOLD
+    edge_swing_fraction: float = DEFAULT_EDGE_SWING_FRACTION
 
     def __post_init__(self) -> None:
         if self.crest_threshold <= 1.0:
@@ -86,6 +98,10 @@ class TransientDwellConfig:
             raise ValueError("ramp_frames must be non-negative.")
         if self.floor_db <= 0.0:
             raise ValueError("floor_db must be positive.")
+        if not 0.0 < self.density_threshold <= 1.0:
+            raise ValueError("density_threshold must lie in (0, 1].")
+        if not 0.0 < self.edge_swing_fraction < 2.0:
+            raise ValueError("edge_swing_fraction must lie in (0, 2).")
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON/torch.save friendly mapping."""
@@ -98,6 +114,8 @@ class TransientDwellConfig:
             "ramp_frames": int(self.ramp_frames),
             "release_to_sharp": bool(self.release_to_sharp),
             "floor_db": float(self.floor_db),
+            "density_threshold": float(self.density_threshold),
+            "edge_swing_fraction": float(self.edge_swing_fraction),
         }
 
     @classmethod
@@ -121,6 +139,12 @@ class TransientDwellConfig:
             ramp_frames=int(raw.get("ramp_frames", defaults.ramp_frames)),
             release_to_sharp=bool(raw.get("release_to_sharp", True)),
             floor_db=float(raw.get("floor_db", defaults.floor_db)),
+            density_threshold=float(
+                raw.get("density_threshold", defaults.density_threshold)
+            ),
+            edge_swing_fraction=float(
+                raw.get("edge_swing_fraction", defaults.edge_swing_fraction)
+            ),
         )
 
 
@@ -147,12 +171,16 @@ def detect_transient_frames(
 
     Physical Basis:
         A single-frame derivative crest isolates sample-scale
-        discontinuities (steps, clicks, square edges, including every frame
-        of a fast periodic square) from noise-like content. A symmetric
-        energy change across one frame on either side catches envelope
-        onsets and offsets that lack a sharp edge; only the loud side of the
-        change is marked so an isolated spike stays one frame wide. Both are
-        measured with centred pooling so the indicator has no causal bias.
+        discontinuities (steps, clicks, sparse square edges) from
+        noise-like content. Squares above roughly 1.2 kHz pack several edges
+        into one frame and their crest falls below the noise ceiling, so a
+        second rule marks frames whose waveform RMS equals its peak (a
+        plateau waveform) and that still carry a full-swing edge. A
+        symmetric energy change across one frame on either side catches
+        envelope onsets and offsets that lack a sharp edge; only the loud
+        side of the change is marked so an isolated spike stays one frame
+        wide. All are measured with centred pooling so the indicator has no
+        causal bias.
     """
     if normalized_source.dim() != 2 or normalized_source.shape[-1] == 0:
         raise ValueError("normalized_source must be a non-empty (batch, time) tensor.")
@@ -182,8 +210,28 @@ def detect_transient_frames(
         peak = F.adaptive_max_pool1d(peak, frames)
         energy = F.adaptive_avg_pool1d(energy, frames)
     crest = peak / (torch.sqrt(energy.clamp_min(_RMS_EPS)))
-    active = (peak > _PEAK_ACTIVITY_FLOOR).to(peak.dtype)
-    crest_event = (crest > config.crest_threshold).to(peak.dtype) * active
+    active = peak > _PEAK_ACTIVITY_FLOOR
+    crest_event = (crest > config.crest_threshold) & active
+
+    wave_peak = F.max_pool1d(
+        torch.abs(waveform), kernel_size=kernel, stride=control_stride, padding=padding
+    )
+    wave_rms = torch.sqrt(
+        F.avg_pool1d(
+            waveform.square(),
+            kernel_size=kernel,
+            stride=control_stride,
+            padding=padding,
+            count_include_pad=False,
+        ).clamp_min(_RMS_EPS)
+    )
+    if wave_peak.shape[-1] != frames:
+        wave_peak = F.adaptive_max_pool1d(wave_peak, frames)
+        wave_rms = F.adaptive_avg_pool1d(wave_rms, frames)
+    density = wave_rms / (wave_peak + _RMS_EPS)
+    plateau_event = (density > config.density_threshold) & (
+        peak > config.edge_swing_fraction * wave_peak
+    )
 
     level_db = 10.0 * torch.log10(energy + _ENERGY_EPS)
     previous = F.pad(level_db[..., :-1], (1, 0), mode="replicate")
@@ -195,10 +243,8 @@ def detect_transient_frames(
     # widening the indicator by one frame on each side.
     loud_side = level_db >= louder - config.level_change_db
     floor = level_db.amax(dim=-1, keepdim=True) - config.floor_db
-    level_event = (
-        (change > config.level_change_db) & loud_side & (level_db > floor)
-    ).to(peak.dtype)
-    return torch.maximum(crest_event, level_event)
+    level_event = (change > config.level_change_db) & loud_side & (level_db > floor)
+    return (crest_event | plateau_event | level_event).to(peak.dtype)
 
 
 def _zone_keep(event: torch.Tensor, inner: int, ramp: int) -> torch.Tensor:

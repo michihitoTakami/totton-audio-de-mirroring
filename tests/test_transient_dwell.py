@@ -69,6 +69,8 @@ def test_config_validates_ranges() -> None:
         TransientDwellConfig(gentle_zone_frames=4, sharp_zone_frames=4)
     with pytest.raises(ValueError, match="ramp_frames"):
         TransientDwellConfig(ramp_frames=-1)
+    with pytest.raises(ValueError, match="density_threshold"):
+        TransientDwellConfig(density_threshold=1.5)
     with pytest.raises(ValueError, match="mapping"):
         TransientDwellConfig.from_mapping(1.0)  # type: ignore[arg-type]
 
@@ -98,10 +100,24 @@ def test_detector_marks_step_frame_and_square_edges() -> None:
     assert events[0, 0, edge_frame] == 1.0
     assert events.sum() == 1.0
 
-    square_events = detect_transient_frames(
-        _square(1_000.0), frames, DEFAULT_CONTROL_STRIDE, ENABLED
+    # Dense squares pack several edges per frame; the plateau rule marks them.
+    for freq_hz in (1_000.0, 1_730.0, 5_000.0):
+        square_events = detect_transient_frames(
+            _square(freq_hz), frames, DEFAULT_CONTROL_STRIDE, ENABLED
+        )
+        assert square_events.mean() > 0.99, freq_hz
+
+
+def test_detector_ignores_noisy_dc_plateau() -> None:
+    source, edge = _dc_step()
+    rng = np.random.default_rng(1)
+    noisy = source + torch.from_numpy(
+        (rng.standard_normal(source.shape[-1]) * 1.0e-3).astype(np.float32)
     )
-    assert square_events.mean() > 0.99
+    frames = _frames(source.shape[-1])
+    events = detect_transient_frames(noisy, frames, DEFAULT_CONTROL_STRIDE, ENABLED)
+    assert events[0, 0, edge] == 1.0
+    assert events[0, 0, edge + 3 :].sum() == 0.0
 
 
 def test_detector_ignores_stationary_noise_and_tone() -> None:
@@ -163,8 +179,9 @@ def test_optional_ramp_is_linear_over_two_frames() -> None:
     assert gentle[edge + 4] == pytest.approx(0.0)
 
 
-def test_fast_square_is_left_untouched() -> None:
-    source = _square(1_000.0)
+@pytest.mark.parametrize("freq_hz", [331.0, 1_000.0, 1_500.0, 1_730.0, 5_000.0])
+def test_fast_square_is_left_untouched(freq_hz: float) -> None:
+    source = _square(freq_hz)
     weights = _all_gentle(_frames(source.shape[-1]))
     projected = apply_transient_dwell(
         weights, source, NAMES, DEFAULT_CONTROL_STRIDE, ENABLED
