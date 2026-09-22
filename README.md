@@ -203,6 +203,12 @@ uv run python scripts/audit_capb_training_data.py \
 
 実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配します。現在の推奨値は両系列とも`0.3`で、残る`0.7`をフラットなMidが受けます（routing v2導入時は44.1 kHz `0.90`、48 kHz `0.85`でしたが、打撃の高域減衰を避けるため下げました。詳細は「学習済み成果物」節）。Midは曖昧な常用クラスではなく、Gentleのimpulse利得誤差と高域ロールオフを補償しつつG2b/G2cを守る限定的な役割です。比率`0.0`はMidのGibbsリップルが5 kHz矩形でG2を落とすため採用しません。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。それでも学習ヘッドが定常ノイズ上でGentleを足す残りはseed依存で（3 seed中1 seedがG3を落としました）、定常サンプルの安全フレームでSharp重みが`sharp_floor`（`0.995`）を下回った分を罰する`stationary_sharp_floor`損失（重み`1000`）で解消しています。この処方は3 seed×両系列でG1〜G9を通過し、現在の推奨ペアの土台になっています。20 kHzの帯域分割は導入していません。
 
+### Transient dwell（softmax後の決定的な射影）
+
+run16のcontrollerはDC stepやimpulseの周囲±26 msを保護窓にし（priorの25 ms RMS平滑化幅）、外周部をsharp/gentleの辺上やgentle 1.0で埋めていました。sharpの台は±5.8 ms、midの台は±0.54 msなので、gentleが必要なのはエッジの±1 msだけで、1〜5.8 msはフラットなmidで、5.8 ms以降はsharpで受けられます。`transient_dwell`はこれをsoftmax後の決定的な射影として実装します。フレーム内微分crest、平坦部波形（rms/peak）、±1フレームのレベル変化でイベントを検出し、イベントの±1フレーム（1.5 ms）はcontrollerの混合をそのまま保持、±4フレーム（5.8 ms）まではgentle質量をmidへ移し、それより外は非sharp質量をsharpへ戻します。周期矩形は全フレームがイベントになるので射影は恒等で、矩形エッジへのmid漏れの経路は構造的に閉じています。損失ではなく射影にしたのは、HF-onset実験でNNが矩形エッジへ過剰般化して壊す様子を3試行で確定させたためです。定数はcheckpointに保存され、旧checkpointは無効（従来挙動）です。controller-only ONNXにも同じ演算が含まれます。
+
+run16から20 epochsのfine-tune（`configs/training_stage1_capb_transient_dwell_3p.yaml`と`_48k_`版）は3 seed×両系列でCPU・strict-FP32 CUDAのG1〜G9を通過し、リンギングgateの最悪行と余裕はrun16と同一です。実録音の16〜20 kHz（all-sharp基準）はハイハットで`-3.20 → -2.71〜-2.80 dB`、among-us hihatで`-2.12 → -1.34〜-1.40 dB`、48 kHzのイメージ帯は5〜6 dB改善します。ただし回復量はrun16のABXで識別不能だった差の一部で、可聴改善の主張はしていません。推奨checkpointはrun16のまま、候補checkpointは未追跡です。詳細は[docs/transient_dwell_projection.md](docs/transient_dwell_projection.md)にあります。
+
 2-prototype（Sharp/Gentle）も比較できますが、48 kHzのGentle固定端点自体がimpulseで`0.514 dB`、10 ms impulse列で`0.527 dB`のG5誤差となり、上限`0.5 dB`を超えます。このため両rate family共通の候補は3-prototypeを維持します。
 
 ```bash
