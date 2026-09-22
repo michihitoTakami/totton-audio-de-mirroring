@@ -191,5 +191,5 @@ controller 64位相マージンが`-36` → `-14 dB`へ縮み、G9が悪化し�
 - ゲート仕様はspec 7。閾値の定義とprobe manifestは変更していません。release_qualityのクロスレート
   検査は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容に
   checkpointへ保存された`focused_gentle_fraction`の差を加える定義です。
-- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`は2026-09-22時点でrun16ペアを使っています。
+- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`のwaveform / controller-only ONNXはrun17ペアへ更新しています（totton-audio-nn Issue #912）。FP64 prototype bankは同じ`v5b_sharp1023_midflat70`なので変更ありません。
 - 数値の正史はstrict-FP32のworst-probe gateです。`routing/`の診断R1〜R4と図は補助です。
