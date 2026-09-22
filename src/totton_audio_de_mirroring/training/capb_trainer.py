@@ -34,6 +34,7 @@ from totton_audio_de_mirroring.models.proto_bank import (
     build_prototype_bank_for_profile,
     supported_prototype_profiles,
 )
+from totton_audio_de_mirroring.models.transient_dwell import TransientDwellConfig
 from totton_audio_de_mirroring.torch_precision import configure_torch_precision
 from totton_audio_de_mirroring.training.capb_losses import (
     CAPBLossWeights,
@@ -72,6 +73,9 @@ class CAPBTrainingConfig:
         routing_prior: Physics routing prior constants. None inherits the
             initial checkpoint's prior (or the legacy default for a fresh
             model); an explicit value overrides the checkpoint and is saved.
+        transient_dwell: Transient dwell projection constants. None inherits
+            the initial checkpoint's setting (disabled for a fresh model); an
+            explicit value overrides the checkpoint and is saved.
         fir_compute_dtype: Arithmetic dtype for the fixed FIR path.
         initial_head_scale: Multiplicative scale applied once to loaded
             controller-head weights before fine-tuning.
@@ -105,6 +109,7 @@ class CAPBTrainingConfig:
     controller_dilation: int = 1
     controller_feature_mode: str = "waveform"
     routing_prior: RoutingPriorConfig | None = None
+    transient_dwell: TransientDwellConfig | None = None
     fir_compute_dtype: FIRComputeDType = "float32"
     initial_head_scale: float = 1.0
     initial_controller_only: bool = False
@@ -175,6 +180,12 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         if routing_prior_raw is not None
         else None
     )
+    transient_dwell_raw = raw.get("transient_dwell")
+    transient_dwell = (
+        TransientDwellConfig.from_mapping(transient_dwell_raw)
+        if transient_dwell_raw is not None
+        else None
+    )
     return CAPBTrainingConfig(
         epochs=int(raw.get("epochs", 50)),
         batch_size=int(raw.get("batch_size", 16)),
@@ -191,6 +202,7 @@ def load_capb_training_config(path: Path) -> CAPBTrainingConfig:
         controller_dilation=controller_dilation,
         controller_feature_mode=controller_feature_mode,
         routing_prior=routing_prior,
+        transient_dwell=transient_dwell,
         fir_compute_dtype=cast(FIRComputeDType, fir_compute_dtype),
         initial_head_scale=initial_head_scale,
         initial_controller_only=bool(raw.get("initial_controller_only", False)),
@@ -275,6 +287,7 @@ def train_capb(
             controller_dilation=training_config.controller_dilation,
             controller_feature_mode=training_config.controller_feature_mode,
             routing_prior=training_config.routing_prior,
+            transient_dwell=training_config.transient_dwell,
         )
     _scale_controller_head(model, training_config.initial_head_scale)
     model = model.to(device)
@@ -460,6 +473,16 @@ def _load_initial_checkpoint(
             configured_prior.to_dict(),
         )
         model.routing_prior = configured_prior
+    configured_dwell = training_config.transient_dwell
+    if configured_dwell is not None and configured_dwell != model.transient_dwell:
+        # The projection is parameter-free, so enabling it on a validated
+        # controller only changes the post-softmax policy.
+        logger.info(
+            "Overriding checkpoint transient dwell %s with %s",
+            model.transient_dwell.to_dict(),
+            configured_dwell.to_dict(),
+        )
+        model.transient_dwell = configured_dwell
     return model
 
 
@@ -562,6 +585,7 @@ def _save_checkpoint(
             "controller_dilation": model.controller_dilation,
             "controller_feature_mode": model.controller_feature_mode,
             "routing_prior": model.routing_prior.to_dict(),
+            "transient_dwell": model.transient_dwell.to_dict(),
             "expected_input_rate": data_config.source_sample_rate,
             "target_sample_rate": data_config.target_sample_rate,
             "training_config": {
@@ -581,6 +605,7 @@ def _save_checkpoint(
                 "controller_dilation": config.controller_dilation,
                 "controller_feature_mode": config.controller_feature_mode,
                 "routing_prior": model.routing_prior.to_dict(),
+                "transient_dwell": model.transient_dwell.to_dict(),
                 "initial_head_scale": config.initial_head_scale,
                 "initial_controller_only": config.initial_controller_only,
             },

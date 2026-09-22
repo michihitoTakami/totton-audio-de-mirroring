@@ -1,0 +1,26 @@
+{
+  "44k1": {
+    "verify_lengths": [
+      4096,
+      22050,
+      48000
+    ],
+    "max_abs_error": 1.0132789611816406e-06,
+    "controller_max_abs_error": 0.0,
+    "tolerance": 0.0001,
+    "sha256": "dd61fdffbb6dab0a2539f80c81aa23d2e5026f12d8be2a1faaffcada23e89e21",
+    "controller_sha256": "fe660268fb3f8769831954a3b3e30eae2358e01e5cab1a27113c21558f3047ed"
+  },
+  "48k": {
+    "verify_lengths": [
+      4096,
+      22050,
+      48000
+    ],
+    "max_abs_error": 1.1324882507324219e-06,
+    "controller_max_abs_error": 0.0,
+    "tolerance": 0.0001,
+    "sha256": "9e4832b3ac384b930f15378cbc25f23f9036fc3377938b07b4651c13d46bbcc7",
+    "controller_sha256": "e770bffcace514aad61e9afba962a44f66232ec4b6a44780627848a0e41c25d1"
+  }
+}

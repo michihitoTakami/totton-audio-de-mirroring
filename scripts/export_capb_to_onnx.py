@@ -9,9 +9,9 @@ controller contracts needed by a CPU DSP consumer.
 
 Usage:
     uv run --with onnx --with onnxruntime python scripts/export_capb_to_onnx.py \
-        --checkpoint data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt \
-        --output data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_stage1_48k_to_96k.onnx \
-        --controller-output data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_stage1_48k_to_96k_controller.onnx
+        --checkpoint data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt \
+        --output data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_stage1_48k_to_96k.onnx \
+        --controller-output data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_stage1_48k_to_96k_controller.onnx
 """
 
 from __future__ import annotations

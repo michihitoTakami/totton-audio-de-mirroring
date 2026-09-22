@@ -1,0 +1,70 @@
+{
+  "all_passed": true,
+  "distortion_tolerance_db": 1.0,
+  "transient_position_tolerance": 0.02,
+  "focused_gentle_fraction_gap": 0.0,
+  "checks": [
+    {
+      "check_id": "44k1_frozen_gates",
+      "passed": true
+    },
+    {
+      "check_id": "48k_frozen_gates",
+      "passed": true
+    },
+    {
+      "check_id": "48k_thd_1khz_20khz_db",
+      "value": -133.08041150610376,
+      "threshold": -132.08041150610376,
+      "passed": true
+    },
+    {
+      "check_id": "48k_smpte_imd_db",
+      "value": -138.18686540902496,
+      "threshold": -136.5376354537591,
+      "passed": true
+    },
+    {
+      "check_id": "48k_ccif_imd_db",
+      "value": -140.84749462333554,
+      "threshold": -139.84749462333554,
+      "passed": true
+    },
+    {
+      "check_id": "48k_added_am_sideband_db",
+      "value": -156.9132419600916,
+      "threshold": -155.9132419600916,
+      "passed": true
+    },
+    {
+      "check_id": "48k_normalized_local_energy",
+      "value": 0.57527740855911,
+      "threshold": 0.6481315049105437,
+      "passed": true
+    },
+    {
+      "check_id": "48k_normalized_peak",
+      "value": 0.6147036144337963,
+      "threshold": 0.7720898853268306,
+      "passed": true
+    },
+    {
+      "check_id": "48k_pre_echo_mean_square",
+      "value": 3.992931914856749e-11,
+      "threshold": 4.5791391218641704e-11,
+      "passed": true
+    },
+    {
+      "check_id": "44k1_impulse_train_gain_error_db",
+      "value": 0.16627430853862823,
+      "threshold": 0.5,
+      "passed": true
+    },
+    {
+      "check_id": "48k_impulse_train_gain_error_db",
+      "value": 0.16216959700023736,
+      "threshold": 0.5,
+      "passed": true
+    }
+  ]
+}

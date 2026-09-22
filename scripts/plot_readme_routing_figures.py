@@ -37,10 +37,10 @@ from totton_audio_de_mirroring.models.capb import CAPB, capb_from_checkpoint
 
 RELEASE_CHECKPOINTS: dict[int, Path] = {
     44_100: Path(
-        "data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt"
+        "data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt"
     ),
     48_000: Path(
-        "data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt"
+        "data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt"
     ),
 }
 REAL_SOURCES: tuple[tuple[str, str], ...] = (
@@ -481,7 +481,7 @@ def _plot_by_source(analyses: list[SourceAnalysis], output_path: Path) -> None:
         fontsize=11,
     )
     figure.suptitle(
-        "CAPB run16 - which prototype the controller blends, by source",
+        "CAPB run17 - which prototype the controller blends, by source",
         color=INK,
         fontsize=14,
     )

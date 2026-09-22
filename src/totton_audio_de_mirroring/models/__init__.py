@@ -16,6 +16,10 @@ from totton_audio_de_mirroring.models.proto_bank import (
     prototype_specs_for_target_rate,
     supported_prototype_profiles,
 )
+from totton_audio_de_mirroring.models.transient_dwell import (
+    TransientDwellConfig,
+    apply_transient_dwell,
+)
 
 __all__ = [
     "CAPB",
@@ -23,7 +27,9 @@ __all__ = [
     "RELEASE_PROTOTYPE_PROFILE",
     "RoutingPriorConfig",
     "TWO_PROTOTYPE_PROFILE",
+    "TransientDwellConfig",
     "PrototypeBank",
+    "apply_transient_dwell",
     "build_prototype_bank",
     "build_prototype_bank_for_profile",
     "capb_candidate_from_checkpoint",

@@ -1,0 +1,1225 @@
+{
+  "all_passed": true,
+  "spec_version": 7,
+  "manifest_hash": "6529deadaab177fe",
+  "config": {
+    "plateau_ripple_ratio_max": 1.1,
+    "plateau_rms_floor_rel": 0.001,
+    "plateau_p2p_floor_rel": 0.00316,
+    "overshoot_delta_max": 0.005,
+    "overshoot_floor_rel": 0.02,
+    "pre_echo_energy_ratio_max": 1.44,
+    "pre_echo_floor_rel": 0.001,
+    "post_echo_energy_ratio_max": 1.44,
+    "post_echo_floor_rel": 0.001,
+    "image_rel_max_db": -65.0,
+    "image_peak_rel_max_db": -65.0,
+    "added_hf_max_db": 3.0,
+    "image_negligible_rel_db": -70.0,
+    "flatness_dip_max_db": 1.0,
+    "flatness_boost_max_db": 1.0,
+    "flatness_hf_dip_max_db": 3.0,
+    "gain_error_max_db": 0.5,
+    "lb_phase_error_max_deg": 15.0,
+    "lb_group_delay_error_max_samples": 600.0,
+    "lb_waveform_error_max_db": -20.0,
+    "modulation_sideband_max_db": -110.0
+  },
+  "gates": [
+    {
+      "gate_id": "G1_lf_ringing",
+      "passed": true,
+      "worst_probe_id": "square_500hz",
+      "rows": [
+        {
+          "probe_id": "square_50hz",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 0.0001741618279252792,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_50hz",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528420815773428,
+          "threshold": 0.001869930035321521,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_50hz",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_100hz",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 0.0001741618279252792,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_100hz",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528420815773428,
+          "threshold": 0.0019522671311408225,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_100hz",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_500hz",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 0.00017403782627872148,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_500hz",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528824907432451,
+          "threshold": 0.0019522671311408225,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_500hz",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.03000604573847765,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_500hz_a005",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 1.7403419594650406e-05,
+          "threshold": 5e-05,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_500hz_a005",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 6.528354577280127e-05,
+          "threshold": 0.00019522671311408837,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_500hz_a005",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.003000596318141993,
+          "threshold": 0.012261009621053785,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "dc_step_up",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 0.00017492299875620734,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "dc_step_up",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528420815773428,
+          "threshold": 0.002287554458478991,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "dc_step_up",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "dc_step_down",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 0.00017492299875620734,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "dc_step_down",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528420815773428,
+          "threshold": 0.002287554458478991,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "dc_step_down",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_73hz_held",
+          "tier": "held_out",
+          "metric": "plateau_rms_after",
+          "value": 0.00017404146741000414,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_73hz_held",
+          "tier": "held_out",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528420815773428,
+          "threshold": 0.0021838188858614663,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_73hz_held",
+          "tier": "held_out",
+          "metric": "overshoot_after",
+          "value": 0.03000600911548701,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_331hz_held",
+          "tier": "held_out",
+          "metric": "plateau_rms_after",
+          "value": 0.00017404139666950342,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_331hz_held",
+          "tier": "held_out",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006528806731934678,
+          "threshold": 0.0021838188858614663,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_331hz_held",
+          "tier": "held_out",
+          "metric": "overshoot_after",
+          "value": 0.030006022853359182,
+          "threshold": 0.07761009621053777,
+          "passed": true,
+          "binding": "relative"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G2_hf_ringing",
+      "passed": true,
+      "worst_probe_id": "square_1000hz",
+      "rows": [
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "plateau_rms_after",
+          "value": 0.0001777352004161595,
+          "threshold": 0.0005,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "plateau_p2p_after",
+          "value": 0.0006677579024656488,
+          "threshold": 0.0019522671311619502,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "overshoot_after",
+          "value": 0.030020317852839096,
+          "threshold": 0.07760978540348296,
+          "passed": true,
+          "binding": "relative"
+        }
+      ],
+      "skipped": [
+        {
+          "probe_id": "square_2000hz",
+          "tier": "canonical",
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.25 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.25
+        },
+        {
+          "probe_id": "square_5000hz",
+          "tier": "canonical",
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.1 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.1
+        },
+        {
+          "probe_id": "square_1730hz_held",
+          "tier": "held_out",
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.289 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.28901734104046245
+        },
+        {
+          "probe_id": "square_4400hz_held",
+          "tier": "held_out",
+          "metric_group": "plateau_ripple_and_overshoot",
+          "reason": "no settled plateau exists: half period 0.1136 ms leaves less than 0.1 ms between the 0.1 ms settling start and the 0.1 ms next-edge guard",
+          "half_period_ms": 0.11363636363636363
+        }
+      ]
+    },
+    {
+      "gate_id": "G2b_pre_echo",
+      "passed": true,
+      "worst_probe_id": "impulse",
+      "rows": [
+        {
+          "probe_id": "impulse",
+          "tier": "canonical",
+          "metric": "pre_echo_energy_after",
+          "value": 3.992931914856749e-11,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "impulse_train_10ms",
+          "tier": "canonical",
+          "metric": "pre_echo_energy_after",
+          "value": 3.854249951744922e-11,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_1000hz",
+          "tier": "canonical",
+          "metric": "pre_echo_energy_after",
+          "value": 1.148787452438965e-20,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_10000hz",
+          "tier": "canonical",
+          "metric": "pre_echo_energy_after",
+          "value": 1.4624181647053177e-20,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_19000hz",
+          "tier": "canonical",
+          "metric": "pre_echo_energy_after",
+          "value": 9.640233131995092e-18,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_3700hz_held",
+          "tier": "held_out",
+          "metric": "pre_echo_energy_after",
+          "value": 1.7322594797397545e-21,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_14300hz_held",
+          "tier": "held_out",
+          "metric": "pre_echo_energy_after",
+          "value": 1.2833969251953172e-19,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G2c_post_echo",
+      "passed": true,
+      "worst_probe_id": "impulse_train_10ms",
+      "rows": [
+        {
+          "probe_id": "impulse",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 3.250293708269024e-11,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "impulse_train_10ms",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 3.250293708269024e-11,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_1000hz",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 9.825871453868487e-23,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_10000hz",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 2.1673424933637327e-28,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_19000hz",
+          "tier": "canonical",
+          "metric": "post_echo_energy_after",
+          "value": 2.0628278185298958e-25,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_3700hz_held",
+          "tier": "held_out",
+          "metric": "post_echo_energy_after",
+          "value": 1.287435198547524e-26,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_14300hz_held",
+          "tier": "held_out",
+          "metric": "post_echo_energy_after",
+          "value": 1.586962283475384e-27,
+          "threshold": 2.5e-07,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G3_mirror",
+      "passed": true,
+      "worst_probe_id": "sweep_log_20_20k",
+      "rows": [
+        {
+          "probe_id": "sweep_log_20_20k",
+          "tier": "canonical",
+          "metric": "image_rel_db",
+          "value": -133.5316366675046,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "sweep_log_20_20k",
+          "tier": "canonical",
+          "metric": "image_peak_rel_db",
+          "value": -128.23452532770636,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "image_rel_db",
+          "value": -130.02286903067392,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "image_rel_db",
+          "value": -131.87885692454117,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "sweep_log_30_19k_held",
+          "tier": "held_out",
+          "metric": "image_rel_db",
+          "value": -133.48276644718243,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "sweep_log_30_19k_held",
+          "tier": "held_out",
+          "metric": "image_peak_rel_db",
+          "value": -133.44730471272476,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "image_rel_db",
+          "value": -130.8229463152,
+          "threshold": -65.0,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G4_flatness",
+      "passed": true,
+      "worst_probe_id": "pink_noise_s5678_held",
+      "rows": [
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "flatness_dip_db",
+          "value": 7.202904157566081e-07,
+          "threshold": 1.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "flatness_boost_db",
+          "value": 0.0,
+          "threshold": 1.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "flatness_hf_dip_db",
+          "value": 4.258421455460848e-07,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "flatness_dip_db",
+          "value": 5.687510622465197e-07,
+          "threshold": 1.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "flatness_boost_db",
+          "value": 0.0,
+          "threshold": 1.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "flatness_hf_dip_db",
+          "value": 4.453347912658501e-08,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "flatness_dip_db",
+          "value": 7.333990268421076e-07,
+          "threshold": 1.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "flatness_boost_db",
+          "value": 0.0,
+          "threshold": 1.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "flatness_hf_dip_db",
+          "value": 2.514489523264274e-07,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G5_gain",
+      "passed": true,
+      "worst_probe_id": "square_5000hz",
+      "rows": [
+        {
+          "probe_id": "square_50hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.002303330586405914,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_100hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.004800966971780376,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_500hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.018816045730380072,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.053306637579668054,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_2000hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.11406614054836804,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_5000hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.37844961338822614,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_500hz_a005",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.018817419373494838,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "dc_step_up",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 1.347159770973666e-05,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "dc_step_down",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 1.347159770973666e-05,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "impulse",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.14731001752557155,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "impulse_train_10ms",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.16216959700023736,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_1000hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.0011787764117034188,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "sweep_log_20_20k",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.002427553120027112,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.001406076694796682,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.0014166755235826484,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "imd_60hz_7000hz",
+          "tier": "canonical",
+          "metric": "abs_gain_error_db",
+          "value": 0.0016375966692061348,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_73hz_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.0024033809759552134,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_331hz_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.007092670430047086,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_1730hz_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.10888889902560098,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_4400hz_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.302414372726681,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_3700hz_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.07428037833899023,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "sweep_log_30_19k_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.0025650580569444295,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.001813884570605611,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "imd_83hz_6311hz_held",
+          "tier": "held_out",
+          "metric": "abs_gain_error_db",
+          "value": 0.0019302987638177222,
+          "threshold": 0.5,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G7_no_added_hf",
+      "passed": true,
+      "worst_probe_id": "tone_burst_1000hz",
+      "rows": [
+        {
+          "probe_id": "square_50hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.1476099483595874,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_100hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.16436039531815538,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_500hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.17900691730844187,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_1000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.17753651704072126,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_2000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.004461943997995377,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_5000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -0.07576236381062529,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_500hz_a005",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.1790093328071123,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "dc_step_up",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.1832210376965122,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "dc_step_down",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 0.1832210376965122,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "impulse",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -11.074703755539531,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "impulse_train_10ms",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -10.904286842914814,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "tone_burst_1000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": 45.2239376922241,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_10000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -5.9878669078111955,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_19000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -7.363746371775193,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "sweep_log_20_20k",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -41.9223850886581,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -90.04108365349703,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -85.13914260334809,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "imd_60hz_7000hz",
+          "tier": "canonical",
+          "metric": "added_hf_db",
+          "value": -29.839131912555757,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "square_73hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": 0.18896064864591722,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_331hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": 0.1850503656858251,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_1730hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": 0.06530149808432384,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "square_4400hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": -0.014071512293099886,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "tone_burst_3700hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": 5.426657228068166,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "tone_burst_14300hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": -7.118423968865898,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "relative"
+        },
+        {
+          "probe_id": "sweep_log_30_19k_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": -40.363884117889654,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": -90.44742310039034,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "imd_83hz_6311hz_held",
+          "tier": "held_out",
+          "metric": "added_hf_db",
+          "value": -24.8834216235407,
+          "threshold": 3.0,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G8_lb_preservation",
+      "passed": true,
+      "worst_probe_id": "pink_noise_s1234",
+      "rows": [
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "lb_phase_error_deg",
+          "value": 0.017758022293875384,
+          "threshold": 15.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "lb_group_delay_error_samples",
+          "value": 7.36345908077584,
+          "threshold": 600.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s1234",
+          "tier": "canonical",
+          "metric": "lb_waveform_error_db",
+          "value": -65.93451324850706,
+          "threshold": -20.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "lb_phase_error_deg",
+          "value": 0.009631070469196382,
+          "threshold": 15.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "lb_group_delay_error_samples",
+          "value": 0.18453091511670366,
+          "threshold": 600.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "multitone_60_s20260704",
+          "tier": "canonical",
+          "metric": "lb_waveform_error_db",
+          "value": -65.2318797558545,
+          "threshold": -20.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "lb_phase_error_deg",
+          "value": 0.0029578975097827565,
+          "threshold": 15.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "lb_group_delay_error_samples",
+          "value": 1.2407662805106783,
+          "threshold": 600.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "pink_noise_s5678_held",
+          "tier": "held_out",
+          "metric": "lb_waveform_error_db",
+          "value": -66.9929595875589,
+          "threshold": -20.0,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "gate_id": "G9_no_modulation_sidebands",
+      "passed": true,
+      "worst_probe_id": "imd_60hz_7000hz",
+      "rows": [
+        {
+          "probe_id": "imd_60hz_7000hz",
+          "tier": "canonical",
+          "metric": "modulation_sideband_db",
+          "value": -138.18686540902496,
+          "threshold": -110.0,
+          "passed": true,
+          "binding": "absolute"
+        },
+        {
+          "probe_id": "imd_83hz_6311hz_held",
+          "tier": "held_out",
+          "metric": "modulation_sideband_db",
+          "value": -144.92512075298933,
+          "threshold": -110.0,
+          "passed": true,
+          "binding": "absolute"
+        }
+      ],
+      "skipped": []
+    }
+  ],
+  "execution": {
+    "device": "cpu",
+    "precision_mode": "strict_fp32",
+    "allow_tf32": false,
+    "deterministic": false,
+    "torch_version": "2.10.0+cu128",
+    "cuda_version": "12.8",
+    "cudnn_version": 91002,
+    "gpu_name": null
+  },
+  "candidate_identity": {
+    "prototype_profile": "v5b_sharp1023_midflat70",
+    "prototype_hash": "06e8efc5a724059613cc45afdedab7c101d2ca0753da4494a5bbcf10ee2ac363",
+    "fir_compute_dtype": "float32"
+  }
+}

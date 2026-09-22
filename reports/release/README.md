@@ -1,13 +1,61 @@
-# CAPB release evidence — 2026-09-03（run16）
+# CAPB release evidence — 2026-09-22（run17）
 
-現在の推奨は両rate familyとも**run16**（`v5b_sharp1023_midflat70` bank、
-`focused_gentle_fraction 0.3`、gate spec 7）です。`release_manifest.json`の`recommended`が正史です。
+現在の推奨は両rate familyとも**run17**（`v5b_sharp1023_midflat70` bank、
+`focused_gentle_fraction 0.3`、transient dwell射影、gate spec 7）です。`release_manifest.json`の
+`recommended`が正史です。
 
-このディレクトリには推奨ペアの受入証跡だけを置きます。2026-09-04に、非推奨となった
-run13〜run15の証跡バンドルと1535-tap研究比較（`reports/research/long_fir_1535/`）を削除しました。
+このディレクトリには推奨ペアとその直接の親（run16）の受入証跡を置きます。2026-09-04に、非推奨と
+なったrun13〜run15の証跡バンドルと1535-tap研究比較（`reports/research/long_fir_1535/`）を削除しました。
 必要な場合はcommit `1541917`から復元できます。
 
-## run16 — `run16_v5b_midflat_g03_20260903/`
+## run17 — `run17_transient_dwell_20260922/`
+
+run16のcontrollerに、softmax後の決定的な射影 **transient dwell** を加えて20 epochs fine-tuneしました
+（lr 1e-4、bank・routing prior・損失処方はrun16と同じ）。射影は検出したイベント（微分crest、平坦部波形、
+レベル変化）の±1フレーム（1.5 ms）だけcontrollerの混合を保持し、sharpの台±4フレーム（5.8 ms）までは
+gentle質量をフラットなmidへ、その外は非sharp質量をsharpへ戻します。3 seed（1234 / 2026 / 4649）×両系列が
+CPU・strict-FP32 CUDAのG1〜G9を通過し、seed 1234を採用しました。物理と経緯は
+[`docs/transient_dwell_projection.md`](../../docs/transient_dwell_projection.md)にあります。
+
+| Family | checkpoint | G1〜G9 CPU / CUDA（spec 7） | G5 impulse列 | G2b | G3最悪 | 64位相 worst | ONNX parity / null |
+|---|---|---|---:|---:|---:|---:|---|
+| 44.1k | `data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt` | PASS / PASS | `0.166 dB` | `4.6e-11` | `-133.1 dB` | `-37.1 dB` | `1.0e-6` / `-129.4 dB` |
+| 48k | `data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt` | PASS / PASS | `0.162 dB` | `4.0e-11` | `-133.5 dB` | `-37.4 dB` | `1.1e-6` / `-129.4 dB` |
+
+リンギングgateの最悪行はrun16と同じprobe・同じ値で、余裕も同じです。
+
+| Family | G1最悪行 | 余裕 | G2最悪行 | 余裕 |
+|---|---|---:|---|---:|
+| 44.1k | `square_73hz_held` plateau_rms `1.81e-4` / `5.0e-4` | **63.8%** | `square_1000hz` plateau_rms `2.04e-4` / `5.0e-4` | **59.1%** |
+| 48k | `square_500hz` plateau_rms `1.74e-4` / `5.0e-4` | **65.2%** | `square_1000hz` plateau_rms `1.78e-4` / `5.0e-4` | **64.5%** |
+
+run16に対する差分:
+
+| 指標 | 44.1 kHz | 48 kHz |
+|---|---|---|
+| ハイハット shuffle 16–20 kHz（Sharp比） | `-3.20` → `-2.80 dB` | — |
+| among-us hihat 16–20 kHz（Sharp比） | `-2.12` → `-1.34 dB` | — |
+| microtonic 16–20 kHz / イメージ帯（Sharp比 / 信号比） | — | `-0.74` → `-0.31 dB` / `-48.3` → `-53.3 dB` |
+| 10 kHz AMサイドバンド（最大） | `-143.9` → `-161.7 dB` | `-157.3` → `-156.9 dB` |
+| SMPTE IMD | `-137.5` → `-137.5 dB` | `-137.6` → `-138.2 dB` |
+| 64位相 worst | `-37.3` → `-37.1 dB` | `-38.4` → `-37.4 dB` |
+| 実録音の定常部sharp比率 | 79〜99% → 93〜100% | 同左 |
+
+回復量はrun16のABX（Sharp比2.3〜2.9 dBの差が識別不能）の一部にとどまるため、可聴改善は主張して
+いません。採用理由は、gate余裕を一切失わずに、run16が打撃の減衰部（エッジのない区間）に作っていた
+gentle 100%の谷と±26 msの過剰な保護窓を物理的な窓幅（sharpの台）へ縮めた構造的改善です。
+
+補足:
+
+- `routing/routing_gates_*.json`のR2〜R4（pre/post echo窓・エッジ窓でのgentle比率≥0.9）はrun16でも
+  不合格だった補助診断で、run17では射影が±1.5 msの外側をmidへ移すため定義上0になります。物理量を
+  測るG1/G2b/G2cが両系列で通過していることが正です。R1（定常sharp比率）は`0.9972` → `0.9995`に改善しました。
+- null testの入力probeは2 s log sweep（20 Hz–20 kHz、-6 dBFS）+ ノイズ1e-3 + 3クリック（16 bit）で、
+  SHA-256と定義（PT−ONNXのRMS差 / PT出力RMS）は各`null_test/*.json`に記録しています。
+- seed別の値と実録音の高域は[selection/seed_summary.json](run17_transient_dwell_20260922/selection/seed_summary.json)にあります。
+- ONNXファイルはこのリポジトリに含めません。
+
+## run16 — `run16_v5b_midflat_g03_20260903/`（run17の親、2026-09-22まで推奨）
 
 controllerはrouting v2 + sharp floor処方で学習し、`v5b_sharp1023_midflat70` bank上で
 3 seed（1234 / 2026 / 4649）のcontroller-only fine-tuneを行い、seed 1234を採用しました。
@@ -143,5 +191,5 @@ controller 64位相マージンが`-36` → `-14 dB`へ縮み、G9が悪化し�
 - ゲート仕様はspec 7。閾値の定義とprobe manifestは変更していません。release_qualityのクロスレート
   検査は、impulse列G5を両系列とも凍結ゲート`0.5 dB`に対して判定し、過渡位置の許容に
   checkpointへ保存された`focused_gentle_fraction`の差を加える定義です。
-- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`はrun16ペアを使います。
+- ONNXファイルはこのリポジトリに含めません。`totton-audio-nn/data/nmse/`は2026-09-22時点でrun16ペアを使っています。
 - 数値の正史はstrict-FP32のworst-probe gateです。`routing/`の診断R1〜R4と図は補助です。

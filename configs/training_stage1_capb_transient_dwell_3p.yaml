@@ -1,0 +1,59 @@
+# Transient-dwell 44.1 -> 88.2 kHz three-prototype fine-tune from run16.
+#
+# Identical to the routing-v2 recipe except for the post-softmax transient
+# dwell projection and the 20-epoch controller fine-tune from run16.
+epochs: 20
+batch_size: 16
+learning_rate: 1.0e-4
+weight_decay: 1.0e-3
+grad_clip: 1.0
+val_fraction: 0.1
+num_workers: 4
+seed: 1234
+border_trim: 1024
+prototype_profile: v5b_sharp1023_midflat70
+controller_dilation: 2
+controller_feature_mode: physics_routing
+# Sparse impulses split gentle/middle (0.3 gentle, 0.7 flat middle) on the
+# v5b bank: sharp 1023 taps, flat 70 dB middle, Bessel6@20k gentle. Lower
+# fractions (0.0) fail G2 on the 5 kHz squares under gate spec 6.
+routing_prior:
+  focused_gentle_fraction: 0.3
+  level_change_threshold: 0.30
+# Deterministic post-softmax projection: gentle only within +-1 frame
+# (1.5 ms) of a detected edge, plateau waveform (dense square) or level change, the middle prototype carries
+# the ring out to sharp's +-4-frame (5.8 ms) support, and everything beyond
+# returns to sharp. Zone edges rely on the one-frame (1.5 ms) sample-rate
+# interpolation of the weights; an extra frame ramp halved the recovered
+# high band on percussive material.
+transient_dwell:
+  enabled: true
+  crest_threshold: 4.0
+  level_change_db: 6.0
+  gentle_zone_frames: 1
+  sharp_zone_frames: 4
+  ramp_frames: 0
+  release_to_sharp: true
+  floor_db: 80.0
+  density_threshold: 0.97
+  edge_swing_fraction: 0.5
+checkpoint_dir: data/checkpoints/experiments/transient_dwell_44k1_3p
+checkpoint_interval_epochs: 5
+log_interval: 20
+
+loss_weights:
+  wave: 1.0
+  stft: 1.0
+  plateau: 300.0
+  quiet: 300.0
+  tv: 0.1
+  entropy_floor: 10.0
+  min_entropy: 0.005
+  edge_fidelity_relax: 0.9
+  edge_ring: 100.0
+  pre_echo_excess: 300.0
+  post_echo_excess: 300.0
+  stationary_modulation: 300.0
+  prototype_routing: 300.0
+  stationary_sharp_floor: 1000.0
+  sharp_floor: 0.995

@@ -203,6 +203,12 @@ uv run python scripts/audit_capb_training_data.py \
 
 実音源で旧controllerがギターと氷の衝突に対して逆向きへ遷移したため、routing v2では短時間RMSの対称変化、局所微分crest、波形activity densityをcontroller入力と物理priorへ追加しています。定常tone/noiseではSharp、包絡onset/offsetと持続plateau edgeではGentleを選びます。疎なclick/impulse列は`routing_prior.focused_gentle_fraction`でGentleとMidに分配します。現在の推奨値は両系列とも`0.3`で、残る`0.7`をフラットなMidが受けます（routing v2導入時は44.1 kHz `0.90`、48 kHz `0.85`でしたが、打撃の高域減衰を避けるため下げました。詳細は「学習済み成果物」節）。Midは曖昧な常用クラスではなく、Gentleのimpulse利得誤差と高域ロールオフを補償しつつG2b/G2cを守る限定的な役割です。比率`0.0`はMidのGibbsリップルが5 kHz矩形でG2を落とすため採用しません。`routing_prior.level_change_threshold`（既定`0.15`、routing v2は`0.30`）はpink noiseのRMS揺らぎを過渡と誤検出してGentleが漏れないための下限で、両値はcheckpointに保存され旧checkpointは旧挙動を保ちます。それでも学習ヘッドが定常ノイズ上でGentleを足す残りはseed依存で（3 seed中1 seedがG3を落としました）、定常サンプルの安全フレームでSharp重みが`sharp_floor`（`0.995`）を下回った分を罰する`stationary_sharp_floor`損失（重み`1000`）で解消しています。この処方は3 seed×両系列でG1〜G9を通過し、現在の推奨ペアの土台になっています。20 kHzの帯域分割は導入していません。
 
+### Transient dwell（softmax後の決定的な射影）
+
+run16のcontrollerはDC stepやimpulseの周囲±26 msを保護窓にし（priorの25 ms RMS平滑化幅）、外周部をsharp/gentleの辺上やgentle 1.0で埋めていました。sharpの台は±5.8 ms、midの台は±0.54 msなので、gentleが必要なのはエッジの±1 msだけで、1〜5.8 msはフラットなmidで、5.8 ms以降はsharpで受けられます。`transient_dwell`はこれをsoftmax後の決定的な射影として実装します。フレーム内微分crest、平坦部波形（rms/peak）、±1フレームのレベル変化でイベントを検出し、イベントの±1フレーム（1.5 ms）はcontrollerの混合をそのまま保持、±4フレーム（5.8 ms）まではgentle質量をmidへ移し、それより外は非sharp質量をsharpへ戻します。周期矩形は全フレームがイベントになるので射影は恒等で、矩形エッジへのmid漏れの経路は構造的に閉じています。損失ではなく射影にしたのは、HF-onset実験でNNが矩形エッジへ過剰般化して壊す様子を3試行で確定させたためです。定数はcheckpointに保存され、旧checkpointは無効（従来挙動）です。controller-only ONNXにも同じ演算が含まれます。
+
+run16から20 epochsのfine-tune（`configs/training_stage1_capb_transient_dwell_3p.yaml`と`_48k_`版）は3 seed×両系列でCPU・strict-FP32 CUDAのG1〜G9を通過し、リンギングgateの最悪行と余裕はrun16と同一です。実録音の16〜20 kHz（all-sharp基準）はハイハットで`-3.20 → -2.71〜-2.80 dB`、among-us hihatで`-2.12 → -1.34〜-1.40 dB`、48 kHzのイメージ帯は5〜6 dB改善します。回復量はrun16のABXで識別不能だった差の一部なので可聴改善は主張しませんが、gate余裕を失わずに物理的根拠のないgentle区間を除く構造的な改善として、seed 1234のペアを**run17**として推奨に採用しました（「学習済み成果物」節）。詳細は[docs/transient_dwell_projection.md](docs/transient_dwell_projection.md)にあります。
+
 2-prototype（Sharp/Gentle）も比較できますが、48 kHzのGentle固定端点自体がimpulseで`0.514 dB`、10 ms impulse列で`0.527 dB`のG5誤差となり、上限`0.5 dB`を超えます。このため両rate family共通の候補は3-prototypeを維持します。
 
 ```bash
@@ -266,18 +272,18 @@ uv run python scripts/train_capb.py \
 
 2026-09-01には1535/2047 tapsを両系列それぞれ3 seedでFineTuningしました。48 kHzは両候補とも3/3 seedでG1--G9を通過しましたが、44.1 kHzはG2b pre-echoが1535で`4.96e-7`、2047で`5.11e-7`となり、上限`2.5e-7`を全seedで超えました。2047の48 kHzもoffset robustnessが僅かに不合格です。当時はイメージ抑制が改善してもhard gateを満たさなかったため`release_v4`を維持しました。この1535-tap研究比較は2026-09-04に削除しました（commit `1541917`から復元可能）。
 
-2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を採用し（48 kHzはG3最悪`-107.8` → `-128.1 dB`）、その後Midをフラットな短いKaiserに置き換えた`v5b_sharp1023_midflat70`で打撃時のGentle比率を0.9 → 0.6 → 0.3と下げたrun16が現在の推奨です。走査値は`reports/release/run16_v5b_midflat_g03_20260903/selection/long_fir_sweep_summary.json`、経緯は`reports/release/README.md`にあります。
+2026-09-03にrouting v2 controllerで再走査しました。impulseでSharpをほぼ混ぜなくなったため全profileがG1〜G9を通過し、483〜4095 tapsの走査で1023 tapsが膝でした（それ以上はイメージが改善せず、44.1 kHzの64位相マージンとG9が悪化）。`long_sharp_1023_a140`を採用し（48 kHzはG3最悪`-107.8` → `-128.1 dB`）、その後Midをフラットな短いKaiserに置き換えた`v5b_sharp1023_midflat70`で打撃時のGentle比率を0.9 → 0.6 → 0.3と下げたrun16を採用し、2026-09-22にそのcontrollerへtransient dwell射影を加えてfine-tuneしたrun17が現在の推奨です。走査値は`reports/release/run16_v5b_midflat_g03_20260903/selection/long_fir_sweep_summary.json`、経緯は`reports/release/README.md`にあります。
 
 ### 学習済み成果物
 
-推奨は両系列とも**run16**（2026-09-03、`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.3`、gate spec 7）です。`reports/release/release_manifest.json`の`recommended`が正史で、受入証跡は`reports/release/run16_v5b_midflat_g03_20260903/`にあります。
+推奨は両系列とも**run17**（2026-09-22、`v5b_sharp1023_midflat70` bank、`focused_gentle_fraction 0.3`、transient dwell射影、gate spec 7）です。run16のcontrollerを射影つきで20 epochs fine-tuneしたseed 1234のペアで、bankとrouting prior、損失処方はrun16と同じです。`reports/release/release_manifest.json`の`recommended`が正史で、受入証跡は`reports/release/run17_transient_dwell_20260922/`にあります（run16の証跡は`reports/release/run16_v5b_midflat_g03_20260903/`に残しています）。
 
 | 系列 | 推奨checkpoint | 主要値（gate spec 7） |
 |---|---|---|
-| 44.1→88.2 kHz | `data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.6 dB`、impulse列利得誤差 `0.164 dB`、G2b `4.6e-11`、G3最悪 `-133.1 dB`、64位相worst `-37.3 dB`、群遅延5.8 ms |
-| 48→96 kHz | `data/checkpoints/capb_48k/run16_v5b_midflat_g03_20260903_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.9 dB`、impulse列利得誤差 `0.175 dB`、G2b `3.3e-11`、G3最悪 `-133.5 dB`、64位相worst `-38.4 dB`、群遅延5.3 ms |
+| 44.1→88.2 kHz | `data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-137.5 dB`、impulse列利得誤差 `0.166 dB`、G2b `4.6e-11`、G3最悪 `-133.1 dB`、64位相worst `-37.1 dB`、群遅延5.8 ms |
+| 48→96 kHz | `data/checkpoints/capb_48k/run17_transient_dwell_20260922_48k/capb_best.pt` | G1〜G9 CPU/CUDA全通過、SMPTE `-138.2 dB`、impulse列利得誤差 `0.162 dB`、G2b `4.0e-11`、G3最悪 `-133.5 dB`、64位相worst `-37.4 dB`、群遅延5.3 ms |
 
-run16の`v5b_sharp1023_midflat70` bankは、Sharp 1023 taps（Kaiser 140 dB）、Midは20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleはBessel6@20 kHzです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9 → 0.6（run15）→ 0.3（run16）と下げ、残りをフラットなMidで受けて打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.16〜0.18 dB`に改善し、孤立impulseのリンギングは`-32` → `-19〜-20 dB`（Sharp単体は`-15 dB`）です。比率`0.3`が両系列共通で通る下限です（spec 6まで記載していた「比率0.0は5 kHz矩形でG2を落とす」は再現できないため撤回しました。詳細は`reports/release/README.md`）。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。打撃だけGentleをフラットMidへ振り替えるrouting classも2026-09-04に試作し不採用です（`docs/hf_onset_routing_experiment.md`）。run16へ至る中間候補run13〜run15のcheckpointは学習系譜の再現用に残していますが、証跡バンドルは2026-09-04に削除し、受入判定はrun16のみを正とします（commit `1541917`から復元可能）。
+run17とrun16が共有する`v5b_sharp1023_midflat70` bankは、Sharp 1023 taps（Kaiser 140 dB）、Midは20 kHzまでフラットな短いKaiser（阻止24 kHz、70 dB、約100 taps）、GentleはBessel6@20 kHzです。ABXでGentle単体の高域ロールオフ（15 kHzで`-4.3 dB`）が識別できた一方でSharpとCAPBは識別不能だったため、打撃時にGentleへ寄る比率を0.9 → 0.6（run15）→ 0.3（run16）と下げ、残りをフラットなMidで受けて打撃の高域をSharpに近づけました。G5 impulse列の利得誤差は`0.45` → `0.16〜0.18 dB`に改善し、孤立impulseのリンギングは`-32` → `-19〜-20 dB`（Sharp単体は`-15 dB`）です。比率`0.3`が両系列共通で通る下限です（spec 6まで記載していた「比率0.0は5 kHz矩形でG2を落とす」は再現できないため撤回しました。詳細は`reports/release/README.md`）。Gentle自体を20 kHzまでフラットにする案はG7（Bessel参照に対するイメージ帯の増加）を`+12 dB`超過して不合格でした。打撃だけGentleをフラットMidへ振り替えるrouting classも2026-09-04に試作し不採用です（`docs/hf_onset_routing_experiment.md`）。run16へ至る中間候補run13〜run15のcheckpointは学習系譜の再現用に残していますが、証跡バンドルは2026-09-04に削除し、受入判定はrun16のみを正とします（commit `1541917`から復元可能）。
 
 旧release（`run11_44k1_optimized_20260829` / `run12_48k_strictfp32_balanced_20260830`）に対して、実音源で逆向きだったSharp/Gentle遷移が正方向になり、孤立impulseのリンギングは44.1 kHzで`-24.3` → `-19.7 dB`、48 kHzで`-25.7` → `-18.5 dB`で、G2b pre-echoは`1.05e-7` → `4.6e-11`、`1.33e-8` → `3.3e-11`です。代償は群遅延が44.1 kHz 2.7 → 5.8 ms、48 kHz 1.4 → 5.3 msになったことです。旧世代checkpoint（run9〜run12）は2026-09-04に削除しました（commit `1541917`から復元可能）。
 
@@ -308,7 +314,7 @@ uv run python scripts/evaluate_probe_gates.py \
 
 # controller phase / Hann-OLA boundary（48 kHzは--rate-family 48k）
 uv run python scripts/evaluate_capb_transient_robustness.py \
-  --checkpoint data/checkpoints/capb/run16_v5b_midflat_g03_20260903_44k1/capb_best.pt \
+  --checkpoint data/checkpoints/capb/run17_transient_dwell_20260922_44k1/capb_best.pt \
   --rate-family 44k1 \
   --output-dir /tmp/capb-robustness-44k1
 ```
